@@ -10,7 +10,7 @@ import (
 )
 
 func RunTCPRemoteServer(c *ss.Config) {
-	RunTCPServer(c.Remoteaddr, c, ss.ListenSS, tcpRemoteHandler)
+	RunTCPServer(c.Localaddr, c, ss.ListenSS, tcpRemoteHandler)
 }
 
 func tcpRemoteHandler(conn net.Conn, _ *ss.Config) {
