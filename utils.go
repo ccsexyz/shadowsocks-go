@@ -8,6 +8,7 @@ import (
 
 const (
 	defaultMethod = "aes-256-cfb"
+	defaultPassword = "you should have a password"
 	buffersize    = 8192
 	typeIPv4      = 1
 	typeDm        = 3
@@ -81,10 +82,4 @@ func pipe(c1, c2 net.Conn) {
 	case <-c1die:
 	case <-c2die:
 	}
-}
-
-type ssinfo struct {
-	method   string
-	password string
-	ivlen    int
 }

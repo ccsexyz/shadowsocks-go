@@ -7,11 +7,11 @@ import (
 	"time"
 )
 
-func RunTCPRemoteServer(address string, info *ssinfo) {
-	if info.ivlen == 0 {
-		info.ivlen = getIvLen(info.method)
+func RunTCPRemoteServer(c *Config) {
+	if c.ivlen == 0 {
+		c.ivlen = getIvLen(c.Method)
 	}
-	lis, err := Listen(address, info)
+	lis, err := ListenSS(c.Server, c)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -29,16 +29,17 @@ func tcpRemoteHandler(conn net.Conn) {
 	defer conn.Close()
 	C, ok := conn.(*Conn)
 	var timer *time.Timer
-	if ok {
-		C.xu1s = true
-		timer = time.AfterFunc(time.Second*4, func() {
-			// FIXME
-			if C.xu1s {
-				conn.Close()
-			}
-		})
+	if !ok || C == nil {
+		return
 	}
-	buf := make([]byte, buffersize)
+	C.xu1s = true
+	timer = time.AfterFunc(time.Second*4, func() {
+		// FIXME
+		if C.xu1s {
+			conn.Close()
+		}
+	})
+	buf := C.wbuf
 	n, err := conn.Read(buf)
 	if timer != nil {
 		timer.Stop()
@@ -70,5 +71,6 @@ func tcpRemoteHandler(conn net.Conn) {
 		}
 	}
 	buf = nil
+	log.Println("connect to ", host, port, "from", conn.RemoteAddr().String())
 	pipe(conn, rconn)
 }

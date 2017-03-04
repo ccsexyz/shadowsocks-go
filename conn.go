@@ -26,7 +26,7 @@ type Conn struct {
 	dec  Decrypter
 	rbuf []byte
 	wbuf []byte
-	info *ssinfo
+	c    *Config
 	xu1s bool
 }
 
@@ -44,10 +44,10 @@ func (c *Conn) Close() error {
 	return c.Conn.Close()
 }
 
-func NewConn(conn net.Conn, info *ssinfo) *Conn {
+func NewConn(conn net.Conn, c *Config) *Conn {
 	return &Conn{
 		Conn: conn,
-		info: info,
+		c:    c,
 		rbuf: make([]byte, buffersize),
 		wbuf: make([]byte, buffersize),
 	}
@@ -55,11 +55,11 @@ func NewConn(conn net.Conn, info *ssinfo) *Conn {
 
 func (c *Conn) Read(b []byte) (n int, err error) {
 	if c.dec == nil {
-		_, err = io.ReadFull(c.Conn, c.rbuf[:c.info.ivlen])
+		_, err = io.ReadFull(c.Conn, c.rbuf[:c.c.ivlen])
 		if err != nil {
 			return
 		}
-		c.dec, err = NewDecrypter(c.info.method, c.info.password, c.rbuf[:c.info.ivlen])
+		c.dec, err = NewDecrypter(c.c.Method, c.c.Password, c.rbuf[:c.c.ivlen])
 		if err != nil {
 			return
 		}
@@ -77,7 +77,7 @@ func (c *Conn) Read(b []byte) (n int, err error) {
 
 func (c *Conn) Write(b []byte) (n int, err error) {
 	if c.enc == nil {
-		c.enc, err = NewEncrypter(c.info.method, c.info.password)
+		c.enc, err = NewEncrypter(c.c.Method, c.c.Password)
 		if err != nil {
 			return
 		}

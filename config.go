@@ -10,6 +10,7 @@ type Config struct {
 	Server   string `json:"server"`
 	Method   string `json:"method"`
 	Password string `json:"password"`
+	ivlen    int
 }
 
 func readConfig(path string) (configs []Config, err error) {
@@ -22,6 +23,12 @@ func readConfig(path string) (configs []Config, err error) {
 		var c Config
 		err = json.Unmarshal(bytes, &c)
 		if err == nil {
+			if len(c.Password) == 0 {
+				c.Password = defaultPassword
+			}
+			if len(c.Method) == 0 {
+				c.Method = defaultMethod
+			}
 			configs = append(configs, c)
 		}
 	}

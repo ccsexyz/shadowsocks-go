@@ -19,11 +19,19 @@ func main() {
 	var wg sync.WaitGroup
 	for _, c := range configs {
 		wg.Add(1)
-		log.Println("run server at ", c.Server, " method ", c.Method)
-		go func() {
-			defer wg.Done()
-			RunTCPRemoteServer(c.Server, &ssinfo{method: c.Method, password: c.Password})
-		}()
+		if len(c.Client) == 0 {
+			log.Println("run server at ", c.Server, " method ", c.Method)
+			go func() {
+				defer wg.Done()
+				RunTCPRemoteServer(&c)
+			}()
+		} else {
+			log.Println("run client at ", c.Client, " method ", c.Method)
+			go func() {
+				defer wg.Done()
+				RunTCPLocalServer(&c)
+			}()
+		}
 	}
 	wg.Wait()
 }

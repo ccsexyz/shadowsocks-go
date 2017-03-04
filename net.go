@@ -4,25 +4,26 @@ import (
 	"encoding/binary"
 	"net"
 	"strconv"
+	"fmt"
+	"io"
 )
 
-type listener struct {
+type sslistener struct {
 	net.TCPListener
-	info *ssinfo
+	c *Config
 }
 
-func (lis *listener) Accept() (conn net.Conn, err error) {
+func (lis *sslistener) Accept() (conn net.Conn, err error) {
 	conn, err = lis.TCPListener.Accept()
 	if err != nil {
 		return
 	}
-	conn = NewConn(conn, lis.info)
+	conn = NewConn(conn, lis.c)
 	return
 }
 
-// ListenTCP return a net.Listener
-func Listen(address string, info *ssinfo) (lis net.Listener, err error) {
-	addr, err := net.ResolveTCPAddr("tcp", address)
+func ListenSS(service string, c *Config) (lis net.Listener, err error) {
+	addr, err := net.ResolveTCPAddr("tcp", service)
 	if err != nil {
 		return
 	}
@@ -30,14 +31,14 @@ func Listen(address string, info *ssinfo) (lis net.Listener, err error) {
 	if err != nil {
 		return
 	}
-	lis = &listener{
+	lis = &sslistener{
 		TCPListener: *l,
-		info:        info,
+		c:           c,
 	}
 	return
 }
 
-func Dial(target, service string, info *ssinfo) (conn net.Conn, err error) {
+func DialSS(target, service string, c *Config) (conn net.Conn, err error) {
 	host, port, err := net.SplitHostPort(target)
 	if err != nil {
 		return
@@ -52,7 +53,7 @@ func Dial(target, service string, info *ssinfo) (conn net.Conn, err error) {
 	if err != nil {
 		return
 	}
-	conn = NewConn(conn, info)
+	conn = NewConn(conn, c)
 	buf := conn.(*Conn).rbuf[:headerLen]
 	buf[0] = typeDm
 	buf[1] = byte(hostLen)
@@ -65,15 +66,102 @@ func Dial(target, service string, info *ssinfo) (conn net.Conn, err error) {
 	return
 }
 
-func DialWithRawHeader(header []byte, service string, info *ssinfo) (conn net.Conn, err error) {
+func DialSSWithRawHeader(header []byte, service string, c *Config) (conn net.Conn, err error) {
 	conn, err = net.Dial("tcp", service)
 	if err != nil {
 		return
 	}
-	conn = NewConn(conn, info)
+	conn = NewConn(conn, c)
 	_, err = conn.Write(header)
 	if err != nil {
 		conn.Close()
+	}
+	return
+}
+
+type socks5listener struct {
+	net.TCPListener
+	info *Config
+	die    chan bool
+	connch chan net.Conn
+	err    error
+}
+
+func ListenSocks5(address string, c *Config) (lis net.Listener, err error) {
+	addr, err := net.ResolveTCPAddr("tcp", address)
+	if err != nil {
+		return
+	}
+	l, err := net.ListenTCP("tcp", addr)
+	if err != nil {
+		return
+	}
+	lis = &socks5listener{
+		TCPListener: *l,
+		info:        c,
+		die:         make(chan bool),
+		connch:      make(chan net.Conn, 32),
+	}
+	go lis.(*socks5listener).acceptor()
+	return
+}
+
+func (lis *socks5listener) Close() error {
+	select {
+	case <-lis.die:
+	default:
+		close(lis.die)
+	}
+	return lis.TCPListener.Close()
+}
+
+func (lis *socks5listener) Accept() (conn net.Conn, err error) {
+	select {
+	case <-lis.die:
+		err = lis.err
+		if err != nil {
+			err = fmt.Errorf("cannot accept from closed listener")
+		}
+	case conn = <-lis.connch:
+	}
+	return
+}
+
+func (lis *socks5listener) acceptor() {
+	defer lis.Close()
+	for {
+		conn, err := lis.TCPListener.Accept()
+		if err != nil {
+			lis.err = err
+			return
+		}
+		go lis.handshake(conn)
+	}
+}
+
+func (lis *socks5listener) handshake(conn net.Conn) {
+	defer func() {
+		if conn != nil {
+			conn.Close()
+		}
+	}()
+	buf := make([]byte, 512)
+	_, err := io.ReadFull(conn, buf[:2])
+	if err != nil || buf[0] != 5 {
+		return
+	}
+	nmethods := buf[1]
+	if nmethods != 0 {
+		io.ReadFull(conn, buf[:int(nmethods)])
+	}
+	_, err = conn.Write([]byte{5, 0})
+	if err != nil {
+		return
+	}
+	select {
+	case <-lis.die:
+	case lis.connch <- conn:
+		conn = nil
 	}
 	return
 }
