@@ -168,3 +168,15 @@ func (lis *socks5listener) handshake(conn net.Conn) {
 	}
 	return
 }
+
+func NewTCPDialer() func(string) (net.Conn, error) {
+	return func(addr string) (net.Conn, error) {
+		return net.Dial("tcp", addr)
+	}
+}
+
+func NewSSDialer(c *Config) func(string) (net.Conn, error) {
+	return func(addr string) (net.Conn, error) {
+		return DialSS(addr, c.Remoteaddr, c)
+	}
+}

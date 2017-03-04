@@ -8,19 +8,7 @@ import (
 )
 
 func RunTCPLocalServer(c *ss.Config) {
-	ss.CheckConfig(c)
-	lis, err := ss.ListenSocks5(c.Client, c)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer lis.Close()
-	for {
-		conn, err := lis.Accept()
-		if err != nil {
-			return
-		}
-		go tcpLocalHandler(conn, c)
-	}
+	RunTCPServer(c.Localaddr, c, ss.ListenSocks5, tcpLocalHandler)
 }
 
 func tcpLocalHandler(conn net.Conn, c *ss.Config)  {
@@ -38,8 +26,7 @@ func tcpLocalHandler(conn net.Conn, c *ss.Config)  {
 	if len(host) == 0 {
 		return
 	}
-	log.Println("connect to ", host, port, "from", conn.RemoteAddr().String())
-	rconn, err := ss.DialSS(net.JoinHostPort(host, strconv.Itoa(port)), c.Server, c)
+	rconn, err := ss.DialSS(net.JoinHostPort(host, strconv.Itoa(port)), c.Remoteaddr, c)
 	if err != nil {
 		return
 	}
@@ -48,5 +35,6 @@ func tcpLocalHandler(conn net.Conn, c *ss.Config)  {
 	if err != nil {
 		return
 	}
+	log.Println("connect to ", host, port, "from", conn.RemoteAddr().String())
 	ss.Pipe(conn, rconn)
 }

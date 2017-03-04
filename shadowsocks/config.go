@@ -6,12 +6,15 @@ import (
 )
 
 type Config struct {
-	Client   string `json:"client"`
-	Server   string `json:"server"`
-	Method   string `json:"method"`
-	Password string `json:"password"`
-	Nonop    bool `json:"nonop"`
-	Ivlen    int
+	Type       string `json:"type"`
+	Localaddr  string `json:"localaddr"`
+	Remoteaddr string `json:"remoteaddr"`
+	Method     string `json:"method"`
+	Password   string `json:"password"`
+	Nonop      bool `json:"nonop"`
+	Backend    *Config `json:"backend"`
+	Backends   []*Config `json:"backends"`
+	Ivlen      int
 }
 
 func ReadConfig(path string) (configs []*Config, err error) {
@@ -42,5 +45,18 @@ func CheckConfig(c *Config) {
 	}
 	if c.Ivlen == 0 {
 		c.Ivlen = GetIvLen(c.Method)
+	}
+	if c.Backend != nil {
+		c.Backends = append(c.Backends, c.Backend)
+	}
+	if len(c.Type) == 0 {
+		if len(c.Localaddr) != 0 && len(c.Remoteaddr) != 0 {
+			c.Type = "local"
+		} else if len(c.Localaddr) != 0 {
+			c.Type = "server"
+		}
+	}
+	for _, v := range c.Backends {
+		CheckConfig(v)
 	}
 }

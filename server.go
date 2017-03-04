@@ -10,22 +10,10 @@ import (
 )
 
 func RunTCPRemoteServer(c *ss.Config) {
-	ss.CheckConfig(c)
-	lis, err := ss.ListenSS(c.Server, c)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer lis.Close()
-	for {
-		conn, err := lis.Accept()
-		if err != nil {
-			return
-		}
-		go tcpRemoteHandler(conn)
-	}
+	RunTCPServer(c.Remoteaddr, c, ss.ListenSS, tcpRemoteHandler)
 }
 
-func tcpRemoteHandler(conn net.Conn) {
+func tcpRemoteHandler(conn net.Conn, _ *ss.Config) {
 	defer conn.Close()
 	C, ok := conn.(*ss.Conn)
 	var timer *time.Timer
@@ -68,6 +56,6 @@ func tcpRemoteHandler(conn net.Conn) {
 		}
 	}
 	buf = nil
-	log.Println("connect to ", host, port, "from", conn.RemoteAddr().String())
+	log.Println("proxy", host, port, "to", rconn.RemoteAddr().String(), "from", conn.RemoteAddr().String())
 	ss.Pipe(conn, rconn)
 }
