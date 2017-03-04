@@ -5,6 +5,8 @@ import (
 	"log"
 	"os"
 	"sync"
+	
+	ss "github.com/ccsexyz/shadowsocks-go/shadowsocks"
 )
 
 func main() {
@@ -12,7 +14,7 @@ func main() {
 		fmt.Println("usage: myss configfile")
 		return
 	}
-	configs, err := readConfig(os.Args[1])
+	configs, err := ss.ReadConfig(os.Args[1])
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -23,13 +25,13 @@ func main() {
 			log.Println("run server at ", c.Server, " method ", c.Method)
 			go func() {
 				defer wg.Done()
-				RunTCPRemoteServer(&c)
+				RunTCPRemoteServer(c)
 			}()
 		} else {
 			log.Println("run client at ", c.Client, " method ", c.Method)
 			go func() {
 				defer wg.Done()
-				RunTCPLocalServer(&c)
+				RunTCPLocalServer(c)
 			}()
 		}
 	}

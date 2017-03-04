@@ -1,4 +1,4 @@
-package main
+package shadowsocks
 
 import (
 	"crypto/rand"
@@ -9,7 +9,8 @@ import (
 const (
 	defaultMethod = "aes-256-cfb"
 	defaultPassword = "you should have a password"
-	buffersize    = 8192
+	//buffersize    = 8192
+	buffersize    = 4096
 	typeIPv4      = 1
 	typeDm        = 3
 	typeIPv6      = 4
@@ -58,7 +59,7 @@ func ParseAddr(b []byte) (host string, port int, data []byte) {
 	return
 }
 
-func pipe(c1, c2 net.Conn) {
+func Pipe(c1, c2 net.Conn) {
 	c1die := make(chan bool)
 	c2die := make(chan bool)
 	f := func(dst, src net.Conn, die chan bool, buf []byte) {

@@ -1,4 +1,4 @@
-package main
+package shadowsocks
 
 import (
 	"encoding/binary"

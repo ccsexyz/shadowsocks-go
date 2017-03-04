@@ -5,13 +5,13 @@ import (
 	"net"
 	"strconv"
 	"time"
+	
+	ss "github.com/ccsexyz/shadowsocks-go/shadowsocks"
 )
 
-func RunTCPRemoteServer(c *Config) {
-	if c.ivlen == 0 {
-		c.ivlen = getIvLen(c.Method)
-	}
-	lis, err := ListenSS(c.Server, c)
+func RunTCPRemoteServer(c *ss.Config) {
+	ss.CheckConfig(c)
+	lis, err := ss.ListenSS(c.Server, c)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -27,19 +27,16 @@ func RunTCPRemoteServer(c *Config) {
 
 func tcpRemoteHandler(conn net.Conn) {
 	defer conn.Close()
-	C, ok := conn.(*Conn)
+	C, ok := conn.(*ss.Conn)
 	var timer *time.Timer
 	if !ok || C == nil {
 		return
 	}
-	C.xu1s = true
+	C.Xu1s()
 	timer = time.AfterFunc(time.Second*4, func() {
-		// FIXME
-		if C.xu1s {
-			conn.Close()
-		}
+		C.Close()
 	})
-	buf := C.wbuf
+	buf := C.Wbuf()
 	n, err := conn.Read(buf)
 	if timer != nil {
 		timer.Stop()
@@ -49,7 +46,7 @@ func tcpRemoteHandler(conn net.Conn) {
 		log.Println(err)
 		return
 	}
-	host, port, data := ParseAddr(buf[:n])
+	host, port, data := ss.ParseAddr(buf[:n])
 	if len(host) == 0 {
 		log.Printf("recv a unexpected header from %s.", conn.RemoteAddr().String())
 		return
@@ -61,7 +58,7 @@ func tcpRemoteHandler(conn net.Conn) {
 	}
 	defer rconn.Close()
 	if C != nil {
-		C.xu1s = false
+		C.Xu0s()
 	}
 	if len(data) != 0 {
 		_, err = rconn.Write(data)
@@ -72,5 +69,5 @@ func tcpRemoteHandler(conn net.Conn) {
 	}
 	buf = nil
 	log.Println("connect to ", host, port, "from", conn.RemoteAddr().String())
-	pipe(conn, rconn)
+	ss.Pipe(conn, rconn)
 }

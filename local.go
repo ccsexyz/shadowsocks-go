@@ -4,13 +4,12 @@ import (
 	"net"
 	"log"
 	"strconv"
+	ss "github.com/ccsexyz/shadowsocks-go/shadowsocks"
 )
 
-func RunTCPLocalServer(c *Config) {
-	if c.ivlen == 0 {
-		c.ivlen = getIvLen(c.Method)
-	}
-	lis, err := ListenSocks5(c.Client, c)
+func RunTCPLocalServer(c *ss.Config) {
+	ss.CheckConfig(c)
+	lis, err := ss.ListenSocks5(c.Client, c)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -24,23 +23,23 @@ func RunTCPLocalServer(c *Config) {
 	}
 }
 
-func tcpLocalHandler(conn net.Conn, c *Config)  {
+func tcpLocalHandler(conn net.Conn, c *ss.Config)  {
 	defer conn.Close()
 	buf := make([]byte, 512)
 	n, err := conn.Read(buf)
 	if err != nil {
 		return
 	}
-	if buf[0] != 5 || buf[1] != 1 || (buf[3] != typeDm && buf[3] != typeIPv4 && buf[3] != typeIPv6) {
+	if buf[0] != 5 || buf[1] != 1 {
 		return
 	}
 	buf = buf[3:n]
-	host, port, _ := ParseAddr(buf)
+	host, port, _ := ss.ParseAddr(buf)
 	if len(host) == 0 {
 		return
 	}
 	log.Println("connect to ", host, port, "from", conn.RemoteAddr().String())
-	rconn, err := DialSS(net.JoinHostPort(host, strconv.Itoa(port)), c.Server, c)
+	rconn, err := ss.DialSS(net.JoinHostPort(host, strconv.Itoa(port)), c.Server, c)
 	if err != nil {
 		return
 	}
@@ -49,5 +48,5 @@ func tcpLocalHandler(conn net.Conn, c *Config)  {
 	if err != nil {
 		return
 	}
-	pipe(conn, rconn)
+	ss.Pipe(conn, rconn)
 }

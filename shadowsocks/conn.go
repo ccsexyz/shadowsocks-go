@@ -1,4 +1,4 @@
-package main
+package shadowsocks
 
 import (
 	"io"
@@ -34,9 +34,9 @@ func (c *Conn) Close() error {
 	if c.xu1s {
 		c.wbuf = nil
 		c.rbuf = nil
+		c.xu1s = false
 		select {
 		case <-xudie:
-			c.xu1s = false
 		case xuch <- c.Conn:
 			return nil
 		}
@@ -53,13 +53,25 @@ func NewConn(conn net.Conn, c *Config) *Conn {
 	}
 }
 
+func (c *Conn) Xu1s() {
+	c.xu1s = true
+}
+
+func (c *Conn) Xu0s() {
+	c.xu1s = false
+}
+
+func (c *Conn) Wbuf() []byte {
+	return c.wbuf
+}
+
 func (c *Conn) Read(b []byte) (n int, err error) {
 	if c.dec == nil {
-		_, err = io.ReadFull(c.Conn, c.rbuf[:c.c.ivlen])
+		_, err = io.ReadFull(c.Conn, c.rbuf[:c.c.Ivlen])
 		if err != nil {
 			return
 		}
-		c.dec, err = NewDecrypter(c.c.Method, c.c.Password, c.rbuf[:c.c.ivlen])
+		c.dec, err = NewDecrypter(c.c.Method, c.c.Password, c.rbuf[:c.c.Ivlen])
 		if err != nil {
 			return
 		}

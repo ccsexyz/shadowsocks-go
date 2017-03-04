@@ -1,4 +1,4 @@
-package main
+package shadowsocks
 
 import (
 	"encoding/json"
@@ -10,10 +10,10 @@ type Config struct {
 	Server   string `json:"server"`
 	Method   string `json:"method"`
 	Password string `json:"password"`
-	ivlen    int
+	Ivlen    int
 }
 
-func readConfig(path string) (configs []Config, err error) {
+func ReadConfig(path string) (configs []*Config, err error) {
 	bytes, err := ioutil.ReadFile(path)
 	if err != nil {
 		return
@@ -23,14 +23,23 @@ func readConfig(path string) (configs []Config, err error) {
 		var c Config
 		err = json.Unmarshal(bytes, &c)
 		if err == nil {
-			if len(c.Password) == 0 {
-				c.Password = defaultPassword
-			}
-			if len(c.Method) == 0 {
-				c.Method = defaultMethod
-			}
-			configs = append(configs, c)
+			configs = append(configs, &c)
 		}
 	}
+	for _, c := range configs {
+		CheckConfig(c)
+	}
 	return
+}
+
+func CheckConfig(c *Config) {
+	if len(c.Password) == 0 {
+		c.Password = defaultPassword
+	}
+	if len(c.Method) == 0 {
+		c.Method = defaultMethod
+	}
+	if c.Ivlen == 0 {
+		c.Ivlen = GetIvLen(c.Method)
+	}
 }

@@ -1,4 +1,4 @@
-package main
+package shadowsocks
 
 import (
 	"crypto/aes"
@@ -16,7 +16,6 @@ type Encrypter interface {
 
 type Decrypter interface {
 	Decrypt(dst, src []byte)
-	// SetIV([]byte)
 }
 
 // key-derivation function from original Shadowsocks
@@ -146,7 +145,7 @@ func NewDecrypter(method, password string, iv []byte) (dec Decrypter, err error)
 	return
 }
 
-func getIvLen(method string) int {
+func GetIvLen(method string) int {
 	m, ok := cipherMethod[method]
 	if ok {
 		return m.ivlen
