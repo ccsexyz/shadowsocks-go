@@ -6,7 +6,6 @@ import (
 	"math/rand"
 	"net"
 	"time"
-	"fmt"
 )
 
 var (
@@ -21,6 +20,11 @@ func init() {
 	go xuroutine()
 }
 
+type ConnTarget struct {
+	Addr string
+	Remain []byte
+}
+
 type Conn struct {
 	net.Conn
 	enc  Encrypter
@@ -29,6 +33,7 @@ type Conn struct {
 	wbuf []byte
 	c    *Config
 	xu1s bool
+	Target *ConnTarget
 }
 
 func (c *Conn) GetIV() (enciv []byte, deciv []byte) {
@@ -81,19 +86,6 @@ func (c *Conn) Read(b []byte) (n int, err error) {
 		_, err = io.ReadFull(c.Conn, c.rbuf[:c.c.Ivlen])
 		if err != nil {
 			return
-		}
-		if c.c.Type == "server" || c.c.Type == "ssproxy" {
-			iv := string(c.rbuf[:c.c.Ivlen])
-			c.c.IvMapLock.Lock()
-			_, ok := c.c.IvMap[iv]
-			if !ok {
-				c.c.IvMap[iv] = true
-			}
-			c.c.IvMapLock.Unlock()
-			if ok {
-				err = fmt.Errorf("receive duplicate iv from %s, this means that you maight be attacked!", c.RemoteAddr().String())
-				return
-			}
 		}
 		c.dec, err = NewDecrypter(c.c.Method, c.c.Password, c.rbuf[:c.c.Ivlen])
 		if err != nil {
