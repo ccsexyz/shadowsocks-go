@@ -10,6 +10,7 @@ type Config struct {
 	Server   string `json:"server"`
 	Method   string `json:"method"`
 	Password string `json:"password"`
+	Nonop    bool `json:"nonop"`
 	Ivlen    int
 }
 

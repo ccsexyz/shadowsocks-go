@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"fmt"
 	"io"
+	"crypto/rand"
 )
 
 type sslistener struct {
@@ -47,23 +48,14 @@ func DialSS(target, service string, c *Config) (conn net.Conn, err error) {
 	if err != nil {
 		return
 	}
+	var buf [512]byte
 	hostLen := len(host)
 	headerLen := hostLen + 4
-	conn, err = net.Dial("tcp", service)
-	if err != nil {
-		return
-	}
-	conn = NewConn(conn, c)
-	buf := conn.(*Conn).rbuf[:headerLen]
 	buf[0] = typeDm
 	buf[1] = byte(hostLen)
 	copy(buf[2:], []byte(host))
 	binary.BigEndian.PutUint16(buf[hostLen+2:], uint16(portNum))
-	_, err = conn.Write(buf)
-	if err != nil {
-		conn.Close()
-	}
-	return
+	return DialSSWithRawHeader(buf[:headerLen], service, c)
 }
 
 func DialSSWithRawHeader(header []byte, service string, c *Config) (conn net.Conn, err error) {
@@ -72,7 +64,18 @@ func DialSSWithRawHeader(header []byte, service string, c *Config) (conn net.Con
 		return
 	}
 	conn = NewConn(conn, c)
-	_, err = conn.Write(header)
+	C := conn.(*Conn)
+	buf := C.rbuf
+	var n int
+	if !c.Nonop {
+		buf[0] = typeNop
+		noplen := int(src.Int63() % 128)
+		buf[1] = byte(noplen)
+		binary.Read(rand.Reader, binary.BigEndian, buf[2:2+noplen])
+		n = noplen + 2
+	}
+	copy(buf[n:], header)
+	_, err = conn.Write(buf[:n+len(header)])
 	if err != nil {
 		conn.Close()
 	}

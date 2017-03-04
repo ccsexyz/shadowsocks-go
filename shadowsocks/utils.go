@@ -14,6 +14,7 @@ const (
 	typeIPv4      = 1
 	typeDm        = 3
 	typeIPv6      = 4
+	typeNop       = 0x90 // [nop 1 byte] [noplen 1 byte (< 128)] [random data noplen byte]
 	lenIPv4       = 4
 	lenIPv6       = 16
 )
@@ -33,6 +34,15 @@ func ParseAddr(b []byte) (host string, port int, data []byte) {
 		return
 	}
 	atyp := b[0]
+	for atyp == typeNop {
+		noplen := int(b[1])
+		if n < noplen + 2 + 1 {
+			return
+		}
+		b = b[noplen+2:]
+		n = len(b)
+		atyp = b[0]
+	}
 	switch atyp {
 	default:
 		return
