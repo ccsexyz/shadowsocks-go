@@ -5,9 +5,10 @@ import (
 	"crypto/cipher"
 	"crypto/md5"
 	"fmt"
-	
-	"github.com/Yawning/chacha20"
+
 	"crypto/rc4"
+
+	"github.com/Yawning/chacha20"
 )
 
 type IV struct {

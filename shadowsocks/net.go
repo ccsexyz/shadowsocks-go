@@ -1,15 +1,15 @@
 package shadowsocks
 
 import (
+	"crypto/rand"
 	"encoding/binary"
-	"net"
-	"strconv"
 	"fmt"
 	"io"
-	"crypto/rand"
-	"time"
 	"log"
+	"net"
+	"strconv"
 	"sync"
+	"time"
 )
 
 type listener struct {
@@ -99,7 +99,6 @@ func (lis *listener) Accept() (conn net.Conn, err error) {
 	return
 }
 
-
 func ListenSS(service string, c *Config) (lis net.Listener, err error) {
 	addr, err := net.ResolveTCPAddr("tcp", service)
 	if err != nil {
@@ -152,7 +151,7 @@ func ssAcceptHandler(conn net.Conn, lis *listener) {
 		return
 	}
 	C.Target = &ConnTarget{
-		Addr: net.JoinHostPort(host, strconv.Itoa(port)),
+		Addr:   net.JoinHostPort(host, strconv.Itoa(port)),
 		Remain: data,
 	}
 	select {
@@ -176,7 +175,7 @@ func ListenSocks5(address string, c *Config) (lis net.Listener, err error) {
 	return
 }
 
-func socksAcceptor(conn net.Conn, lis *listener)  {
+func socksAcceptor(conn net.Conn, lis *listener) {
 	defer func() {
 		if conn != nil {
 			conn.Close()
@@ -243,6 +242,11 @@ func DialSSWithRawHeader(header []byte, service string, c *Config) (conn net.Con
 	if err != nil {
 		conn.Close()
 	}
+	return
+}
+
+func ListenTCPTun(address string, c *Config) (lis net.Listener, err error) {
+	lis, err = net.Listen("tcp", address)
 	return
 }
 

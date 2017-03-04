@@ -1,10 +1,11 @@
 package main
 
-import "net"
 import (
-	ss "github.com/ccsexyz/shadowsocks-go/shadowsocks"
-	"log"
 	"fmt"
+	"log"
+	"net"
+
+	ss "github.com/ccsexyz/shadowsocks-go/shadowsocks"
 )
 
 func RunSSProxyServer(c *ss.Config) {
@@ -31,14 +32,14 @@ func ssproxyHandler(conn net.Conn, c *ss.Config) {
 			if err != nil {
 				select {
 				case <-die:
-				case errch<-fmt.Errorf("cannot connect to %s : %s", v.Remoteaddr, err.Error()):
+				case errch <- fmt.Errorf("cannot connect to %s : %s", v.Remoteaddr, err.Error()):
 				}
 				return
 			}
 			select {
 			case <-die:
 				rconn.Close()
-			case conch<-rconn:
+			case conch <- rconn:
 			}
 		}(v)
 	}

@@ -21,18 +21,18 @@ func init() {
 }
 
 type ConnTarget struct {
-	Addr string
+	Addr   string
 	Remain []byte
 }
 
 type Conn struct {
 	net.Conn
-	enc  Encrypter
-	dec  Decrypter
-	rbuf []byte
-	wbuf []byte
-	c    *Config
-	xu1s bool
+	enc    Encrypter
+	dec    Decrypter
+	rbuf   []byte
+	wbuf   []byte
+	c      *Config
+	xu1s   bool
 	Target *ConnTarget
 }
 
@@ -48,8 +48,6 @@ func (c *Conn) GetIV() (enciv []byte, deciv []byte) {
 
 func (c *Conn) Close() error {
 	if c.xu1s {
-		c.wbuf = nil
-		c.rbuf = nil
 		c.xu1s = false
 		select {
 		case <-xudie:

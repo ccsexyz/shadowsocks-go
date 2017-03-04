@@ -38,6 +38,12 @@ func main() {
 			case "socksproxy":
 				log.Println("run socks proxy at", c.Localaddr, "with method", c.Method)
 				RunSocksProxyServer(c)
+			case "tcptun":
+				if len(c.Localaddr) == 0 || c.Backend == nil || len(c.Backend.Remoteaddr) == 0 {
+					break
+				}
+				log.Println("run tcp tunnel at", c.Localaddr, "to", c.Remoteaddr)
+				RunTCPTunServer(c)
 			}
 		}(c)
 	}

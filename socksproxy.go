@@ -1,18 +1,19 @@
 package main
 
 import (
-	ss "github.com/ccsexyz/shadowsocks-go/shadowsocks"
-	"net"
-	"strconv"
 	"fmt"
 	"log"
+	"net"
+	"strconv"
+
+	ss "github.com/ccsexyz/shadowsocks-go/shadowsocks"
 )
 
 func RunSocksProxyServer(c *ss.Config) {
 	RunTCPServer(c.Localaddr, c, ss.ListenSocks5, socksProxyHandler)
 }
 
-func socksProxyHandler(conn net.Conn, c *ss.Config)  {
+func socksProxyHandler(conn net.Conn, c *ss.Config) {
 	defer conn.Close()
 	buf := make([]byte, 512)
 	n, err := conn.Read(buf)
@@ -36,14 +37,14 @@ func socksProxyHandler(conn net.Conn, c *ss.Config)  {
 			if err != nil {
 				select {
 				case <-die:
-				case errch<-fmt.Errorf("cannot connect to %s : %s", v.Remoteaddr, err.Error()):
+				case errch <- fmt.Errorf("cannot connect to %s : %s", v.Remoteaddr, err.Error()):
 				}
 				return
 			}
 			select {
 			case <-die:
 				rconn.Close()
-			case conch<-rconn:
+			case conch <- rconn:
 			}
 		}(v)
 	}

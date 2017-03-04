@@ -1,9 +1,10 @@
 package main
 
 import (
-	"net"
 	"log"
+	"net"
 	"strconv"
+
 	ss "github.com/ccsexyz/shadowsocks-go/shadowsocks"
 )
 
@@ -11,7 +12,7 @@ func RunTCPLocalServer(c *ss.Config) {
 	RunTCPServer(c.Localaddr, c, ss.ListenSocks5, tcpLocalHandler)
 }
 
-func tcpLocalHandler(conn net.Conn, c *ss.Config)  {
+func tcpLocalHandler(conn net.Conn, c *ss.Config) {
 	defer conn.Close()
 	buf := make([]byte, 512)
 	n, err := conn.Read(buf)
