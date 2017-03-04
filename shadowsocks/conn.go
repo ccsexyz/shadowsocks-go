@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"net"
 	"time"
+	"fmt"
 )
 
 var (
@@ -28,6 +29,16 @@ type Conn struct {
 	wbuf []byte
 	c    *Config
 	xu1s bool
+}
+
+func (c *Conn) GetIV() (enciv []byte, deciv []byte) {
+	if c.dec != nil {
+		deciv = c.dec.GetIV()
+	}
+	if c.enc != nil {
+		enciv = c.enc.GetIV()
+	}
+	return
 }
 
 func (c *Conn) Close() error {
@@ -70,6 +81,19 @@ func (c *Conn) Read(b []byte) (n int, err error) {
 		_, err = io.ReadFull(c.Conn, c.rbuf[:c.c.Ivlen])
 		if err != nil {
 			return
+		}
+		if c.c.Type == "server" || c.c.Type == "ssproxy" {
+			iv := string(c.rbuf[:c.c.Ivlen])
+			c.c.IvMapLock.Lock()
+			_, ok := c.c.IvMap[iv]
+			if !ok {
+				c.c.IvMap[iv] = true
+			}
+			c.c.IvMapLock.Unlock()
+			if ok {
+				err = fmt.Errorf("receive duplicate iv from %s, this means that you maight be attacked!", c.RemoteAddr().String())
+				return
+			}
 		}
 		c.dec, err = NewDecrypter(c.c.Method, c.c.Password, c.rbuf[:c.c.Ivlen])
 		if err != nil {
@@ -133,7 +157,7 @@ func xuroutine() {
 				b = int(src.Int63()%16 + 1)
 				a += b
 			}
-			log.Println("续了", a, "秒")
+			log.Println("you have xu ", a, "seconds")
 			mn[s] = a
 			mc[s] = c
 		case <-ticker.C:

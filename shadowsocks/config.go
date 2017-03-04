@@ -3,6 +3,8 @@ package shadowsocks
 import (
 	"encoding/json"
 	"io/ioutil"
+	"sync"
+	"time"
 )
 
 type Config struct {
@@ -15,6 +17,8 @@ type Config struct {
 	Backend    *Config `json:"backend"`
 	Backends   []*Config `json:"backends"`
 	Ivlen      int
+	IvMap      map[string]bool
+	IvMapLock  sync.Mutex
 }
 
 func ReadConfig(path string) (configs []*Config, err error) {
@@ -56,7 +60,39 @@ func CheckConfig(c *Config) {
 			c.Type = "server"
 		}
 	}
+	if c.Type == "server" || c.Type == "ssproxy" {
+		if c.IvMap == nil {
+			c.IvMap = make(map[string]bool)
+		}
+	}
 	for _, v := range c.Backends {
 		CheckConfig(v)
+	}
+}
+
+func (c *Config) ivMapCleaner() {
+	ticker := time.NewTicker(time.Minute)
+	flag := false
+	for _ = range ticker.C {
+		c.IvMapLock.Lock()
+		lenIvMap := len(c.IvMap)
+		if flag && lenIvMap < ivmapLowWaterLevel {
+			flag = false
+		} else if !flag && lenIvMap > ivmapHighWaterLevel {
+			flag = true
+		}
+		if !flag {
+			c.IvMapLock.Unlock()
+			continue
+		}
+		lenIvMap /= 10
+		for k, _ := range c.IvMap {
+			lenIvMap--
+			delete(c.IvMap, k)
+			if lenIvMap < 0 {
+				break
+			}
+		}
+		c.IvMapLock.Unlock()
 	}
 }

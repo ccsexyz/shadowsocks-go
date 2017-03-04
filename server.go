@@ -13,7 +13,7 @@ func RunTCPRemoteServer(c *ss.Config) {
 	RunTCPServer(c.Localaddr, c, ss.ListenSS, tcpRemoteHandler)
 }
 
-func tcpRemoteHandler(conn net.Conn, _ *ss.Config) {
+func tcpRemoteHandler(conn net.Conn, c *ss.Config) {
 	defer conn.Close()
 	C, ok := conn.(*ss.Conn)
 	var timer *time.Timer
@@ -56,6 +56,6 @@ func tcpRemoteHandler(conn net.Conn, _ *ss.Config) {
 		}
 	}
 	buf = nil
-	log.Println("proxy", host, port, "to", rconn.RemoteAddr().String(), "from", conn.RemoteAddr().String())
+	log.Println("connect to", host, port, "from", conn.RemoteAddr().String())
 	ss.Pipe(conn, rconn)
 }

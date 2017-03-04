@@ -5,9 +5,18 @@ import (
 	"crypto/cipher"
 	"crypto/md5"
 	"fmt"
-
+	
 	"github.com/Yawning/chacha20"
+	"crypto/rc4"
 )
+
+type IV struct {
+	iv []byte
+}
+
+func (iv *IV) GetIV() []byte {
+	return iv.iv
+}
 
 type Encrypter interface {
 	Encrypt(dst, src []byte)
@@ -16,8 +25,10 @@ type Encrypter interface {
 
 type Decrypter interface {
 	Decrypt(dst, src []byte)
+	GetIV() []byte
 }
 
+// copy from https://github.com/riobard/go-shadowsocks2/blob/master/core/cipher.go
 // key-derivation function from original Shadowsocks
 func kdf(password string, keyLen int) []byte {
 	var b, prev []byte
@@ -30,14 +41,6 @@ func kdf(password string, keyLen int) []byte {
 		h.Reset()
 	}
 	return b[:keyLen]
-}
-
-type BaseEncrypter struct {
-	iv []byte
-}
-
-func (e *BaseEncrypter) GetIV() []byte {
-	return e.iv
 }
 
 type BaseStreamCipher struct {
@@ -53,7 +56,7 @@ func (c *BaseStreamCipher) Decrypt(dst, src []byte) {
 }
 
 type StreamEncrypter struct {
-	BaseEncrypter
+	IV
 	BaseStreamCipher
 }
 
@@ -63,7 +66,7 @@ func NewAESCFBEncrypter(key, iv []byte) (enc Encrypter, err error) {
 		return
 	}
 	enc = &StreamEncrypter{
-		BaseEncrypter:    BaseEncrypter{iv: iv},
+		IV:               IV{iv: iv},
 		BaseStreamCipher: BaseStreamCipher{stream: cipher.NewCFBEncrypter(block, iv)},
 	}
 	return
@@ -75,13 +78,38 @@ func NewChaCha20Encrypter(key, iv []byte) (enc Encrypter, err error) {
 		return
 	}
 	enc = &StreamEncrypter{
-		BaseEncrypter:    BaseEncrypter{iv: iv},
+		IV:               IV{iv: iv},
+		BaseStreamCipher: BaseStreamCipher{stream: stream},
+	}
+	return
+}
+
+func NewAESCTREncrypter(key, iv []byte) (enc Encrypter, err error) {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return
+	}
+	enc = &StreamEncrypter{
+		IV:               IV{iv: iv},
+		BaseStreamCipher: BaseStreamCipher{stream: cipher.NewCTR(block, iv)},
+	}
+	return
+}
+
+func NewRC4MD5Encrypter(key, iv []byte) (enc Encrypter, err error) {
+	stream, err := newRC4MD5Stream(key, iv)
+	if err != nil {
+		return
+	}
+	enc = &StreamEncrypter{
+		IV:               IV{iv: iv},
 		BaseStreamCipher: BaseStreamCipher{stream: stream},
 	}
 	return
 }
 
 type StreamDecrypter struct {
+	IV
 	BaseStreamCipher
 }
 
@@ -90,8 +118,11 @@ func NewAESCFBDecrypter(key, iv []byte) (dec Decrypter, err error) {
 	if err != nil {
 		return
 	}
+	iv2 := make([]byte, len(iv))
+	copy(iv2, iv)
 	dec = &StreamDecrypter{
-		BaseStreamCipher: BaseStreamCipher{stream: cipher.NewCFBDecrypter(block, iv)},
+		BaseStreamCipher: BaseStreamCipher{stream: cipher.NewCFBDecrypter(block, iv2)},
+		IV:               IV{iv: iv2},
 	}
 	return
 }
@@ -101,10 +132,48 @@ func NewChaCha20Decrypter(key, iv []byte) (dec Decrypter, err error) {
 	if err != nil {
 		return
 	}
+	iv2 := make([]byte, len(iv))
+	copy(iv2, iv)
 	dec = &StreamDecrypter{
 		BaseStreamCipher: BaseStreamCipher{stream: stream},
+		IV:               IV{iv: iv2},
 	}
 	return
+}
+
+func NewAESCTRDecrypter(key, iv []byte) (dec Decrypter, err error) {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return
+	}
+	iv2 := make([]byte, len(iv))
+	copy(iv2, iv)
+	dec = &StreamDecrypter{
+		BaseStreamCipher: BaseStreamCipher{stream: cipher.NewCTR(block, iv2)},
+		IV:               IV{iv: iv2},
+	}
+	return
+}
+
+func NewRC4MD5Decrypter(key, iv []byte) (dec Decrypter, err error) {
+	stream, err := newRC4MD5Stream(key, iv)
+	if err != nil {
+		return
+	}
+	iv2 := make([]byte, len(iv))
+	copy(iv2, iv)
+	dec = &StreamDecrypter{
+		BaseStreamCipher: BaseStreamCipher{stream: stream},
+		IV:               IV{iv: iv2},
+	}
+	return
+}
+
+func newRC4MD5Stream(key, iv []byte) (cipher.Stream, error) {
+	m := md5.New()
+	m.Write(key)
+	m.Write(iv)
+	return rc4.NewCipher(m.Sum(nil))
 }
 
 var cipherMethod = map[string]struct {
@@ -113,10 +182,15 @@ var cipherMethod = map[string]struct {
 	newEncrypter func(key, iv []byte) (enc Encrypter, err error)
 	newDecrypter func(key, iv []byte) (dec Decrypter, err error)
 }{
-	"aes-128-cfb": {16, 16, NewAESCFBEncrypter, NewAESCFBDecrypter},
-	"aes-192-cfb": {24, 16, NewAESCFBEncrypter, NewAESCFBDecrypter},
-	"aes-256-cfb": {32, 16, NewAESCFBEncrypter, NewAESCFBDecrypter},
-	"chacha20":    {32, 8, NewChaCha20Encrypter, NewChaCha20Decrypter},
+	"aes-128-ctr":   {16, 16, NewAESCTREncrypter, NewAESCTRDecrypter},
+	"aes-192-ctr":   {24, 16, NewAESCTREncrypter, NewAESCTRDecrypter},
+	"aes-256-ctr":   {32, 16, NewAESCTREncrypter, NewAESCTRDecrypter},
+	"aes-128-cfb":   {16, 16, NewAESCFBEncrypter, NewAESCFBDecrypter},
+	"aes-192-cfb":   {24, 16, NewAESCFBEncrypter, NewAESCFBDecrypter},
+	"aes-256-cfb":   {32, 16, NewAESCFBEncrypter, NewAESCFBDecrypter},
+	"chacha20":      {32, 8, NewChaCha20Encrypter, NewChaCha20Decrypter},
+	"chacha20-ietf": {32, 12, NewChaCha20Encrypter, NewChaCha20Decrypter},
+	"rc4-md5":       {16, 16, NewRC4MD5Encrypter, NewRC4MD5Decrypter},
 }
 
 func NewEncrypter(method, password string) (enc Encrypter, err error) {
