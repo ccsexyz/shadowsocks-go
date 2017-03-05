@@ -28,9 +28,17 @@ func main() {
 				log.Println("unsupported server type")
 			case "local":
 				log.Println("run client at", c.Localaddr, "with method", c.Method)
+				if c.UdpRelay {
+					log.Println("run udp local server at", c.Localaddr, "with method", c.Method)
+					go RunUDPLocalServer(c)
+				}
 				RunTCPLocalServer(c)
 			case "server":
 				log.Println("run server at", c.Localaddr, "with method", c.Method)
+				if c.UdpRelay {
+					log.Println("run udp remote server at", c.Localaddr, "with method", c.Method)
+					go RunUDPRemoteServer(c)
+				}
 				RunTCPRemoteServer(c)
 			case "ssproxy":
 				log.Println("run ss proxy at", c.Localaddr, "with method", c.Method)

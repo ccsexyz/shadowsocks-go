@@ -6,6 +6,8 @@ import (
 	"math/rand"
 	"net"
 	"time"
+	"encoding/binary"
+	"fmt"
 )
 
 var (
@@ -169,4 +171,47 @@ func xuroutine() {
 			}
 		}
 	}
+}
+
+// FIXME
+type Conn2 struct {
+	net.Conn
+}
+
+// FIXME
+func NewConn2(conn net.Conn) net.Conn {
+	return &Conn2{
+		Conn: conn,
+	}
+}
+
+func (c *Conn2) Read(b []byte) (n int, err error) {
+	_, err = io.ReadFull(c.Conn, b[:2])
+	nbytes := binary.BigEndian.Uint16(b[:2])
+	if nbytes > 1500 {
+		err = fmt.Errorf("wrong nbytes %d", nbytes)
+		return
+	}
+	_, err = io.ReadFull(c.Conn, b[:int(nbytes)])
+	if err != nil {
+		return
+	}
+	n = int(nbytes)
+	return
+}
+
+func (c *Conn2) Write(b []byte) (n int, err error) {
+	n = len(b)
+	if n > 1500 {
+		err = fmt.Errorf("cannot write %d bytes", n)
+		return
+	}
+	var buf [2]byte
+	binary.BigEndian.PutUint16(buf[:], uint16(n))
+	_, err = c.Conn.Write(buf[:])
+	if err != nil {
+		return
+	}
+	_, err = c.Conn.Write(b)
+	return
 }

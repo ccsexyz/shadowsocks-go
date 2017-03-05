@@ -6,15 +6,17 @@ import (
 )
 
 type Config struct {
-	Type       string    `json:"type"`
-	Localaddr  string    `json:"localaddr"`
-	Remoteaddr string    `json:"remoteaddr"`
-	Method     string    `json:"method"`
-	Password   string    `json:"password"`
-	Nonop      bool      `json:"nonop"`
-	Backend    *Config   `json:"backend"`
-	Backends   []*Config `json:"backends"`
-	Ivlen      int
+	Type         string    `json:"type"`
+	Localaddr    string    `json:"localaddr"`
+	Remoteaddr   string    `json:"remoteaddr"`
+	Method       string    `json:"method"`
+	Password     string    `json:"password"`
+	Nonop        bool      `json:"nonop"`
+	UdpRelay     bool `json:"udprelay"`
+	UdpOverTCP bool `json:"udpovertcp"`
+	Backend      *Config   `json:"backend"`
+	Backends     []*Config `json:"backends"`
+	Ivlen        int
 }
 
 func ReadConfig(path string) (configs []*Config, err error) {
@@ -55,6 +57,12 @@ func CheckConfig(c *Config) {
 		} else if len(c.Localaddr) != 0 {
 			c.Type = "server"
 		}
+	}
+	if c.UdpRelay && c.Type != "server" && c.Type != "local" {
+		c.UdpRelay = false
+	}
+	if c.UdpOverTCP && c.Type != "server" && c.Type != "local" {
+		c.UdpOverTCP = false
 	}
 	for _, v := range c.Backends {
 		CheckConfig(v)

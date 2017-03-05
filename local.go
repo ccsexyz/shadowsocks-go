@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	ss "github.com/ccsexyz/shadowsocks-go/shadowsocks"
+	"encoding/binary"
 )
 
 func RunTCPLocalServer(c *ss.Config) {
@@ -19,12 +20,28 @@ func tcpLocalHandler(conn net.Conn, c *ss.Config) {
 	if err != nil {
 		return
 	}
-	if buf[0] != 5 || buf[1] != 1 {
+	ver := buf[0]
+	cmd := buf[1]
+	if ver != 5 || (cmd != 1 && cmd != 3) || (!c.UdpRelay && cmd == 3) {
 		return
 	}
-	buf = buf[3:n]
-	host, port, _ := ss.ParseAddr(buf)
+	host, port, _ := ss.ParseAddr(buf[3:n])
 	if len(host) == 0 {
+		return
+	}
+	if c.UdpRelay && cmd == 3 {
+		addr, err := net.ResolveUDPAddr("udp", c.Localaddr)
+		if err != nil {
+			return
+		}
+		copy(buf, []byte{5, 0, 0, 1})
+		copy(buf[4:], addr.IP.To4())
+		binary.BigEndian.PutUint16(buf[8:], uint16(addr.Port))
+		_, err = conn.Write(buf[:10])
+		log.Println("udp relay to", host, port, "from", conn.RemoteAddr().String())
+		for err == nil {
+			_, err = conn.Read(buf)
+		}
 		return
 	}
 	rconn, err := ss.DialSS(net.JoinHostPort(host, strconv.Itoa(port)), c.Remoteaddr, c)

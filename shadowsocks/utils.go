@@ -18,14 +18,19 @@ const (
 	lenIPv6             = 16
 	ivmapHighWaterLevel = 100000
 	ivmapLowWaterLevel  = 10000
+	Udprelayaddr        = "UdpRelayOverTcp:65535"
 )
 
-func getRandBytes(len int) []byte {
+func PutRandomBytes(b []byte) {
+	binary.Read(rand.Reader, binary.BigEndian, b)
+}
+
+func GetRandomBytes(len int) []byte {
 	if len <= 0 {
 		return nil
 	}
 	data := make([]byte, len)
-	binary.Read(rand.Reader, binary.BigEndian, data)
+	PutRandomBytes(data)
 	return data
 }
 
@@ -49,14 +54,14 @@ func ParseAddr(b []byte) (host string, port int, data []byte) {
 		return
 	case typeIPv4:
 		data = b[lenIPv4+2+1:]
-		host = net.IP(b[1 : lenIPv4+1]).String()
+		host = net.IP(b[1: lenIPv4+1]).String()
 		port = int(binary.BigEndian.Uint16(b[lenIPv4+1:]))
 	case typeIPv6:
 		if n < lenIPv6+2+1 {
 			return
 		}
 		data = b[lenIPv6+2+1:]
-		host = net.IP(b[1 : 1+lenIPv6]).String()
+		host = net.IP(b[1: 1+lenIPv6]).String()
 		port = int(binary.BigEndian.Uint16(b[lenIPv6+1:]))
 	case typeDm:
 		dmlen := int(b[1])
@@ -64,7 +69,7 @@ func ParseAddr(b []byte) (host string, port int, data []byte) {
 			return
 		}
 		data = b[dmlen+1+2+1:]
-		host = string(b[2 : 2+dmlen])
+		host = string(b[2: 2+dmlen])
 		port = int(binary.BigEndian.Uint16(b[dmlen+2:]))
 	}
 	return
@@ -75,16 +80,12 @@ func Pipe(c1, c2 net.Conn) {
 	c2die := make(chan bool)
 	f := func(dst, src net.Conn, die chan bool, buf []byte) {
 		defer close(die)
-		for {
-			n, err := src.Read(buf)
-			if n > 0 {
-				_, err := dst.Write(buf[:n])
-				if err != nil {
-					return
-				}
-			}
-			if err != nil {
-				return
+		var n int
+		var err error
+		for err == nil {
+			n, err = src.Read(buf)
+			if n > 0 || err == nil {
+				_, err = dst.Write(buf[:n])
 			}
 		}
 	}

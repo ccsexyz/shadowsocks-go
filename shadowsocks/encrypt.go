@@ -203,7 +203,7 @@ func NewEncrypter(method, password string) (enc Encrypter, err error) {
 	if !ok {
 		m, _ = cipherMethod[defaultMethod]
 	}
-	enc, err = m.newEncrypter(kdf(password, m.keylen), getRandBytes(m.ivlen))
+	enc, err = m.newEncrypter(kdf(password, m.keylen), GetRandomBytes(m.ivlen))
 	return
 }
 

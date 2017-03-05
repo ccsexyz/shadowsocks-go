@@ -203,6 +203,10 @@ func socksAcceptor(conn net.Conn, lis *listener) {
 }
 
 func DialSS(target, service string, c *Config) (conn net.Conn, err error) {
+	if len(target) > 255 {
+		err = fmt.Errorf("target length is too long")
+		return
+	}
 	host, port, err := net.SplitHostPort(target)
 	if err != nil {
 		return
@@ -260,4 +264,22 @@ func NewSSDialer(c *Config) func(string) (net.Conn, error) {
 	return func(addr string) (net.Conn, error) {
 		return DialSS(addr, c.Remoteaddr, c)
 	}
+}
+
+func DialUDPOverTCP(target, service string, c *Config) (conn net.Conn, err error) {
+	conn, err = DialSS(Udprelayaddr, service, c)
+	if err != nil {
+		return
+	}
+	var buf [512]byte
+	buf[0] = byte(len(target))
+	copy(buf[1:], []byte(target))
+	_, err = conn.Write(buf[:1+len(target)])
+	if err != nil {
+		conn.Close()
+		conn = nil
+		return
+	}
+	conn = NewConn2(conn)
+	return
 }
