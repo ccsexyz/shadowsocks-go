@@ -1,9 +1,8 @@
 package shadowsocks
 
 import (
-	"net"
 	"fmt"
-	"log"
+	"net"
 )
 
 // Note: UDPConn will drop any packet that is longer than 1500
@@ -19,9 +18,9 @@ type UDPConn struct {
 func NewUDPConn(conn *net.UDPConn, c *Config) *UDPConn {
 	return &UDPConn{
 		UDPConn: *conn,
-		c: c,
-		rbuf: make([]byte, buffersize/2),
-		wbuf: make([]byte, buffersize/2),
+		c:       c,
+		rbuf:    make([]byte, buffersize/2),
+		wbuf:    make([]byte, buffersize/2),
 	}
 }
 
@@ -65,7 +64,6 @@ func (c *UDPConn) WriteTo(b []byte, addr net.Addr) (n int, err error) {
 		return
 	}
 	nbytes := copy(c.wbuf, enc.GetIV())
-	log.Println(nbytes)
 	enc.Encrypt(c.wbuf[nbytes:], b)
 	nbytes += len(b)
 	if addr != nil {

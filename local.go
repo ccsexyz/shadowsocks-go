@@ -5,8 +5,9 @@ import (
 	"net"
 	"strconv"
 
-	ss "github.com/ccsexyz/shadowsocks-go/shadowsocks"
 	"encoding/binary"
+
+	ss "github.com/ccsexyz/shadowsocks-go/shadowsocks"
 )
 
 func RunTCPLocalServer(c *ss.Config) {
@@ -38,7 +39,6 @@ func tcpLocalHandler(conn net.Conn, c *ss.Config) {
 		copy(buf[4:], addr.IP.To4())
 		binary.BigEndian.PutUint16(buf[8:], uint16(addr.Port))
 		_, err = conn.Write(buf[:10])
-		log.Println("udp relay to", host, port, "from", conn.RemoteAddr().String())
 		for err == nil {
 			_, err = conn.Read(buf)
 		}

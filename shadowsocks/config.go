@@ -6,17 +6,17 @@ import (
 )
 
 type Config struct {
-	Type         string    `json:"type"`
-	Localaddr    string    `json:"localaddr"`
-	Remoteaddr   string    `json:"remoteaddr"`
-	Method       string    `json:"method"`
-	Password     string    `json:"password"`
-	Nonop        bool      `json:"nonop"`
-	UdpRelay     bool `json:"udprelay"`
-	UdpOverTCP bool `json:"udpovertcp"`
-	Backend      *Config   `json:"backend"`
-	Backends     []*Config `json:"backends"`
-	Ivlen        int
+	Type       string    `json:"type"`
+	Localaddr  string    `json:"localaddr"`
+	Remoteaddr string    `json:"remoteaddr"`
+	Method     string    `json:"method"`
+	Password   string    `json:"password"`
+	Nonop      bool      `json:"nonop"`
+	UdpRelay   bool      `json:"udprelay"`
+	UdpOverTCP bool      `json:"udpovertcp"`
+	Backend    *Config   `json:"backend"`
+	Backends   []*Config `json:"backends"`
+	Ivlen      int
 }
 
 func ReadConfig(path string) (configs []*Config, err error) {

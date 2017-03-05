@@ -1,13 +1,13 @@
 package shadowsocks
 
 import (
+	"encoding/binary"
+	"fmt"
 	"io"
 	"log"
 	"math/rand"
 	"net"
 	"time"
-	"encoding/binary"
-	"fmt"
 )
 
 var (
@@ -187,6 +187,9 @@ func NewConn2(conn net.Conn) net.Conn {
 
 func (c *Conn2) Read(b []byte) (n int, err error) {
 	_, err = io.ReadFull(c.Conn, b[:2])
+	if err != nil {
+		return
+	}
 	nbytes := binary.BigEndian.Uint16(b[:2])
 	if nbytes > 1500 {
 		err = fmt.Errorf("wrong nbytes %d", nbytes)

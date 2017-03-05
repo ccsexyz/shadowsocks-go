@@ -3,11 +3,12 @@ package main
 import (
 	"log"
 	"net"
-	
-	ss "github.com/ccsexyz/shadowsocks-go/shadowsocks"
+
 	"strconv"
 	"sync"
 	"time"
+
+	ss "github.com/ccsexyz/shadowsocks-go/shadowsocks"
 )
 
 type relaySession struct {
@@ -30,7 +31,7 @@ func (sess *relaySession) Close() {
 func RunUDPRemoteServer(c *ss.Config) {
 	die := make(chan bool)
 	defer close(die)
-	
+
 	laddr, err := net.ResolveUDPAddr("udp", c.Localaddr)
 	if err != nil {
 		log.Fatal(err)
@@ -40,11 +41,11 @@ func RunUDPRemoteServer(c *ss.Config) {
 		log.Fatal(err)
 	}
 	conn := ss.NewUDPConn(uconn, c)
-	
+
 	rbuf := make([]byte, 2048)
 	sessions := make(map[string]*relaySession)
 	var lock sync.Mutex
-	
+
 	go func() {
 		ticker := time.NewTicker(time.Second * 30)
 		for {
@@ -65,7 +66,7 @@ func RunUDPRemoteServer(c *ss.Config) {
 			}
 		}
 	}()
-	
+
 	for {
 		n, addr, err := conn.ReadFrom(rbuf)
 		if err != nil {
@@ -125,7 +126,7 @@ func RunUDPRemoteServer(c *ss.Config) {
 func RunUDPLocalServer(c *ss.Config) {
 	die := make(chan bool)
 	defer close(die)
-	
+
 	laddr, err := net.ResolveUDPAddr("udp", c.Localaddr)
 	if err != nil {
 		log.Fatal(err)
@@ -134,11 +135,11 @@ func RunUDPLocalServer(c *ss.Config) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	
+
 	rbuf := make([]byte, 2048)
 	sessions := make(map[string]*relaySession)
 	var lock sync.Mutex
-	
+
 	go func() {
 		ticker := time.NewTicker(time.Second * 30)
 		for {
@@ -159,7 +160,7 @@ func RunUDPLocalServer(c *ss.Config) {
 			}
 		}
 	}()
-	
+
 	for {
 		n, addr, err := conn.ReadFrom(rbuf)
 		if err != nil {
@@ -220,7 +221,6 @@ func RunUDPLocalServer(c *ss.Config) {
 			copy(b, sess.header)
 			for {
 				n, err := sess.conn.Read(b[len(sess.header):])
-				log.Println(n, err)
 				if err != nil {
 					return
 				}
