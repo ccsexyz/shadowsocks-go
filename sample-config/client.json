@@ -1,0 +1,64 @@
+[
+  {
+    "localaddr": ":1080",
+    "remoteaddr": "server1:8080",
+    "method": "chacha20",
+    "password": "server1"
+  },
+  {
+    "localaddr": ":1081",
+    "remoteaddr": "server2:9999",
+    "method": "aes-256-cfb",
+    "password": "server2"
+  },
+  {
+    "type": "tcptun",
+    "localaddr": ":1082",
+    "remoteaddr": "server1:22",
+    "backend": {
+      "remoteaddr": "server1:8080",
+      "method": "chacha20",
+      "password": "server1"
+    }
+  },
+  {
+    "type": "ssproxy",
+    "localaddr": "1083",
+    "method": "chacha20-ietf",
+    "password": "ohmygod",
+    "backends": [
+      {
+        "remoteaddr": "server1:8080",
+        "method": "chacha20",
+        "password": "server1"
+      },
+      {
+        "remoteaddr": "server2:9999",
+        "method": "aes-256-cfb",
+        "password": "server2"
+      }
+    ]
+  },
+  {
+    "type": "socksproxy",
+    "localaddr": ":1084",
+    "backends": [
+      {
+        "remoteaddr": "server1:8080",
+        "method": "chacha20",
+        "password": "server1"
+      },
+      {
+        "remoteaddr": "server2:9999",
+        "method": "aes-256-cfb",
+        "password": "server2"
+      }
+    ]
+  },
+  {
+    "localaddr": ":1085",
+    "remoteaddr": ":1083",
+    "method": "chacha20-ietf",
+    "password": "ohmygod"
+  }
+]

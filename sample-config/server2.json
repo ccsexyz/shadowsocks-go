@@ -1,0 +1,5 @@
+{
+  "localaddr": ":9999",
+  "method": "aes-256-cfb",
+  "password": "server2"
+}
