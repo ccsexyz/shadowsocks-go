@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/ccsexyz/shadowsocks-go/redir"
 )
 
 type listener struct {
@@ -225,6 +227,43 @@ func socksAcceptor(conn net.Conn, lis *listener) {
 		return
 	}
 	conn = NewConn3(conn, host, port)
+	select {
+	case <-lis.die:
+	case lis.connch <- conn:
+		conn = nil
+	}
+	return
+}
+
+func ListenRedir(address string, c *Config) (lis net.Listener, err error) {
+	addr, err := net.ResolveTCPAddr("tcp", address)
+	if err != nil {
+		return
+	}
+
+	l, err := net.ListenTCP("tcp", addr)
+	if err != nil {
+		return
+	}
+	lis = NewListener(l, c, redirAcceptor)
+	return
+}
+
+func redirAcceptor(conn net.Conn, lis *listener) {
+	defer func() {
+		if conn != nil {
+			conn.Close()
+		}
+	}()
+	target, err := redir.GetOrigDst(conn)
+	if err != nil || len(target) == 0 {
+		return
+	}
+	conn = &Conn3{
+		Target: &ConnTarget{
+			Addr: target,
+		},
+	}
 	select {
 	case <-lis.die:
 	case lis.connch <- conn:

@@ -22,3 +22,7 @@ func tcpLocalHandler(conn net.Conn, c *ss.Config) {
 	log.Println("connect to ", target, "from", conn.RemoteAddr().String())
 	ss.Pipe(conn, rconn)
 }
+
+func RunTCPRedirServer(c *ss.Config) {
+	RunTCPServer(c.Localaddr, c, ss.ListenRedir, tcpLocalHandler)
+}
