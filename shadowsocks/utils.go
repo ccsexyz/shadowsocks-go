@@ -54,14 +54,14 @@ func ParseAddr(b []byte) (host string, port int, data []byte) {
 		return
 	case typeIPv4:
 		data = b[lenIPv4+2+1:]
-		host = net.IP(b[1: lenIPv4+1]).String()
+		host = net.IP(b[1 : lenIPv4+1]).String()
 		port = int(binary.BigEndian.Uint16(b[lenIPv4+1:]))
 	case typeIPv6:
 		if n < lenIPv6+2+1 {
 			return
 		}
 		data = b[lenIPv6+2+1:]
-		host = net.IP(b[1: 1+lenIPv6]).String()
+		host = net.IP(b[1 : 1+lenIPv6]).String()
 		port = int(binary.BigEndian.Uint16(b[lenIPv6+1:]))
 	case typeDm:
 		dmlen := int(b[1])
@@ -69,7 +69,7 @@ func ParseAddr(b []byte) (host string, port int, data []byte) {
 			return
 		}
 		data = b[dmlen+1+2+1:]
-		host = string(b[2: 2+dmlen])
+		host = string(b[2 : 2+dmlen])
 		port = int(binary.BigEndian.Uint16(b[dmlen+2:]))
 	}
 	return

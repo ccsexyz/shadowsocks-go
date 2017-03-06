@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"log"
 	"net"
 
@@ -20,7 +21,7 @@ func tcpRemoteHandler(conn net.Conn, c *ss.Config) {
 	}
 	if target.Addr == ss.Udprelayaddr {
 		C.Xu0s()
-		if c.UdpOverTCP {
+		if c.UDPOverTCP {
 			udpRelayOverTCP(conn, target.Remain)
 		}
 		return
@@ -44,20 +45,40 @@ func tcpRemoteHandler(conn net.Conn, c *ss.Config) {
 }
 
 func udpRelayOverTCP(conn net.Conn, remain []byte) {
-	if len(remain) < 1 || len(remain) < 1+int(remain[0]) {
-		return
+	var nbytes int
+	var target string
+	buf := make([]byte, 256)
+	if len(remain) == 0 {
+		_, err := io.ReadFull(conn, buf[:1])
+		if err != nil {
+			return
+		}
+		nbytes = int(buf[0])
+	} else {
+		nbytes = int(remain[0])
+		remain = remain[1:]
 	}
-	nbytes := int(remain[0])
-	target := string(remain[1 : 1+nbytes])
+	if len(remain) >= nbytes {
+		target = string(remain[:nbytes])
+		remain = remain[nbytes:]
+	} else {
+		copy(buf, remain)
+		_, err := io.ReadFull(conn, buf[len(remain):nbytes])
+		if err != nil {
+			return
+		}
+		target = string(buf[:nbytes])
+		remain = nil
+	}
+	buf = nil
 	rconn, err := net.Dial("udp", target)
 	if err != nil {
 		return
 	}
 	defer rconn.Close()
-	if len(remain) > 1+nbytes {
-		rconn.Write(remain[1+nbytes:])
+	if len(remain) > 0 {
+		rconn.Write(remain)
 	}
-	remain = nil
 	conn = ss.NewConn2(conn)
 	ss.Pipe(conn, rconn)
 }

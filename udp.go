@@ -1,12 +1,11 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"net"
 
 	"strconv"
-	"sync"
-	"time"
 
 	ss "github.com/ccsexyz/shadowsocks-go/shadowsocks"
 )
@@ -28,212 +27,95 @@ func (sess *relaySession) Close() {
 	}
 }
 
+func newUDPListener(address string) (conn *net.UDPConn, err error) {
+	laddr, err := net.ResolveUDPAddr("udp", address)
+	if err == nil {
+		conn, err = net.ListenUDP("udp", laddr)
+	}
+	return
+}
+
 func RunUDPRemoteServer(c *ss.Config) {
-	die := make(chan bool)
-	defer close(die)
-
-	laddr, err := net.ResolveUDPAddr("udp", c.Localaddr)
+	conn, err := newUDPListener(c.Localaddr)
 	if err != nil {
 		log.Fatal(err)
 	}
-	uconn, err := net.ListenUDP("udp", laddr)
-	if err != nil {
-		log.Fatal(err)
-	}
-	conn := ss.NewUDPConn(uconn, c)
-
-	rbuf := make([]byte, 2048)
-	sessions := make(map[string]*relaySession)
-	var lock sync.Mutex
-
-	go func() {
-		ticker := time.NewTicker(time.Second * 30)
-		for {
-			select {
-			case <-die:
-				return
-			case <-ticker.C:
-				lock.Lock()
-				for k, v := range sessions {
-					if v.live {
-						v.live = false
-					} else {
-						v.Close()
-						delete(sessions, k)
-					}
-				}
-				lock.Unlock()
-			}
-		}
-	}()
-
-	for {
-		n, addr, err := conn.ReadFrom(rbuf)
-		if err != nil {
-			log.Println(err)
+	handle := func(sess *udpSession, b []byte) {
+		host, _, data := ss.ParseAddr(b)
+		if len(host) == 0 {
 			return
 		}
-		addrstr := addr.String()
-		host, port, data := ss.ParseAddr(rbuf[:n])
-		log.Println(host, port, data)
+		sess.conn.Write(data)
+	}
+	create := func(b []byte) (rconn net.Conn, clean func(), header []byte, err error) {
+		host, port, data := ss.ParseAddr(b)
 		if len(host) == 0 {
-			continue
+			err = fmt.Errorf("unexpected header")
+			return
 		}
 		target := net.JoinHostPort(host, strconv.Itoa(port))
-		lock.Lock()
-		sess, ok := sessions[addrstr]
-		lock.Unlock()
-		if ok {
-			sess.live = true
-			sess.conn.Write(data)
-			continue
-		}
-		rconn, err := net.Dial("udp", target)
+		rconn, err = net.Dial("udp", target)
 		if err != nil {
-			log.Fatal(err)
-			continue
+			return
 		}
-		header := make([]byte, n-len(data))
-		copy(header, rbuf)
-		sess = &relaySession{conn: rconn, live: true, from: addr.(*net.UDPAddr), header: header, die: make(chan bool)}
-		lock.Lock()
-		sessions[addrstr] = sess
-		lock.Unlock()
+		hdrlen := len(b) - len(data)
+		header = make([]byte, hdrlen)
+		copy(header, b)
 		rconn.Write(data)
-		go func(sess *relaySession) {
-			defer sess.Close()
-			b := make([]byte, 2048)
-			copy(b, sess.header)
-			for {
-				n, err := sess.conn.Read(b[len(sess.header):])
-				if err != nil {
-					return
-				}
-				select {
-				case <-sess.die:
-					return
-				default:
-				}
-				_, err = conn.WriteTo(b[:n+len(sess.header)], sess.from)
-				if err != nil {
-					return
-				}
-			}
-		}(sess)
+		return
 	}
+	RunUDPServer(conn, nil, handle, create)
 }
 
 func RunUDPLocalServer(c *ss.Config) {
-	die := make(chan bool)
-	defer close(die)
-
-	laddr, err := net.ResolveUDPAddr("udp", c.Localaddr)
+	conn, err := newUDPListener(c.Localaddr)
 	if err != nil {
 		log.Fatal(err)
 	}
-	conn, err := net.ListenUDP("udp", laddr)
-	if err != nil {
-		log.Fatal(err)
+	check := func(b []byte) bool {
+		if len(b) < 3 || b[2] != 0 || b[1] != 0 || b[0] != 0 {
+			return false
+		}
+		return true
 	}
-
-	rbuf := make([]byte, 2048)
-	sessions := make(map[string]*relaySession)
-	var lock sync.Mutex
-
-	go func() {
-		ticker := time.NewTicker(time.Second * 30)
-		for {
-			select {
-			case <-die:
-				return
-			case <-ticker.C:
-				lock.Lock()
-				for k, v := range sessions {
-					if v.live {
-						v.live = false
-					} else {
-						v.Close()
-						delete(sessions, k)
-					}
-				}
-				lock.Unlock()
-			}
+	var handle func(*udpSession, []byte)
+	var create func([]byte) (net.Conn, func(), []byte, error)
+	if c.UDPOverTCP {
+		handle = func(sess *udpSession, b []byte) {
+			_, _, data := ss.ParseAddr(b[3:])
+			sess.conn.Write(data)
 		}
-	}()
-
-	for {
-		n, addr, err := conn.ReadFrom(rbuf)
-		if err != nil {
-			log.Println(err)
-			return
-		}
-		if n < 3 || rbuf[2] != 0 {
-			continue
-		}
-		var host string
-		var port int
-		var data []byte
-		if c.UdpOverTCP {
-			host, port, data = ss.ParseAddr(rbuf[3:n])
-		}
-		addrstr := addr.String()
-		lock.Lock()
-		sess, ok := sessions[addrstr]
-		lock.Unlock()
-		if ok {
-			sess.live = true
-			if c.UdpOverTCP {
-				sess.conn.Write(data)
-			} else {
-				sess.conn.Write(rbuf[3:n])
-			}
-			continue
-		}
-		var rconn net.Conn
-		if c.UdpOverTCP {
+		create = func(b []byte) (rconn net.Conn, clean func(), header []byte, err error) {
+			host, port, data := ss.ParseAddr(b[3:])
 			if len(host) == 0 {
-				continue
+				err = fmt.Errorf("unexcepted header")
+				return
 			}
 			rconn, err = ss.DialUDPOverTCP(net.JoinHostPort(host, strconv.Itoa(port)), c.Remoteaddr, c)
 			if err != nil {
-				continue
+				return
 			}
 			rconn.Write(data)
-			header := make([]byte, n-len(data))
-			copy(header, rbuf)
-			sess = &relaySession{conn: rconn, live: true, from: addr.(*net.UDPAddr), die: make(chan bool), header: header}
-		} else {
+			hdrlen := len(b) - len(data)
+			header = make([]byte, hdrlen)
+			copy(header, b)
+			return
+		}
+	} else {
+		handle = func(sess *udpSession, b []byte) {
+			sess.conn.Write(b[3:])
+		}
+		create = func(b []byte) (rconn net.Conn, clean func(), header []byte, err error) {
 			rconn, err = net.Dial("udp", c.Remoteaddr)
 			if err != nil {
-				rconn.Close()
-				continue
+				return
 			}
 			rconn = ss.NewUDPConn(rconn.(*net.UDPConn), c)
-			rconn.Write(rbuf[3:n])
-			sess = &relaySession{conn: rconn, live: true, from: addr.(*net.UDPAddr), die: make(chan bool), header: []byte{0, 0, 0}}
+			rconn.Write(b[3:])
+			header = []byte{0, 0, 0}
+			return
 		}
-		lock.Lock()
-		sessions[addrstr] = sess
-		lock.Unlock()
-		go func(sess *relaySession) {
-			defer sess.Close()
-			b := make([]byte, 2048)
-			copy(b, sess.header)
-			for {
-				n, err := sess.conn.Read(b[len(sess.header):])
-				if err != nil {
-					return
-				}
-				select {
-				case <-sess.die:
-					return
-				default:
-				}
-				_, err = conn.WriteTo(b[:n+len(sess.header)], sess.from)
-				if err != nil {
-					return
-				}
-			}
-		}(sess)
 	}
+
+	RunUDPServer(conn, check, handle, create)
 }

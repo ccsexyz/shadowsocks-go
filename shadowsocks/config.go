@@ -12,8 +12,8 @@ type Config struct {
 	Method     string    `json:"method"`
 	Password   string    `json:"password"`
 	Nonop      bool      `json:"nonop"`
-	UdpRelay   bool      `json:"udprelay"`
-	UdpOverTCP bool      `json:"udpovertcp"`
+	UDPRelay   bool      `json:"udprelay"`
+	UDPOverTCP bool      `json:"udpovertcp"`
 	Backend    *Config   `json:"backend"`
 	Backends   []*Config `json:"backends"`
 	Ivlen      int
@@ -58,13 +58,14 @@ func CheckConfig(c *Config) {
 			c.Type = "server"
 		}
 	}
-	if c.UdpRelay && c.Type != "server" && c.Type != "local" {
-		c.UdpRelay = false
+	if c.UDPRelay && c.Type != "server" && c.Type != "local" && c.Type != "udptun" {
+		c.UDPRelay = false
 	}
-	if c.UdpOverTCP && c.Type != "server" && c.Type != "local" {
-		c.UdpOverTCP = false
+	if c.UDPOverTCP && c.Type != "server" && c.Type != "local" && c.Type != "udptun" {
+		c.UDPOverTCP = false
 	}
 	for _, v := range c.Backends {
+		v.Type = c.Type
 		CheckConfig(v)
 	}
 }

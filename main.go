@@ -5,7 +5,7 @@ import (
 	"log"
 	"os"
 	"sync"
-	
+
 	ss "github.com/ccsexyz/shadowsocks-go/shadowsocks"
 )
 
@@ -28,14 +28,14 @@ func main() {
 				log.Println("unsupported server type")
 			case "local":
 				log.Println("run client at", c.Localaddr, "with method", c.Method)
-				if c.UdpRelay {
+				if c.UDPRelay {
 					log.Println("run udp local server at", c.Localaddr, "with method", c.Method)
 					go RunUDPLocalServer(c)
 				}
 				RunTCPLocalServer(c)
 			case "server":
 				log.Println("run server at", c.Localaddr, "with method", c.Method)
-				if c.UdpRelay {
+				if c.UDPRelay {
 					log.Println("run udp remote server at", c.Localaddr, "with method", c.Method)
 					go RunUDPRemoteServer(c)
 				}
@@ -52,6 +52,12 @@ func main() {
 				}
 				log.Println("run tcp tunnel at", c.Localaddr, "to", c.Remoteaddr)
 				RunTCPTunServer(c)
+			case "udptun":
+				if len(c.Localaddr) == 0 || c.Backend == nil || len(c.Backend.Remoteaddr) == 0 {
+					break
+				}
+				log.Println("run udp tunnel at", c.Localaddr, "to", c.Remoteaddr)
+				RunUDPTunServer(c)
 			}
 		}(c)
 	}

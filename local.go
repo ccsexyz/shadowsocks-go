@@ -23,14 +23,14 @@ func tcpLocalHandler(conn net.Conn, c *ss.Config) {
 	}
 	ver := buf[0]
 	cmd := buf[1]
-	if ver != 5 || (cmd != 1 && cmd != 3) || (!c.UdpRelay && cmd == 3) {
+	if ver != 5 || (cmd != 1 && cmd != 3) || (!c.UDPRelay && cmd == 3) {
 		return
 	}
 	host, port, _ := ss.ParseAddr(buf[3:n])
 	if len(host) == 0 {
 		return
 	}
-	if c.UdpRelay && cmd == 3 {
+	if c.UDPRelay && cmd == 3 {
 		addr, err := net.ResolveUDPAddr("udp", c.Localaddr)
 		if err != nil {
 			return

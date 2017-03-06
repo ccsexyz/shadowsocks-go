@@ -209,12 +209,9 @@ func (c *Conn2) Write(b []byte) (n int, err error) {
 		err = fmt.Errorf("cannot write %d bytes", n)
 		return
 	}
-	var buf [2]byte
+	var buf [2048]byte
 	binary.BigEndian.PutUint16(buf[:], uint16(n))
-	_, err = c.Conn.Write(buf[:])
-	if err != nil {
-		return
-	}
-	_, err = c.Conn.Write(b)
+	copy(buf[2:], b)
+	_, err = c.Conn.Write(buf[:n+2])
 	return
 }
