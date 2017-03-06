@@ -3,6 +3,7 @@ package shadowsocks
 import (
 	"crypto/rand"
 	"encoding/binary"
+	"fmt"
 	"net"
 )
 
@@ -32,6 +33,20 @@ func GetRandomBytes(len int) []byte {
 	data := make([]byte, len)
 	PutRandomBytes(data)
 	return data
+}
+
+func GetHeader(host string, port int, c *Config) (buf []byte, err error) {
+	hostlen := len(host)
+	if hostlen > 255 {
+		err = fmt.Errorf("host length can't be greater than 255")
+		return
+	}
+	buf = make([]byte, hostlen+4)
+	buf[0] = typeDm
+	buf[1] = byte(len(host))
+	copy(buf[2:], []byte(host))
+	binary.BigEndian.PutUint16(buf[2+hostlen:], uint16(port))
+	return
 }
 
 func ParseAddr(b []byte) (host string, port int, data []byte) {

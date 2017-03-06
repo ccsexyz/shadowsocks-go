@@ -8,7 +8,7 @@ import (
 // Note: UDPConn will drop any packet that is longer than 1500
 
 type UDPConn struct {
-	net.UDPConn
+	*net.UDPConn
 	rbuf   []byte
 	wbuf   []byte
 	c      *Config
@@ -17,7 +17,7 @@ type UDPConn struct {
 
 func NewUDPConn(conn *net.UDPConn, c *Config) *UDPConn {
 	return &UDPConn{
-		UDPConn: *conn,
+		UDPConn: conn,
 		c:       c,
 		rbuf:    make([]byte, buffersize/2),
 		wbuf:    make([]byte, buffersize/2),
@@ -55,10 +55,6 @@ func (c *UDPConn) Read(b []byte) (n int, err error) {
 }
 
 func (c *UDPConn) WriteTo(b []byte, addr net.Addr) (n int, err error) {
-	if len(b) > 1500 {
-		err = fmt.Errorf("the buffer length must be greater than 1500")
-		return
-	}
 	enc, err := NewEncrypter(c.c.Method, c.c.Password)
 	if err != nil {
 		return

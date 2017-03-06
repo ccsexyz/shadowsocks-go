@@ -40,6 +40,8 @@ func RunUDPRemoteServer(c *ss.Config) {
 	if err != nil {
 		log.Fatal(err)
 	}
+	var pconn net.PacketConn
+	pconn = ss.NewUDPConn(conn, c)
 	handle := func(sess *udpSession, b []byte) {
 		host, _, data := ss.ParseAddr(b)
 		if len(host) == 0 {
@@ -64,7 +66,7 @@ func RunUDPRemoteServer(c *ss.Config) {
 		rconn.Write(data)
 		return
 	}
-	RunUDPServer(conn, nil, handle, create)
+	RunUDPServer(pconn, nil, handle, create)
 }
 
 func RunUDPLocalServer(c *ss.Config) {

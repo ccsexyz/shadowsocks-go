@@ -73,7 +73,7 @@ func sessionsCleaner(sessions map[string]*udpSession, lock *sync.Mutex, die chan
 	}
 }
 
-func RunUDPServer(conn *net.UDPConn, check func([]byte) bool, handle func(*udpSession, []byte),
+func RunUDPServer(conn net.PacketConn, check func([]byte) bool, handle func(*udpSession, []byte),
 	create func([]byte) (net.Conn, func(), []byte, error)) {
 	defer conn.Close()
 	die := make(chan bool)

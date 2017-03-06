@@ -1,13 +1,25 @@
 package main
 
 import (
-	"encoding/binary"
 	"log"
 	"net"
 	"sync"
 
 	ss "github.com/ccsexyz/shadowsocks-go/shadowsocks"
 )
+
+type TunUDPConn struct {
+	net.UDPConn
+}
+
+func (c *TunUDPConn) WriteTo(b []byte, addr net.Addr) (n int, err error) {
+	n = len(b)
+	host, _, data := ss.ParseAddr(b)
+	if len(host) == 0 {
+		return
+	}
+	return c.UDPConn.WriteTo(data, addr)
+}
 
 func RunUDPTunServer(c *ss.Config) {
 	conn, err := newUDPListener(c.Localaddr)
@@ -26,26 +38,27 @@ func RunUDPTunServer(c *ss.Config) {
 			if err != nil {
 				return
 			}
-			// log.Println("tunnel to", c.Remoteaddr, "through", rconn.RemoteAddr())
+			log.Println("tunnel to", c.Remoteaddr, "through", rconn.RemoteAddr())
 			rconn.Write(b)
 			return
 		}
+		RunUDPServer(conn, nil, handle, create)
 	} else {
 		buf := make([]byte, 2048)
 		addr, err := net.ResolveUDPAddr("udp", c.Remoteaddr)
 		if err != nil {
 			log.Fatal(err)
 		}
-		ipstr := addr.IP.String()
-		buf[0] = byte(len(ipstr))
-		copy(buf[1:], []byte(ipstr))
-		binary.BigEndian.PutUint16(buf[1+len(ipstr):], uint16(addr.Port))
-		hdrlen := int(buf[0]) + 3
+		header, err := ss.GetHeader(addr.IP.String(), addr.Port, c.Backend)
+		if err != nil {
+			log.Fatal(err)
+		}
+		hdrlen := copy(buf[:], header)
 		var lock sync.Mutex
 		handle = func(sess *udpSession, b []byte) {
 			lock.Lock()
 			copy(buf[hdrlen:], b)
-			sess.conn.Write(buf[hdrlen+len(b):])
+			sess.conn.Write(buf[:hdrlen+len(b)])
 			lock.Unlock()
 		}
 		create = func(b []byte) (rconn net.Conn, clean func(), header []byte, err error) {
@@ -56,11 +69,15 @@ func RunUDPTunServer(c *ss.Config) {
 			rconn = ss.NewUDPConn(rconn.(*net.UDPConn), c.Backend)
 			lock.Lock()
 			copy(buf[hdrlen:], b)
-			rconn.Write(buf[hdrlen+len(b):])
+			_, err = rconn.Write(buf[:hdrlen+len(b)])
 			lock.Unlock()
+			if err != nil {
+				return
+			}
+			log.Println("tunnel to", c.Remoteaddr, "through", rconn.RemoteAddr())
 			return
 		}
+		tconn := &TunUDPConn{UDPConn: *conn}
+		RunUDPServer(tconn, nil, handle, create)
 	}
-
-	RunUDPServer(conn, nil, handle, create)
 }
