@@ -49,11 +49,7 @@ func RunUDPTunServer(c *ss.Config) {
 		if err != nil {
 			log.Fatal(err)
 		}
-		header, err := ss.GetHeader(addr.IP.String(), addr.Port, c.Backend)
-		if err != nil {
-			log.Fatal(err)
-		}
-		hdrlen := copy(buf[:], header)
+		hdrlen := ss.PutHeader(buf, addr.IP.String(), addr.Port)
 		var lock sync.Mutex
 		handle = func(sess *udpSession, b []byte) {
 			lock.Lock()

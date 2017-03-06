@@ -7,6 +7,7 @@ import (
 	"log"
 	"math/rand"
 	"net"
+	"strconv"
 	"time"
 )
 
@@ -214,4 +215,18 @@ func (c *Conn2) Write(b []byte) (n int, err error) {
 	copy(buf[2:], b)
 	_, err = c.Conn.Write(buf[:n+2])
 	return
+}
+
+// FIXME
+type Conn3 struct {
+	net.Conn
+	Target *ConnTarget
+}
+
+// FIXME
+func NewConn3(conn net.Conn, host string, port int) *Conn3 {
+	return &Conn3{
+		Conn:   conn,
+		Target: &ConnTarget{Addr: net.JoinHostPort(host, strconv.Itoa(port))},
+	}
 }

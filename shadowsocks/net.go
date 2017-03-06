@@ -194,10 +194,78 @@ func socksAcceptor(conn net.Conn, lis *listener) {
 	if err != nil {
 		return
 	}
+	n, err := conn.Read(buf)
+	if err != nil {
+		return
+	}
+	cmd := buf[1]
+	if buf[0] != 5 || (cmd != 1 && cmd != 3) || (!lis.c.UDPRelay && cmd == 3) {
+		return
+	}
+	if lis.c.UDPRelay && cmd == 3 {
+		addr, err := net.ResolveUDPAddr("udp", lis.c.Localaddr)
+		if err != nil {
+			return
+		}
+		copy(buf, []byte{5, 0, 0, 1})
+		copy(buf[4:], addr.IP.To4())
+		binary.BigEndian.PutUint16(buf[8:], uint16(addr.Port))
+		_, err = conn.Write(buf[:10])
+		for err == nil {
+			_, err = conn.Read(buf)
+		}
+		return
+	}
+	host, port, _ := ParseAddr(buf[3:n])
+	if len(host) == 0 {
+		return
+	}
+	_, err = conn.Write([]byte{5, 0, 0, 1, 0, 0, 0, 0, 0, 0})
+	if err != nil {
+		return
+	}
+	conn = NewConn3(conn, host, port)
 	select {
 	case <-lis.die:
 	case lis.connch <- conn:
 		conn = nil
+	}
+	return
+}
+
+func DialMultiSS(target string, configs []*Config) (conn net.Conn, err error) {
+	die := make(chan bool)
+	num := len(configs)
+	errch := make(chan error, num)
+	conch := make(chan net.Conn, num)
+	for _, v := range configs {
+		go func(v *Config) {
+			rconn, err := DialSS(target, v.Remoteaddr, v)
+			if err != nil {
+				select {
+				case <-die:
+				case errch <- fmt.Errorf("cannot connect to %s : %s", v.Remoteaddr, err.Error()):
+				}
+				return
+			}
+			select {
+			case <-die:
+				rconn.Close()
+			case conch <- rconn:
+			}
+		}(v)
+	}
+	for i := 0; i < num; i++ {
+		select {
+		case conn = <-conch:
+			close(die)
+			i = num
+		case e := <-errch:
+			log.Println(e)
+		}
+	}
+	if conn == nil {
+		err = fmt.Errorf("no available backends")
 	}
 	return
 }
@@ -216,13 +284,8 @@ func DialSS(target, service string, c *Config) (conn net.Conn, err error) {
 		return
 	}
 	var buf [512]byte
-	hostLen := len(host)
-	headerLen := hostLen + 4
-	buf[0] = typeDm
-	buf[1] = byte(hostLen)
-	copy(buf[2:], []byte(host))
-	binary.BigEndian.PutUint16(buf[hostLen+2:], uint16(portNum))
-	return DialSSWithRawHeader(buf[:headerLen], service, c)
+	hdrlen := PutHeader(buf[:], host, portNum)
+	return DialSSWithRawHeader(buf[:hdrlen], service, c)
 }
 
 func DialSSWithRawHeader(header []byte, service string, c *Config) (conn net.Conn, err error) {

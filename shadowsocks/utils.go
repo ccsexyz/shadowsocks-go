@@ -35,17 +35,24 @@ func GetRandomBytes(len int) []byte {
 	return data
 }
 
-func GetHeader(host string, port int, c *Config) (buf []byte, err error) {
+func PutHeader(b []byte, host string, port int) (n int) {
+	n = len(host)
+	b[0] = typeDm
+	b[1] = byte(n)
+	copy(b[2:], []byte(host))
+	binary.BigEndian.PutUint16(b[2+n:], uint16(port))
+	n += 4
+	return
+}
+
+func GetHeader(host string, port int) (buf []byte, err error) {
 	hostlen := len(host)
 	if hostlen > 255 {
 		err = fmt.Errorf("host length can't be greater than 255")
 		return
 	}
 	buf = make([]byte, hostlen+4)
-	buf[0] = typeDm
-	buf[1] = byte(len(host))
-	copy(buf[2:], []byte(host))
-	binary.BigEndian.PutUint16(buf[2+hostlen:], uint16(port))
+	PutHeader(buf, host, port)
 	return
 }
 
