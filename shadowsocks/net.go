@@ -260,6 +260,7 @@ func redirAcceptor(conn net.Conn, lis *listener) {
 		return
 	}
 	conn = &Conn3{
+		Conn: conn,
 		Target: &ConnTarget{
 			Addr: target,
 		},

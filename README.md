@@ -7,10 +7,11 @@ Features
 
 * 实现了 shadowsocks 协议的 TCP 部分(没有支持 AEAD 的计划,因为我不需要)  
 * 支持 aes-128/192/256-ctr aes-128/192/256-cfb chacha20 chacha20-ietf rc4-md5 加密  
-* 支持代理功能,可以从多个 ss 服务端中选取一个响应最快的服务端建立连接  
+* 支持代理中继功能,可以从多个 ss 服务端中选取一个响应最快的服务端建立连接  
 * 支持 TCP 隧道(如 ssh over shadowsocks)  
 * 支持 UDP over UDP/TCP  
 * 支持 UDP Tunnel over UDP/TCP  
+* 支持 TCP redirect,类似 ss-libev 的 redir 模式  
 
 Build
 -----
@@ -83,4 +84,4 @@ ____
 
 * ~~实现 UDP over TCP~~  
 * ~~实现 UDP 隧道(用于转发 DNS 请求)~~  
-* 实现 TCP redirect  
+* ~~实现 TCP redirect~~  
