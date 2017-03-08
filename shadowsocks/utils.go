@@ -91,6 +91,11 @@ func ParseAddr(b []byte) (host string, port int, data []byte) {
 			return
 		}
 		data = b[dmlen+1+2+1:]
+		for _, v := range b[2 : 2+dmlen] {
+			if !((v >= 'A' && v <= 'Z') || (v >= 'a' && v <= 'z') || v == '.') {
+				return
+			}
+		}
 		host = string(b[2 : 2+dmlen])
 		port = int(binary.BigEndian.Uint16(b[dmlen+2:]))
 	}

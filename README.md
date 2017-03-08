@@ -12,6 +12,7 @@ Features
 * 支持 UDP over UDP/TCP  
 * 支持 UDP Tunnel over UDP/TCP  
 * 支持 TCP redirect,类似 ss-libev 的 redir 模式  
+* 支持单个端口设置不同的加密方式及密码  
 
 Build
 -----
@@ -74,8 +75,10 @@ type 字段的可选值:
 * server: ss 服务端  
 * ssproxy: ss 代理,前端是一个 ss 服务器  
 * socksproxy: ss 代理,前端是一个 socks5 服务器  
-* tcptun: TCP 隧道服务器  
-* udptun: UDP 隧道服务器 
+* tcptun: TCP 隧道服务器   
+* udptun: UDP 隧道服务器    
+* redir: TCP redirect 本地客户端,使用方法参考 ss-libev 项目中的 ss-redir  
+* multiserver: 单个端口多加密方式及密码的 ss 服务端, 注意 aes 加密的 ctr 和 cfb 模式不能设置为同一个密码,因为这两种模式的第一个分组的解密结果是相同的,无法区分  
 
 具体的使用可以参考 sample-config 中的示例配置文件  
 
