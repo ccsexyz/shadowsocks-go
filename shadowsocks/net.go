@@ -7,8 +7,10 @@ import (
 	"io"
 	"log"
 	"net"
+	"sort"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ccsexyz/shadowsocks-go/redir"
@@ -112,6 +114,112 @@ func ListenSS(service string, c *Config) (lis net.Listener, err error) {
 	}
 	lis = NewListener(l, c, ssAcceptHandler)
 	return
+}
+
+type hitsCounter struct {
+	hits int64
+	c    *Config
+}
+
+func ListenMultiSS(service string, c *Config) (lis net.Listener, err error) {
+	addr, err := net.ResolveTCPAddr("tcp", service)
+	if err != nil {
+		return
+	}
+	l, err := net.ListenTCP("tcp", addr)
+	if err != nil {
+		return
+	}
+	var h []hitsCounter
+	for _, v := range c.Backends {
+		h = append(h, hitsCounter{hits: 0, c: v})
+	}
+	c.Any = h
+	lis = NewListener(l, c, ssMultiAcceptHandler)
+	go func(lis *listener) {
+		ticker := time.NewTicker(30 * time.Second)
+		for {
+			select {
+			case <-lis.die:
+				return
+			case <-ticker.C:
+			}
+			h = c.Any.([]hitsCounter)
+			h2 := make([]hitsCounter, len(h))
+			copy(h2, h)
+			sort.SliceStable(h2, func(i, j int) bool {
+				return h2[i].hits > h2[j].hits
+			})
+			lis.c.Any = h2
+		}
+	}(lis.(*listener))
+	return
+}
+
+func ssMultiAcceptHandler(conn net.Conn, lis *listener) {
+	C := NewConn(conn, nil)
+	defer func() {
+		if conn != nil {
+			conn.Close()
+		}
+	}()
+	timer := time.AfterFunc(time.Second*4, func() {
+		conn.Close()
+	})
+	buf := C.wbuf
+	n, err := conn.Read(buf)
+	if timer != nil {
+		timer.Stop()
+		timer = nil
+	}
+	if err != nil {
+		return
+	}
+	rbuf := C.rbuf
+	var dec Decrypter
+	lis.IvMapLock.Lock()
+	h := lis.c.Any.([]hitsCounter)
+	lis.IvMapLock.Unlock()
+	for _, vh := range h {
+		v := vh.c
+		if n <= v.Ivlen {
+			continue
+		}
+		dec, err = NewDecrypter(v.Method, v.Password, buf[:v.Ivlen])
+		if err != nil {
+			continue
+		}
+		dec.Decrypt(rbuf, buf[v.Ivlen:n])
+		host, port, data := ParseAddr(rbuf[:n-v.Ivlen])
+		if len(host) == 0 {
+			continue
+		}
+		iv := string(dec.GetIV())
+		lis.IvMapLock.Lock()
+		_, ok := lis.IvMap[iv]
+		if !ok {
+			lis.IvMap[iv] = true
+		}
+		lis.IvMapLock.Unlock()
+		if ok {
+			log.Println("receive duplicate iv from %s, this means that you maight be attacked!", conn.RemoteAddr().String())
+			return
+		}
+		C.dec = dec
+		C.c = v
+		C.Target = &ConnTarget{
+			Addr:   net.JoinHostPort(host, strconv.Itoa(port)),
+			Remain: data,
+		}
+		conn = C
+		select {
+		case <-lis.die:
+		case lis.connch <- conn:
+			atomic.AddInt64(&vh.hits, 1)
+			conn = nil
+		}
+		return
+	}
 }
 
 func ssAcceptHandler(conn net.Conn, lis *listener) {

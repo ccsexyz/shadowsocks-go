@@ -8,6 +8,10 @@ import (
 	ss "github.com/ccsexyz/shadowsocks-go/shadowsocks"
 )
 
+func RunMultiTCPRemoteServer(c *ss.Config) {
+	RunTCPServer(c.Localaddr, c, ss.ListenMultiSS, tcpRemoteHandler)
+}
+
 func RunTCPRemoteServer(c *ss.Config) {
 	RunTCPServer(c.Localaddr, c, ss.ListenSS, tcpRemoteHandler)
 }
