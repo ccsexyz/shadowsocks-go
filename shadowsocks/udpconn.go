@@ -120,6 +120,7 @@ func (c *MultiUDPConn) ReadFrom(b []byte) (n int, addr net.Addr, err error) {
 				return
 			}
 			dec.Decrypt(b, c.rbuf[v.Ivlen:n])
+			n -= v.Ivlen
 			return
 		}
 		for _, v = range c.c.Backends {
