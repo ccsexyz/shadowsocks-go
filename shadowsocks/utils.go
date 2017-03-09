@@ -92,7 +92,7 @@ func ParseAddr(b []byte) (host string, port int, data []byte) {
 		}
 		data = b[dmlen+1+2+1:]
 		for _, v := range b[2 : 2+dmlen] {
-			if !((v >= 'A' && v <= 'Z') || (v >= 'a' && v <= 'z') || v == '.') {
+			if !((v >= 'A' && v <= 'Z') || (v >= 'a' && v <= 'z') || (v >= '0' && v <= '9') || v == '.' || v == '-' || v == '_') {
 				return
 			}
 		}

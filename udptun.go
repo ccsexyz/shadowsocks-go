@@ -28,12 +28,12 @@ func RunUDPTunServer(c *ss.Config) {
 	}
 	defer conn.Close()
 	var handle func(*udpSession, []byte)
-	var create func([]byte) (net.Conn, func(), []byte, error)
+	var create func([]byte, net.Addr) (net.Conn, func(), []byte, error)
 	if c.Backend.UDPOverTCP {
 		handle = func(sess *udpSession, b []byte) {
 			sess.conn.Write(b)
 		}
-		create = func(b []byte) (rconn net.Conn, clean func(), header []byte, err error) {
+		create = func(b []byte, from net.Addr) (rconn net.Conn, clean func(), header []byte, err error) {
 			rconn, err = ss.DialUDPOverTCP(c.Remoteaddr, c.Backend.Remoteaddr, c.Backend)
 			if err != nil {
 				return
@@ -57,7 +57,7 @@ func RunUDPTunServer(c *ss.Config) {
 			sess.conn.Write(buf[:hdrlen+len(b)])
 			lock.Unlock()
 		}
-		create = func(b []byte) (rconn net.Conn, clean func(), header []byte, err error) {
+		create = func(b []byte, from net.Addr) (rconn net.Conn, clean func(), header []byte, err error) {
 			rconn, err = net.Dial("udp", c.Backend.Remoteaddr)
 			if err != nil {
 				return

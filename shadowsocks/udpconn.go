@@ -3,6 +3,7 @@ package shadowsocks
 import (
 	"fmt"
 	"net"
+	"sync"
 )
 
 // Note: UDPConn will drop any packet that is longer than 1500
@@ -75,4 +76,101 @@ func (c *UDPConn) WriteTo(b []byte, addr net.Addr) (n int, err error) {
 
 func (c *UDPConn) Write(b []byte) (n int, err error) {
 	return c.WriteTo(b, nil)
+}
+
+type MultiUDPConn struct {
+	*net.UDPConn
+	rbuf     []byte
+	wbuf     []byte
+	c        *Config
+	sessions map[string]*Config
+	lock     sync.Mutex
+}
+
+func NewMultiUDPConn(conn *net.UDPConn, c *Config) *MultiUDPConn {
+	return &MultiUDPConn{
+		UDPConn:  conn,
+		c:        c,
+		sessions: make(map[string]*Config),
+		rbuf:     make([]byte, buffersize/2),
+		wbuf:     make([]byte, buffersize/2),
+	}
+}
+
+func (c *MultiUDPConn) ReadFrom(b []byte) (n int, addr net.Addr, err error) {
+	if len(b) < 1500 {
+		err = fmt.Errorf("the buffer length must be greater than 1500")
+		return
+	}
+	for {
+		n, addr, err = c.UDPConn.ReadFrom(c.rbuf)
+		if err != nil {
+			return
+		}
+		if n > 1500 {
+			continue
+		}
+		c.lock.Lock()
+		v, ok := c.sessions[addr.String()]
+		c.lock.Unlock()
+		var dec Decrypter
+		if ok {
+			dec, err = NewDecrypter(v.Method, v.Password, c.rbuf[:v.Ivlen])
+			if err != nil {
+				return
+			}
+			dec.Decrypt(b, c.rbuf[v.Ivlen:n])
+			return
+		}
+		for _, v = range c.c.Backends {
+			if len(b) <= v.Ivlen {
+				continue
+			}
+			var dec Decrypter
+			dec, err = NewDecrypter(v.Method, v.Password, c.rbuf[:v.Ivlen])
+			if err != nil {
+				continue
+			}
+			dec.Decrypt(b, c.rbuf[v.Ivlen:n])
+			host, _, _ := ParseAddr(b[:n-v.Ivlen])
+			if len(host) == 0 {
+				continue
+			}
+			n -= v.Ivlen
+			c.lock.Lock()
+			c.sessions[addr.String()] = v
+			c.lock.Unlock()
+			return
+		}
+		continue
+	}
+}
+
+func (c *MultiUDPConn) WriteTo(b []byte, addr net.Addr) (n int, err error) {
+	defer func() {
+		if err == nil {
+			n = len(b)
+		}
+	}()
+	c.lock.Lock()
+	v, ok := c.sessions[addr.String()]
+	c.lock.Unlock()
+	if !ok {
+		return
+	}
+	enc, err := NewEncrypter(v.Method, v.Password)
+	if err != nil {
+		return
+	}
+	nbytes := copy(c.wbuf, enc.GetIV())
+	enc.Encrypt(c.wbuf[nbytes:], b)
+	nbytes += len(b)
+	_, err = c.UDPConn.WriteTo(c.wbuf[:nbytes], addr)
+	return
+}
+
+func (c *MultiUDPConn) RemoveAddr(addr net.Addr) {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+	delete(c.sessions, addr.String())
 }

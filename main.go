@@ -45,6 +45,10 @@ func main() {
 				RunTCPRemoteServer(c)
 			case "multiserver":
 				log.Println("run multi server at", c.Localaddr)
+				if c.UDPRelay {
+					log.Println("run multi udp remote server at", c.Localaddr)
+					go RunMultiUDPRemoteServer(c)
+				}
 				RunMultiTCPRemoteServer(c)
 			case "ssproxy":
 				log.Println("run ss proxy at", c.Localaddr, "with method", c.Method)

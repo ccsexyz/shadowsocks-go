@@ -49,7 +49,7 @@ func RunUDPRemoteServer(c *ss.Config) {
 		}
 		sess.conn.Write(data)
 	}
-	create := func(b []byte) (rconn net.Conn, clean func(), header []byte, err error) {
+	create := func(b []byte, from net.Addr) (rconn net.Conn, clean func(), header []byte, err error) {
 		host, port, data := ss.ParseAddr(b)
 		if len(host) == 0 {
 			err = fmt.Errorf("unexpected header")
@@ -69,6 +69,42 @@ func RunUDPRemoteServer(c *ss.Config) {
 	RunUDPServer(pconn, nil, handle, create)
 }
 
+func RunMultiUDPRemoteServer(c *ss.Config) {
+	conn, err := newUDPListener(c.Localaddr)
+	if err != nil {
+		log.Fatal(err)
+	}
+	mconn := ss.NewMultiUDPConn(conn, c)
+	handle := func(sess *udpSession, b []byte) {
+		host, _, data := ss.ParseAddr(b)
+		if len(host) == 0 {
+			return
+		}
+		sess.conn.Write(data)
+	}
+	create := func(b []byte, from net.Addr) (rconn net.Conn, clean func(), header []byte, err error) {
+		host, port, data := ss.ParseAddr(b)
+		if len(host) == 0 {
+			err = fmt.Errorf("unexpected header")
+			return
+		}
+		target := net.JoinHostPort(host, strconv.Itoa(port))
+		rconn, err = net.Dial("udp", target)
+		if err != nil {
+			return
+		}
+		hdrlen := len(b) - len(data)
+		header = make([]byte, hdrlen)
+		copy(header, b)
+		rconn.Write(data)
+		clean = func() {
+			mconn.RemoveAddr(from)
+		}
+		return
+	}
+	RunUDPServer(mconn, nil, handle, create)
+}
+
 func RunUDPLocalServer(c *ss.Config) {
 	conn, err := newUDPListener(c.Localaddr)
 	if err != nil {
@@ -81,13 +117,13 @@ func RunUDPLocalServer(c *ss.Config) {
 		return true
 	}
 	var handle func(*udpSession, []byte)
-	var create func([]byte) (net.Conn, func(), []byte, error)
+	var create func([]byte, net.Addr) (net.Conn, func(), []byte, error)
 	if c.UDPOverTCP {
 		handle = func(sess *udpSession, b []byte) {
 			_, _, data := ss.ParseAddr(b[3:])
 			sess.conn.Write(data)
 		}
-		create = func(b []byte) (rconn net.Conn, clean func(), header []byte, err error) {
+		create = func(b []byte, from net.Addr) (rconn net.Conn, clean func(), header []byte, err error) {
 			host, port, data := ss.ParseAddr(b[3:])
 			if len(host) == 0 {
 				err = fmt.Errorf("unexcepted header")
@@ -107,7 +143,7 @@ func RunUDPLocalServer(c *ss.Config) {
 		handle = func(sess *udpSession, b []byte) {
 			sess.conn.Write(b[3:])
 		}
-		create = func(b []byte) (rconn net.Conn, clean func(), header []byte, err error) {
+		create = func(b []byte, from net.Addr) (rconn net.Conn, clean func(), header []byte, err error) {
 			rconn, err = net.Dial("udp", c.Remoteaddr)
 			if err != nil {
 				return
