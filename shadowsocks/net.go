@@ -95,7 +95,7 @@ func (lis *listener) Accept() (conn net.Conn, err error) {
 	select {
 	case <-lis.die:
 		err = lis.err
-		if err != nil {
+		if err == nil {
 			err = fmt.Errorf("cannot accept from closed listener")
 		}
 	case conn = <-lis.connch:

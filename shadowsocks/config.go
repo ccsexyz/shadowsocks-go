@@ -18,6 +18,7 @@ type Config struct {
 	Backends   []*Config `json:"backends"`
 	Ivlen      int
 	Any        interface{}
+	Die        chan bool
 }
 
 func ReadConfig(path string) (configs []*Config, err error) {

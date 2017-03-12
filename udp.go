@@ -66,7 +66,7 @@ func RunUDPRemoteServer(c *ss.Config) {
 		rconn.Write(data)
 		return
 	}
-	RunUDPServer(pconn, nil, handle, create)
+	RunUDPServer(pconn, c, nil, handle, create)
 }
 
 func RunMultiUDPRemoteServer(c *ss.Config) {
@@ -102,7 +102,7 @@ func RunMultiUDPRemoteServer(c *ss.Config) {
 		}
 		return
 	}
-	RunUDPServer(mconn, nil, handle, create)
+	RunUDPServer(mconn, c, nil, handle, create)
 }
 
 func RunUDPLocalServer(c *ss.Config) {
@@ -155,5 +155,5 @@ func RunUDPLocalServer(c *ss.Config) {
 		}
 	}
 
-	RunUDPServer(conn, check, handle, create)
+	RunUDPServer(conn, c, check, handle, create)
 }

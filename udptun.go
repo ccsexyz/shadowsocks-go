@@ -42,7 +42,7 @@ func RunUDPTunServer(c *ss.Config) {
 			rconn.Write(b)
 			return
 		}
-		RunUDPServer(conn, nil, handle, create)
+		RunUDPServer(conn, c, nil, handle, create)
 	} else {
 		buf := make([]byte, 2048)
 		addr, err := net.ResolveUDPAddr("udp", c.Remoteaddr)
@@ -74,6 +74,6 @@ func RunUDPTunServer(c *ss.Config) {
 			return
 		}
 		tconn := &TunUDPConn{UDPConn: *conn}
-		RunUDPServer(tconn, nil, handle, create)
+		RunUDPServer(tconn, c, nil, handle, create)
 	}
 }

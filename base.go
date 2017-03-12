@@ -12,12 +12,17 @@ import (
 func RunTCPServer(address string, c *ss.Config,
 	listen func(string, *ss.Config) (net.Listener, error),
 	handler func(net.Conn, *ss.Config)) {
-	ss.CheckConfig(c)
 	lis, err := listen(address, c)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer lis.Close()
+	go func() {
+		if c.Die != nil {
+			<-c.Die
+			lis.Close()
+		}
+	}()
 	for {
 		conn, err := lis.Accept()
 		if err != nil {
@@ -73,7 +78,7 @@ func sessionsCleaner(sessions map[string]*udpSession, lock *sync.Mutex, die chan
 	}
 }
 
-func RunUDPServer(conn net.PacketConn, check func([]byte) bool, handle func(*udpSession, []byte),
+func RunUDPServer(conn net.PacketConn, c *ss.Config, check func([]byte) bool, handle func(*udpSession, []byte),
 	create func([]byte, net.Addr) (net.Conn, func(), []byte, error)) {
 	defer conn.Close()
 	die := make(chan bool)
@@ -83,6 +88,12 @@ func RunUDPServer(conn net.PacketConn, check func([]byte) bool, handle func(*udp
 	var lock sync.Mutex
 
 	go sessionsCleaner(sessions, &lock, die, time.Minute)
+	go func() {
+		if c.Die != nil {
+			<-c.Die
+			conn.Close()
+		}
+	}()
 
 	for {
 		n, addr, err := conn.ReadFrom(rbuf)
