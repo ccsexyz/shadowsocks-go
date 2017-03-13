@@ -75,6 +75,9 @@ func ParseAddr(b []byte) (host string, port int, data []byte) {
 	default:
 		return
 	case typeIPv4:
+		if n < lenIPv4+2+1 {
+			return
+		}
 		data = b[lenIPv4+2+1:]
 		host = net.IP(b[1 : lenIPv4+1]).String()
 		port = int(binary.BigEndian.Uint16(b[lenIPv4+1:]))
