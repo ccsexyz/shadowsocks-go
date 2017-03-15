@@ -2,7 +2,6 @@ package main
 
 import (
 	"io"
-	"log"
 	"net"
 
 	ss "github.com/ccsexyz/shadowsocks-go/shadowsocks"
@@ -21,6 +20,7 @@ func tcpRemoteHandler(conn net.Conn, c *ss.Config) {
 	C := conn.(*ss.Conn)
 	target := C.Target
 	if len(target.Addr) == 0 {
+		c.LogD("target.addr length is 0")
 		return
 	}
 	if target.Addr == ss.Udprelayaddr {
@@ -32,7 +32,7 @@ func tcpRemoteHandler(conn net.Conn, c *ss.Config) {
 	}
 	rconn, err := net.Dial("tcp", target.Addr)
 	if err != nil {
-		log.Println(err)
+		c.Log(err)
 		return
 	}
 	defer rconn.Close()
@@ -40,11 +40,11 @@ func tcpRemoteHandler(conn net.Conn, c *ss.Config) {
 	if len(target.Remain) != 0 {
 		_, err = rconn.Write(target.Remain)
 		if err != nil {
-			log.Println(err)
+			c.Log(err)
 			return
 		}
 	}
-	log.Println("connect to", target.Addr, "from", conn.RemoteAddr().String())
+	c.Log("connect to", target.Addr, "from", conn.RemoteAddr().String())
 	ss.Pipe(conn, rconn)
 }
 

@@ -4,7 +4,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-	"log"
 	"math/rand"
 	"net"
 	"strconv"
@@ -54,7 +53,7 @@ func (c *Conn) Close() error {
 		c.xu1s = false
 		select {
 		case <-xudie:
-		case xuch <- c.Conn:
+		case xuch <- c:
 			return nil
 		}
 	}
@@ -150,7 +149,9 @@ func xuroutine() {
 				b = int(src.Int63()%16 + 1)
 				a += b
 			}
-			log.Println("you have xu ", a, "seconds")
+			if _, ok := c.(*Conn); ok {
+				c.(*Conn).c.Log("you have xu ", a, "seconds")
+			}
 			mn[s] = a
 			mc[s] = c
 		case <-ticker.C:

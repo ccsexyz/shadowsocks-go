@@ -1,7 +1,6 @@
 package main
 
 import (
-	"log"
 	"net"
 
 	ss "github.com/ccsexyz/shadowsocks-go/shadowsocks"
@@ -16,10 +15,11 @@ func tcpLocalHandler(conn net.Conn, c *ss.Config) {
 	target := conn.(*ss.Conn3).Target.Addr
 	rconn, err := ss.DialSS(target, c.Remoteaddr, c)
 	if err != nil {
+		c.Log("failed connect to", target, err)
 		return
 	}
 	defer rconn.Close()
-	log.Println("connect to ", target, "from", conn.RemoteAddr().String())
+	c.Log("connect to ", target, "from", conn.RemoteAddr().String())
 	ss.Pipe(conn, rconn)
 }
 

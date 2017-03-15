@@ -1,7 +1,6 @@
 package main
 
 import (
-	"log"
 	"net"
 	"sync"
 	"time"
@@ -14,7 +13,7 @@ func RunTCPServer(address string, c *ss.Config,
 	handler func(net.Conn, *ss.Config)) {
 	lis, err := listen(address, c)
 	if err != nil {
-		log.Fatal(err)
+		c.Logger.Fatal(err)
 	}
 	defer lis.Close()
 	go func() {
@@ -116,7 +115,7 @@ func RunUDPServer(conn net.PacketConn, c *ss.Config, check func([]byte) bool, ha
 			if create != nil {
 				rconn, clean, header, err := create(rbuf[:n], addr)
 				if err != nil {
-					log.Println(err)
+					c.Log(err)
 					continue
 				}
 				if rconn == nil {

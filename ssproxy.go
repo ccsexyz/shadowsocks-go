@@ -1,7 +1,6 @@
 package main
 
 import (
-	"log"
 	"net"
 
 	ss "github.com/ccsexyz/shadowsocks-go/shadowsocks"
@@ -24,10 +23,10 @@ func ssproxyHandler(conn net.Conn, c *ss.Config) {
 	if len(target.Remain) != 0 {
 		_, err := rconn.Write(target.Remain)
 		if err != nil {
-			log.Println(err)
+			c.Log(err)
 			return
 		}
 	}
-	log.Println("proxy", target.Addr, "to", rconn.RemoteAddr().String(), "from", conn.RemoteAddr().String())
+	c.Log("proxy", target.Addr, "to", rconn.RemoteAddr().String(), "from", conn.RemoteAddr().String())
 	ss.Pipe(conn, rconn)
 }

@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"sort"
 	"strconv"
@@ -202,7 +201,7 @@ func ssMultiAcceptHandler(conn net.Conn, lis *listener) {
 		}
 		lis.IvMapLock.Unlock()
 		if ok {
-			log.Println("receive duplicate iv from %s, this means that you maight be attacked!", conn.RemoteAddr().String())
+			lis.c.Log("receive duplicate iv from %s, this means that you maight be attacked!", conn.RemoteAddr().String())
 			return
 		}
 		C.dec = dec
@@ -241,12 +240,12 @@ func ssAcceptHandler(conn net.Conn, lis *listener) {
 		timer = nil
 	}
 	if err != nil {
-		log.Println(err)
+		lis.c.Log(err)
 		return
 	}
 	host, port, data := ParseAddr(buf[:n])
 	if len(host) == 0 {
-		log.Printf("recv a unexpected header from %s.", conn.RemoteAddr().String())
+		lis.c.Log("recv a unexpected header from %s.", conn.RemoteAddr().String())
 		return
 	}
 	iv := string(C.dec.GetIV())
@@ -257,7 +256,7 @@ func ssAcceptHandler(conn net.Conn, lis *listener) {
 	}
 	lis.IvMapLock.Unlock()
 	if ok {
-		log.Println("receive duplicate iv from %s, this means that you maight be attacked!", conn.RemoteAddr().String())
+		lis.c.Log("receive duplicate iv from %s, this means that you maight be attacked!", conn.RemoteAddr().String())
 		return
 	}
 	C.Target = &ConnTarget{
@@ -408,8 +407,7 @@ func DialMultiSS(target string, configs []*Config) (conn net.Conn, err error) {
 		case conn = <-conch:
 			close(die)
 			i = num
-		case e := <-errch:
-			log.Println(e)
+		case <-errch:
 		}
 	}
 	if conn == nil {

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"log"
 	"net"
 	"sync"
 
@@ -24,7 +23,7 @@ func (c *TunUDPConn) WriteTo(b []byte, addr net.Addr) (n int, err error) {
 func RunUDPTunServer(c *ss.Config) {
 	conn, err := newUDPListener(c.Localaddr)
 	if err != nil {
-		log.Fatal(err)
+		c.Logger.Fatal(err)
 	}
 	defer conn.Close()
 	var handle func(*udpSession, []byte)
@@ -38,7 +37,7 @@ func RunUDPTunServer(c *ss.Config) {
 			if err != nil {
 				return
 			}
-			log.Println("tunnel to", c.Remoteaddr, "through", rconn.RemoteAddr())
+			c.Log("tunnel to", c.Remoteaddr, "through", rconn.RemoteAddr())
 			rconn.Write(b)
 			return
 		}
@@ -47,7 +46,7 @@ func RunUDPTunServer(c *ss.Config) {
 		buf := make([]byte, 2048)
 		addr, err := net.ResolveUDPAddr("udp", c.Remoteaddr)
 		if err != nil {
-			log.Fatal(err)
+			c.Logger.Fatal(err)
 		}
 		hdrlen := ss.PutHeader(buf, addr.IP.String(), addr.Port)
 		var lock sync.Mutex
@@ -70,7 +69,7 @@ func RunUDPTunServer(c *ss.Config) {
 			if err != nil {
 				return
 			}
-			log.Println("tunnel to", c.Remoteaddr, "through", rconn.RemoteAddr())
+			c.Log("tunnel to", c.Remoteaddr, "through", rconn.RemoteAddr())
 			return
 		}
 		tconn := &TunUDPConn{UDPConn: *conn}

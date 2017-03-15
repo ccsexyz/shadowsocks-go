@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"log"
 	"net"
 
 	"strconv"
@@ -38,7 +37,7 @@ func newUDPListener(address string) (conn *net.UDPConn, err error) {
 func RunUDPRemoteServer(c *ss.Config) {
 	conn, err := newUDPListener(c.Localaddr)
 	if err != nil {
-		log.Fatal(err)
+		c.Logger.Fatal(err)
 	}
 	var pconn net.PacketConn
 	pconn = ss.NewUDPConn(conn, c)
@@ -72,7 +71,7 @@ func RunUDPRemoteServer(c *ss.Config) {
 func RunMultiUDPRemoteServer(c *ss.Config) {
 	conn, err := newUDPListener(c.Localaddr)
 	if err != nil {
-		log.Fatal(err)
+		c.Logger.Fatal(err)
 	}
 	mconn := ss.NewMultiUDPConn(conn, c)
 	handle := func(sess *udpSession, b []byte) {
@@ -108,7 +107,7 @@ func RunMultiUDPRemoteServer(c *ss.Config) {
 func RunUDPLocalServer(c *ss.Config) {
 	conn, err := newUDPListener(c.Localaddr)
 	if err != nil {
-		log.Fatal(err)
+		c.Logger.Fatal(err)
 	}
 	check := func(b []byte) bool {
 		if len(b) < 3 || b[2] != 0 || b[1] != 0 || b[0] != 0 {
