@@ -20,6 +20,7 @@ const (
 	ivmapHighWaterLevel = 100000
 	ivmapLowWaterLevel  = 10000
 	Udprelayaddr        = "UdpRelayOverTcp:65535"
+	defaultObfsHost = "www.bing.com"
 )
 
 func PutRandomBytes(b []byte) {

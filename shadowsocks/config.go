@@ -23,6 +23,8 @@ type Config struct {
 	Verbose    bool      `json:"verbose"`
 	Debug      bool      `json:"debug"`
 	LogFile    string    `json:"logfile"`
+	Obfs       bool      `json:"obfs"`
+	ObfsHost   []string  `json:"obfshost"`
 	Vlogger    *log.Logger
 	Dlogger    *log.Logger
 	Logger     *log.Logger
@@ -79,6 +81,10 @@ func CheckConfig(c *Config) {
 	for _, v := range c.Backends {
 		v.Type = c.Type
 		CheckConfig(v)
+		if c.Obfs {
+			v.Obfs = true
+			v.ObfsHost = append(v.ObfsHost, c.ObfsHost...)
+		}
 	}
 	var writer io.Writer
 	if len(c.LogFile) == 0 {

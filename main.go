@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"sync"
+	"time"
 
 	ss "github.com/ccsexyz/shadowsocks-go/shadowsocks"
 	"github.com/fsnotify/fsnotify"
@@ -21,11 +22,11 @@ func main() {
 	}
 	defer watcher.Close()
 
+	configs, err := ss.ReadConfig(os.Args[1])
+	if err != nil {
+		log.Fatal(err)
+	}
 	for {
-		configs, err := ss.ReadConfig(os.Args[1])
-		if err != nil {
-			log.Fatal(err)
-		}
 		die := make(chan bool)
 		var wg sync.WaitGroup
 		for _, c := range configs {
@@ -91,14 +92,19 @@ func main() {
 				select {
 				case event := <-watcher.Events:
 					if event.Op&fsnotify.Write == fsnotify.Write || event.Op&fsnotify.Rename == fsnotify.Rename {
+						newConfigs, err := ss.ReadConfig(os.Args[1])
+						if err != nil {
+							continue
+						}
+						configs = newConfigs
 						close(die)
 						return
 					} else if event.Op&fsnotify.Remove == fsnotify.Remove {
 						return
 					}
 				case <-watcher.Errors:
-					close(die)
-					return
+					// close(die)
+					// return
 				case <-die:
 					return
 				}
@@ -110,5 +116,6 @@ func main() {
 		default:
 			return
 		}
+		time.Sleep(time.Second)
 	}
 }

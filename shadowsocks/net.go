@@ -15,22 +15,24 @@ import (
 	"github.com/ccsexyz/shadowsocks-go/redir"
 )
 
+type ListenHandler func(net.Conn, *listener) net.Conn
+
 type listener struct {
 	net.TCPListener
 	c         *Config
 	die       chan bool
 	connch    chan net.Conn
 	err       error
-	handler   func(net.Conn, *listener)
+	handlers  []ListenHandler
 	IvMap     map[string]bool
 	IvMapLock sync.Mutex
 }
 
-func NewListener(lis *net.TCPListener, c *Config, handler func(net.Conn, *listener)) *listener {
+func NewListener(lis *net.TCPListener, c *Config, handlers []ListenHandler) *listener {
 	l := &listener{
 		TCPListener: *lis,
 		c:           c,
-		handler:     handler,
+		handlers:    handlers,
 		die:         make(chan bool),
 		connch:      make(chan net.Conn, 32),
 		IvMap:       make(map[string]bool),
@@ -48,9 +50,24 @@ func (lis *listener) acceptor() {
 			lis.err = err
 			return
 		}
-		if lis.handler != nil {
-			go lis.handler(conn, lis)
+		if len(lis.handlers) == 0 {
+			conn.Close()
+			continue
 		}
+		go lis.handleNewConn(conn)
+	}
+}
+
+func (lis *listener) handleNewConn(conn net.Conn) {
+	for _, handler := range lis.handlers {
+		conn = handler(conn, lis)
+		if conn == nil {
+			return
+		}
+	}
+	select {
+	case <-lis.die:
+	case lis.connch <- conn:
 	}
 }
 
@@ -70,7 +87,7 @@ func (lis *listener) ivMapCleaner() {
 			continue
 		}
 		lenIvMap /= 10
-		for k, _ := range lis.IvMap {
+		for k := range lis.IvMap {
 			lenIvMap--
 			delete(lis.IvMap, k)
 			if lenIvMap < 0 {
@@ -111,7 +128,11 @@ func ListenSS(service string, c *Config) (lis net.Listener, err error) {
 	if err != nil {
 		return
 	}
-	lis = NewListener(l, c, ssAcceptHandler)
+	if c.Obfs {
+		lis = NewListener(l, c, []ListenHandler{obfsAcceptHandler, ssAcceptHandler})
+	} else {
+		lis = NewListener(l, c, []ListenHandler{ssAcceptHandler})
+	}
 	return
 }
 
@@ -134,7 +155,11 @@ func ListenMultiSS(service string, c *Config) (lis net.Listener, err error) {
 		h = append(h, hitsCounter{hits: 0, c: v})
 	}
 	c.Any = h
-	lis = NewListener(l, c, ssMultiAcceptHandler)
+	if c.Obfs {
+		lis = NewListener(l, c, []ListenHandler{obfsAcceptHandler, ssMultiAcceptHandler})
+	} else {
+		lis = NewListener(l, c, []ListenHandler{ssMultiAcceptHandler})
+	}
 	go func(lis *listener) {
 		ticker := time.NewTicker(30 * time.Second)
 		for {
@@ -155,10 +180,10 @@ func ListenMultiSS(service string, c *Config) (lis net.Listener, err error) {
 	return
 }
 
-func ssMultiAcceptHandler(conn net.Conn, lis *listener) {
+func ssMultiAcceptHandler(conn net.Conn, lis *listener) (c net.Conn) {
 	C := NewConn(conn, nil)
 	defer func() {
-		if conn != nil {
+		if conn != nil && c == nil {
 			conn.Close()
 		}
 	}()
@@ -210,21 +235,17 @@ func ssMultiAcceptHandler(conn net.Conn, lis *listener) {
 			Addr:   net.JoinHostPort(host, strconv.Itoa(port)),
 			Remain: data,
 		}
-		conn = C
-		select {
-		case <-lis.die:
-		case lis.connch <- conn:
-			atomic.AddInt64(&vh.hits, 1)
-			conn = nil
-		}
+		atomic.AddInt64(&vh.hits, 1)
+		c = C
 		return
 	}
+	return
 }
 
-func ssAcceptHandler(conn net.Conn, lis *listener) {
+func ssAcceptHandler(conn net.Conn, lis *listener) (c net.Conn) {
 	conn = NewConn(conn, lis.c)
 	defer func() {
-		if conn != nil {
+		if conn != nil && c == nil {
 			conn.Close()
 		}
 	}()
@@ -263,11 +284,7 @@ func ssAcceptHandler(conn net.Conn, lis *listener) {
 		Addr:   net.JoinHostPort(host, strconv.Itoa(port)),
 		Remain: data,
 	}
-	select {
-	case <-lis.die:
-	case lis.connch <- conn:
-		conn = nil
-	}
+	c = conn
 	return
 }
 
@@ -280,13 +297,13 @@ func ListenSocks5(address string, c *Config) (lis net.Listener, err error) {
 	if err != nil {
 		return
 	}
-	lis = NewListener(l, c, socksAcceptor)
+	lis = NewListener(l, c, []ListenHandler{socksAcceptor})
 	return
 }
 
-func socksAcceptor(conn net.Conn, lis *listener) {
+func socksAcceptor(conn net.Conn, lis *listener) (c net.Conn) {
 	defer func() {
-		if conn != nil {
+		if conn != nil && c == nil {
 			conn.Close()
 		}
 	}()
@@ -333,12 +350,7 @@ func socksAcceptor(conn net.Conn, lis *listener) {
 	if err != nil {
 		return
 	}
-	conn = NewConn3(conn, host, port)
-	select {
-	case <-lis.die:
-	case lis.connch <- conn:
-		conn = nil
-	}
+	c = NewConn3(conn, host, port)
 	return
 }
 
@@ -352,13 +364,13 @@ func ListenRedir(address string, c *Config) (lis net.Listener, err error) {
 	if err != nil {
 		return
 	}
-	lis = NewListener(l, c, redirAcceptor)
+	lis = NewListener(l, c, []ListenHandler{redirAcceptor})
 	return
 }
 
-func redirAcceptor(conn net.Conn, lis *listener) {
+func redirAcceptor(conn net.Conn, lis *listener) (c net.Conn) {
 	defer func() {
-		if conn != nil {
+		if conn != nil && c == nil {
 			conn.Close()
 		}
 	}()
@@ -366,16 +378,11 @@ func redirAcceptor(conn net.Conn, lis *listener) {
 	if err != nil || len(target) == 0 {
 		return
 	}
-	conn = &Conn3{
+	c = &Conn3{
 		Conn: conn,
 		Target: &ConnTarget{
 			Addr: target,
 		},
-	}
-	select {
-	case <-lis.die:
-	case lis.connch <- conn:
-		conn = nil
 	}
 	return
 }
@@ -435,7 +442,11 @@ func DialSS(target, service string, c *Config) (conn net.Conn, err error) {
 }
 
 func DialSSWithRawHeader(header []byte, service string, c *Config) (conn net.Conn, err error) {
-	conn, err = net.Dial("tcp", service)
+	if c.Obfs {
+		conn, err = DialObfs(service, c)
+	} else {
+		conn, err = net.Dial("tcp", service)
+	}
 	if err != nil {
 		return
 	}

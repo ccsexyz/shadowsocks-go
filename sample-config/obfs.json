@@ -1,0 +1,50 @@
+[
+    {
+        "type": "multiserver",
+        "localaddr": ":12345",
+        "obfs": true,
+        "backends": [
+            {
+                "password": "010101",
+                "method": "chacha20"
+            },
+            {
+                "method": "chacha20-ietf",
+                "password": "020202"
+            }
+        ]
+    },
+    {
+        "type": "local",
+        "localaddr": ":1234",
+        "remoteaddr": ":12345",
+        "obfs": true,
+        "password": "010101",
+        "method": "chacha20",
+        "obfshost": [
+            "www.google.com",
+            "www.twitter.com"
+        ]
+    },
+    {
+        "type": "socksproxy",
+        "localaddr": ":1233",
+        "backends": [
+            {
+                "remoteaddr": ":12345",
+                "method": "chacha20-ietf",
+                "password": "020202",
+                "obfs": true,
+                "obfshost": [
+                    "www.google.com",
+                    "www.twitter.com"
+                ]
+            },
+            {
+                "remoteaddr": ":11111",
+                "method": "aes-128-ctr",
+                "password": "hello"
+            }
+        ]
+    }
+]
