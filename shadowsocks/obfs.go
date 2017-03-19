@@ -17,7 +17,7 @@ type DelayConn struct {
 	net.Conn
 	wbuf      [buffersize]byte
 	off       int
-	cond      sync.Cond
+	cond      *sync.Cond
 	die       chan bool
 	started   bool
 	destroyed bool
@@ -47,7 +47,9 @@ func (c *DelayConn) sendLoopOnce() (ok bool) {
 	if c.destroyed {
 		return
 	}
-	c.cond.Wait()
+	if c.off == 0 {
+		c.cond.Wait()
+	}
 	if c.destroyed {
 		return
 	}
@@ -110,7 +112,11 @@ func (c *DelayConn) Write(b []byte) (n int, err error) {
 }
 
 func delayAcceptHandler(conn net.Conn, _ *listener) net.Conn {
-	return &DelayConn{Conn: conn}
+	return &DelayConn{
+		Conn: conn,
+		die:  make(chan bool),
+		cond: sync.NewCond(&sync.Mutex{}),
+	}
 }
 
 type ObfsConn struct {
