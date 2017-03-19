@@ -109,6 +109,10 @@ func (c *DelayConn) Write(b []byte) (n int, err error) {
 	return
 }
 
+func delayAcceptHandler(conn net.Conn, _ *listener) net.Conn {
+	return &DelayConn{Conn: conn}
+}
+
 type ObfsConn struct {
 	net.Conn
 	//rbuf   [buffersize]byte

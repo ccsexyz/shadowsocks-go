@@ -25,6 +25,7 @@ type Config struct {
 	LogFile    string    `json:"logfile"`
 	Obfs       bool      `json:"obfs"`
 	ObfsHost   []string  `json:"obfshost"`
+	Delay      bool      `json:"delay"`
 	Vlogger    *log.Logger
 	Dlogger    *log.Logger
 	Logger     *log.Logger

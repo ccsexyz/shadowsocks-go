@@ -128,11 +128,15 @@ func ListenSS(service string, c *Config) (lis net.Listener, err error) {
 	if err != nil {
 		return
 	}
-	if c.Obfs {
-		lis = NewListener(l, c, []ListenHandler{obfsAcceptHandler, ssAcceptHandler})
-	} else {
-		lis = NewListener(l, c, []ListenHandler{ssAcceptHandler})
+	var handlers []ListenHandler
+	if c.Delay {
+		handlers = append(handlers, delayAcceptHandler)
 	}
+	if c.Obfs {
+		handlers = append(handlers, obfsAcceptHandler)
+	}
+	handlers = append(handlers, ssAcceptHandler)
+	lis = NewListener(l, c, handlers)
 	return
 }
 
@@ -155,11 +159,15 @@ func ListenMultiSS(service string, c *Config) (lis net.Listener, err error) {
 		h = append(h, hitsCounter{hits: 0, c: v})
 	}
 	c.Any = h
-	if c.Obfs {
-		lis = NewListener(l, c, []ListenHandler{obfsAcceptHandler, ssMultiAcceptHandler})
-	} else {
-		lis = NewListener(l, c, []ListenHandler{ssMultiAcceptHandler})
+	var handlers []ListenHandler
+	if c.Delay {
+		handlers = append(handlers, delayAcceptHandler)
 	}
+	if c.Obfs {
+		handlers = append(handlers, obfsAcceptHandler)
+	}
+	handlers = append(handlers, ssMultiAcceptHandler)
+	lis = NewListener(l, c, handlers)
 	go func(lis *listener) {
 		ticker := time.NewTicker(30 * time.Second)
 		for {
