@@ -259,7 +259,7 @@ func DialObfs(target string, c *Config) (conn net.Conn, err error) {
 	} else {
 		host = c.ObfsHost[int(src.Int63()%int64(len(c.ObfsHost)))]
 	}
-	req := buildHTTPRequest(fmt.Sprintf("Host: %s\r\nX-Online-Host: %s\r\n", c.ObfsHost, host))
+	req := buildHTTPRequest(fmt.Sprintf("Host: %s\r\nX-Online-Host: %s\r\n", host, host))
 	_, err = io.WriteString(conn, req)
 	if err != nil {
 		return
