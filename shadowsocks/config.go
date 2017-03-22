@@ -73,10 +73,10 @@ func CheckConfig(c *Config) {
 			c.Type = "server"
 		}
 	}
-	if c.UDPRelay && c.Type != "server" && c.Type != "local" && c.Type != "udptun" && c.Type != "multiserver" {
+	if c.UDPRelay && c.Type != "server" && c.Type != "local" && c.Type != "udptun" && c.Type != "multiserver" && c.Type != "redir" {
 		c.UDPRelay = false
 	}
-	if c.UDPOverTCP && c.Type != "server" && c.Type != "local" && c.Type != "udptun" && c.Type != "multiserver" {
+	if c.UDPOverTCP && c.Type != "server" && c.Type != "local" && c.Type != "udptun" && c.Type != "multiserver" && c.Type != "redir" {
 		c.UDPOverTCP = false
 	}
 	for _, v := range c.Backends {
