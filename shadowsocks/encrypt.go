@@ -119,11 +119,9 @@ func NewAESCFBDecrypter(key, iv []byte) (dec Decrypter, err error) {
 	if err != nil {
 		return
 	}
-	iv2 := make([]byte, len(iv))
-	copy(iv2, iv)
 	dec = &StreamDecrypter{
-		BaseStreamCipher: BaseStreamCipher{stream: cipher.NewCFBDecrypter(block, iv2)},
-		IV:               IV{iv: iv2},
+		BaseStreamCipher: BaseStreamCipher{stream: cipher.NewCFBDecrypter(block, iv)},
+		IV:               IV{iv: iv},
 	}
 	return
 }
@@ -133,11 +131,9 @@ func NewChaCha20Decrypter(key, iv []byte) (dec Decrypter, err error) {
 	if err != nil {
 		return
 	}
-	iv2 := make([]byte, len(iv))
-	copy(iv2, iv)
 	dec = &StreamDecrypter{
 		BaseStreamCipher: BaseStreamCipher{stream: stream},
-		IV:               IV{iv: iv2},
+		IV:               IV{iv: iv},
 	}
 	return
 }
@@ -147,11 +143,9 @@ func NewAESCTRDecrypter(key, iv []byte) (dec Decrypter, err error) {
 	if err != nil {
 		return
 	}
-	iv2 := make([]byte, len(iv))
-	copy(iv2, iv)
 	dec = &StreamDecrypter{
-		BaseStreamCipher: BaseStreamCipher{stream: cipher.NewCTR(block, iv2)},
-		IV:               IV{iv: iv2},
+		BaseStreamCipher: BaseStreamCipher{stream: cipher.NewCTR(block, iv)},
+		IV:               IV{iv: iv},
 	}
 	return
 }
@@ -161,11 +155,9 @@ func NewRC4MD5Decrypter(key, iv []byte) (dec Decrypter, err error) {
 	if err != nil {
 		return
 	}
-	iv2 := make([]byte, len(iv))
-	copy(iv2, iv)
 	dec = &StreamDecrypter{
 		BaseStreamCipher: BaseStreamCipher{stream: stream},
-		IV:               IV{iv: iv2},
+		IV:               IV{iv: iv},
 	}
 	return
 }
@@ -216,7 +208,9 @@ func NewDecrypter(method, password string, iv []byte) (dec Decrypter, err error)
 	if !ok {
 		m, _ = cipherMethod[defaultMethod]
 	}
-	dec, err = m.newDecrypter(kdf(password, m.keylen), iv)
+	iv2 := make([]byte, len(iv))
+	copy(iv2, iv)
+	dec, err = m.newDecrypter(kdf(password, m.keylen), iv2)
 	return
 }
 

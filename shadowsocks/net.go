@@ -1,7 +1,6 @@
 package shadowsocks
 
 import (
-	"crypto/rand"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -402,7 +401,13 @@ func DialMultiSS(target string, configs []*Config) (conn net.Conn, err error) {
 	conch := make(chan net.Conn, num)
 	for _, v := range configs {
 		go func(v *Config) {
-			rconn, err := DialSS(target, v.Remoteaddr, v)
+			var rconn net.Conn
+			var err error
+			if len(v.Remoteaddr) != 0 {
+				rconn, err = DialSS(target, v.Remoteaddr, v)
+			} else {
+				rconn, err = net.Dial("tcp", target)
+			}
 			if err != nil {
 				select {
 				case <-die:
@@ -458,15 +463,16 @@ func DialSSWithRawHeader(header []byte, service string, c *Config) (conn net.Con
 	if err != nil {
 		return
 	}
+	if c.Delay {
+		conn = NewDelayConn(conn)
+	}
 	conn = NewConn(conn, c)
-	C := conn.(*Conn)
-	buf := C.rbuf
+	buf := make([]byte, 1024)
 	var n int
 	if !c.Nonop {
 		buf[0] = typeNop
 		noplen := int(src.Int63() % 128)
 		buf[1] = byte(noplen)
-		binary.Read(rand.Reader, binary.BigEndian, buf[2:2+noplen])
 		n = noplen + 2
 	}
 	copy(buf[n:], header)

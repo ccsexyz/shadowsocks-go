@@ -2,7 +2,6 @@ package shadowsocks
 
 import (
 	"fmt"
-	"io"
 	"net"
 	"strconv"
 	"sync"
@@ -111,7 +110,7 @@ func (c *DelayConn) Write(b []byte) (n int, err error) {
 	return
 }
 
-func delayAcceptHandler(conn net.Conn, _ *listener) net.Conn {
+func NewDelayConn(conn net.Conn) *DelayConn {
 	return &DelayConn{
 		Conn: conn,
 		die:  make(chan bool),
@@ -119,17 +118,21 @@ func delayAcceptHandler(conn net.Conn, _ *listener) net.Conn {
 	}
 }
 
+func delayAcceptHandler(conn net.Conn, _ *listener) net.Conn {
+	return NewDelayConn(conn)
+}
+
 type ObfsConn struct {
-	net.Conn
-	//rbuf   [buffersize]byte
-	remain   []byte
+	RemainConn
+	resp     bool
+	req      bool
 	chunkLen int
 }
 
 func (c *ObfsConn) Write(b []byte) (n int, err error) {
 	n = len(b)
 	if n == 0 {
-		return
+		return c.RemainConn.Write(b)
 	}
 	defer func() {
 		if err != nil {
@@ -142,22 +145,62 @@ func (c *ObfsConn) Write(b []byte) (n int, err error) {
 	length += n
 	wbuf[length] = '\r'
 	wbuf[length+1] = '\n'
-	_, err = c.Conn.Write(wbuf[:length+2])
+	_, err = c.RemainConn.Write(wbuf[:length+2])
+	return
+}
+
+func (c *ObfsConn) readObfsHeader(b []byte) (n int, err error) {
+	buf := make([]byte, buffersize)
+	n, err = c.RemainConn.Read(buf)
+	if err != nil {
+		return
+	}
+	if n == 0 {
+		err = fmt.Errorf("short read")
+		return
+	}
+	ok := false
+	it := 0
+	if c.resp {
+		parser := newHTTPReplyParser()
+		for ; it < n && !ok && err == nil; it++ {
+			ok, err = parser.read(buf[it])
+		}
+	} else if c.req {
+		parser := newHTTPRequestParser()
+		for ; it < n && !ok && err == nil; it++ {
+			ok, err = parser.read(buf[it])
+		}
+	}
+	if err != nil {
+		return
+	}
+	if !ok {
+		err = fmt.Errorf("unexpected obfs header from %s", c.RemoteAddr().String())
+		return
+	}
+	c.resp = false
+	c.req = false
+	remain := buf[it:n]
+	if len(remain) != 0 {
+		n = copy(b, remain)
+		if n < len(remain) {
+			c.remain = append(c.remain, remain[n:]...)
+		}
+	} else {
+		n = 0
+	}
 	return
 }
 
 func (c *ObfsConn) doRead(b []byte) (n int, err error) {
-	if len(c.remain) == 0 {
-		n, err = c.Conn.Read(b)
-	} else {
-		n = copy(b, c.remain)
-		if n == len(c.remain) {
-			c.remain = nil
-		} else {
-			c.remain = c.remain[n:]
+	if c.req || c.resp {
+		n, err = c.readObfsHeader(b)
+		if err != nil || n != 0 {
+			return
 		}
 	}
-	return
+	return c.RemainConn.Read(b)
 }
 
 func (c *ObfsConn) Read(b []byte) (n int, err error) {
@@ -193,6 +236,8 @@ func (c *ObfsConn) Read(b []byte) (n int, err error) {
 			if c == '\n' {
 				break
 			}
+			err = fmt.Errorf("unexcepted length character", string(c))
+			return
 		}
 		if len(chunkLenStr) == 0 {
 			err = fmt.Errorf("incorrect chunked data")
@@ -223,14 +268,13 @@ func (c *ObfsConn) Read(b []byte) (n int, err error) {
 }
 
 func NewObfsConn(conn net.Conn) *ObfsConn {
-	return &ObfsConn{
-		Conn: conn,
-	}
+	return &ObfsConn{RemainConn: RemainConn{Conn: conn}}
 }
 
 type RemainConn struct {
 	net.Conn
-	remain []byte
+	remain  []byte
+	wremain []byte
 }
 
 func (c *RemainConn) Read(b []byte) (n int, err error) {
@@ -246,7 +290,25 @@ func (c *RemainConn) Read(b []byte) (n int, err error) {
 	return
 }
 
+func (c *RemainConn) Write(b []byte) (n int, err error) {
+	if len(c.wremain) != 0 {
+		_, err = c.Conn.Write(append(c.wremain, b...))
+		if err != nil {
+			return
+		}
+		c.wremain = nil
+		n = len(b)
+		return
+	}
+	return c.Conn.Write(b)
+}
+
 func DialObfs(target string, c *Config) (conn net.Conn, err error) {
+	defer func() {
+		if err != nil && conn != nil {
+			conn.Close()
+		}
+	}()
 	conn, err = net.Dial("tcp", target)
 	if err != nil {
 		return
@@ -260,42 +322,10 @@ func DialObfs(target string, c *Config) (conn net.Conn, err error) {
 		host = c.ObfsHost[int(src.Int63()%int64(len(c.ObfsHost)))]
 	}
 	req := buildHTTPRequest(fmt.Sprintf("Host: %s\r\nX-Online-Host: %s\r\n", host, host))
-	_, err = io.WriteString(conn, req)
-	if err != nil {
-		return
-	}
-	buf := make([]byte, buffersize)
-	parser := newHTTPReplyParser()
-	var flag bool
-	var n int
-	for !flag {
-		n, err = conn.Read(buf)
-		if err != nil {
-			return
-		}
-		if n == 0 {
-			err = fmt.Errorf("short read from %v", conn)
-			return
-		}
-		it := 0
-		ok := false
-		for ; it < n && !ok && err == nil; it++ {
-			ok, err = parser.read(buf[it])
-		}
-		if err != nil {
-			return
-		}
-		if ok {
-			obfsconn := NewObfsConn(conn)
-			remain := buf[it:n]
-			if len(remain) != 0 {
-				obfsconn.remain = make([]byte, len(remain))
-				copy(obfsconn.remain, remain)
-			}
-			conn = obfsconn
-			return
-		}
-	}
+	obfsconn := NewObfsConn(conn)
+	obfsconn.wremain = []byte(req)
+	obfsconn.resp = true
+	conn = obfsconn
 	return
 }
 
@@ -306,44 +336,19 @@ func obfsAcceptHandler(conn net.Conn, lis *listener) (c net.Conn) {
 		}
 	}()
 	buf := make([]byte, buffersize)
-	parser := newHTTPRequestParser()
-	var n int
-	var err error
-	for {
-		n, err = conn.Read(buf)
-		if err != nil || n == 0 {
-			return
-		}
-		if n > 4 && string(buf[:4]) != "POST" {
-			c = &RemainConn{
-				Conn:   conn,
-				remain: buf[:n],
-			}
-			return
-		}
-		it := 0
-		ok := false
-		for ; it < n && !ok && err == nil; it++ {
-			ok, err = parser.read(buf[it])
-		}
-		if err != nil {
-			return
-		}
-		if !ok {
-			continue
-		}
-		rep := buildHTTPResponse("")
-		_, err = io.WriteString(conn, rep)
-		if err != nil {
-			return
-		}
-		obfsconn := NewObfsConn(conn)
-		remain := buf[it:n]
-		if len(remain) != 0 {
-			obfsconn.remain = make([]byte, len(remain))
-			copy(obfsconn.remain, remain)
-		}
-		c = obfsconn
+	n, err := conn.Read(buf)
+	if err != nil || n == 0 {
 		return
 	}
+	if n > 4 && string(buf[:4]) != "POST" {
+		c = &RemainConn{Conn: conn, remain: buf[:n]}
+		return
+	}
+	resp := buildHTTPResponse("")
+	obfsconn := NewObfsConn(conn)
+	obfsconn.remain = buf[:n]
+	obfsconn.wremain = []byte(resp)
+	obfsconn.req = true
+	c = obfsconn
+	return
 }

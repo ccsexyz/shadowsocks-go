@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"log"
 	"math/rand"
 	"net"
 	"strconv"
@@ -20,6 +21,26 @@ func init() {
 	xuch = make(chan net.Conn, 32)
 	xudie = make(chan bool)
 	go xuroutine()
+}
+
+type DebugConn struct {
+	net.Conn
+}
+
+func (c *DebugConn) Read(b []byte) (n int, err error) {
+	n, err = c.Conn.Read(b)
+	if err == nil && n > 0 {
+		log.Println("read from", c.RemoteAddr(), b[:n])
+	}
+	return
+}
+
+func (c *DebugConn) Write(b []byte) (n int, err error) {
+	n, err = c.Conn.Write(b)
+	if err == nil && n > 0 {
+		log.Println("write to", c.RemoteAddr(), "from", c.LocalAddr(), b[:n])
+	}
+	return
 }
 
 type ConnTarget struct {
