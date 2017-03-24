@@ -24,12 +24,17 @@ func init() {
 
 type DebugConn struct {
 	net.Conn
+	c *Config
+}
+
+func NewDebugConn(conn net.Conn, c *Config) *DebugConn {
+	return &DebugConn{Conn: conn, c: c}
 }
 
 func (c *DebugConn) Read(b []byte) (n int, err error) {
 	n, err = c.Conn.Read(b)
 	if err == nil && n > 0 {
-		log.Println("read from", c.RemoteAddr(), b[:n])
+		c.c.LogD("read", n, "bytes from", c.RemoteAddr(), b[:n])
 	}
 	return
 }
@@ -37,7 +42,7 @@ func (c *DebugConn) Read(b []byte) (n int, err error) {
 func (c *DebugConn) Write(b []byte) (n int, err error) {
 	n, err = c.Conn.Write(b)
 	if err == nil && n > 0 {
-		log.Println("write to", c.RemoteAddr(), "from", c.LocalAddr(), b[:n])
+		c.c.LogD("write", n, "bytes to", c.RemoteAddr(), "from", c.LocalAddr(), b[:n])
 	}
 	return
 }
@@ -50,16 +55,6 @@ type Conn struct {
 	wbuf   []byte
 	c      *Config
 	xu1s   bool
-}
-
-func (c *Conn) GetIV() (enciv []byte, deciv []byte) {
-	if c.dec != nil {
-		deciv = c.dec.GetIV()
-	}
-	if c.enc != nil {
-		enciv = c.enc.GetIV()
-	}
-	return
 }
 
 func (c *Conn) Close() error {
