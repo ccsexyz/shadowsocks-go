@@ -467,20 +467,25 @@ func DialSSWithRawHeader(header []byte, service string, c *Config) (conn net.Con
 		conn = NewDelayConn(conn)
 	}
 	conn = NewConn(conn, c)
-	buf := make([]byte, 1024)
-	var n int
-	if !c.Nonop {
-		buf[0] = typeNop
+	if c.Nonop {
+		rconn := &RemainConn{
+			Conn: conn,
+			remain: make([]byte, len(header)),
+		}
+		copy(rconn.remain, header)
+		conn = rconn
+	} else {
 		noplen := int(src.Int63() % 128)
+		buf := make([]byte, 1024)
+		buf[0] = typeNop
 		buf[1] = byte(noplen)
-		n = noplen + 2
+		copy(buf[noplen+2:], header)
+		_, err = conn.Write(buf[:noplen+2+len(header)])
+		if err != nil {
+			conn.Close()
+		}
 	}
-	copy(buf[n:], header)
-	_, err = conn.Write(buf[:n+len(header)])
-	if err != nil {
-		conn.Close()
-	}
-	return
+	return 
 }
 
 func ListenTCPTun(address string, c *Config) (lis net.Listener, err error) {
