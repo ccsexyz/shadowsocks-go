@@ -12,21 +12,14 @@ func RunSSProxyServer(c *ss.Config) {
 
 func ssproxyHandler(conn net.Conn, c *ss.Config) {
 	defer conn.Close()
-	C := conn.(*ss.Conn)
-	target := C.Target
-	rconn, err := ss.DialMultiSS(target.Addr, c.Backends)
+	C := conn.(*ss.DstConn).Conn.(*ss.RemainConn).Conn.(*ss.Conn)
+	target := conn.(*ss.DstConn).GetDst()
+	rconn, err := ss.DialMultiSS(target, c.Backends)
 	if err != nil {
 		return
 	}
 	defer rconn.Close()
 	C.Xu0s() // FIXME
-	if len(target.Remain) != 0 {
-		_, err := rconn.Write(target.Remain)
-		if err != nil {
-			c.Log(err)
-			return
-		}
-	}
-	c.Log("proxy", target.Addr, "to", rconn.RemoteAddr().String(), "from", conn.RemoteAddr().String())
+	c.Log("proxy", target, "to", rconn.RemoteAddr().String(), "from", conn.RemoteAddr().String())
 	ss.Pipe(conn, rconn)
 }

@@ -13,7 +13,6 @@ type UDPConn struct {
 	rbuf   []byte
 	wbuf   []byte
 	c      *Config
-	Target *ConnTarget
 }
 
 func NewUDPConn(conn *net.UDPConn, c *Config) *UDPConn {

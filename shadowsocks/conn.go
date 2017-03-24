@@ -7,7 +7,6 @@ import (
 	"log"
 	"math/rand"
 	"net"
-	"strconv"
 	"time"
 )
 
@@ -43,11 +42,6 @@ func (c *DebugConn) Write(b []byte) (n int, err error) {
 	return
 }
 
-type ConnTarget struct {
-	Addr   string
-	Remain []byte
-}
-
 type Conn struct {
 	net.Conn
 	enc    Encrypter
@@ -56,7 +50,6 @@ type Conn struct {
 	wbuf   []byte
 	c      *Config
 	xu1s   bool
-	Target *ConnTarget
 }
 
 func (c *Conn) GetIV() (enciv []byte, deciv []byte) {
@@ -239,16 +232,15 @@ func (c *Conn2) Write(b []byte) (n int, err error) {
 	return
 }
 
-// FIXME
-type Conn3 struct {
+type DstConn struct {
 	net.Conn
-	Target *ConnTarget
+	dst string
 }
 
-// FIXME
-func NewConn3(conn net.Conn, host string, port int) *Conn3 {
-	return &Conn3{
-		Conn:   conn,
-		Target: &ConnTarget{Addr: net.JoinHostPort(host, strconv.Itoa(port))},
-	}
+func NewDstConn(conn net.Conn, dst string) *DstConn {
+	return &DstConn{Conn: conn, dst: dst}
+}
+
+func (c *DstConn) GetDst() string {
+	return c.dst
 }

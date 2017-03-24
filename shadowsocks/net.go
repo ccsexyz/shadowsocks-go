@@ -238,12 +238,10 @@ func ssMultiAcceptHandler(conn net.Conn, lis *listener) (c net.Conn) {
 		}
 		C.dec = dec
 		C.c = v
-		C.Target = &ConnTarget{
-			Addr:   net.JoinHostPort(host, strconv.Itoa(port)),
-			Remain: data,
-		}
+		conn = &RemainConn{Conn: C, remain: data}
+		conn = NewDstConn(conn, net.JoinHostPort(host, strconv.Itoa(port)))
 		atomic.AddInt64(&vh.hits, 1)
-		c = C
+		c = conn
 		return
 	}
 	return
@@ -287,10 +285,8 @@ func ssAcceptHandler(conn net.Conn, lis *listener) (c net.Conn) {
 		lis.c.Log("receive duplicate iv from %s, this means that you maight be attacked!", conn.RemoteAddr().String())
 		return
 	}
-	C.Target = &ConnTarget{
-		Addr:   net.JoinHostPort(host, strconv.Itoa(port)),
-		Remain: data,
-	}
+	conn = &RemainConn{Conn: conn, remain: data}
+	conn = NewDstConn(conn, net.JoinHostPort(host, strconv.Itoa(port)))
 	c = conn
 	return
 }
@@ -357,7 +353,7 @@ func socksAcceptor(conn net.Conn, lis *listener) (c net.Conn) {
 	if err != nil {
 		return
 	}
-	c = NewConn3(conn, host, port)
+	c = NewDstConn(conn, net.JoinHostPort(host, strconv.Itoa(port)))
 	return
 }
 
@@ -385,12 +381,7 @@ func redirAcceptor(conn net.Conn, lis *listener) (c net.Conn) {
 	if err != nil || len(target) == 0 {
 		return
 	}
-	c = &Conn3{
-		Conn: conn,
-		Target: &ConnTarget{
-			Addr: target,
-		},
-	}
+	c = NewDstConn(conn, target)
 	return
 }
 
@@ -485,7 +476,7 @@ func DialSSWithRawHeader(header []byte, service string, c *Config) (conn net.Con
 			conn.Close()
 		}
 	}
-	return 
+	return
 }
 
 func ListenTCPTun(address string, c *Config) (lis net.Listener, err error) {

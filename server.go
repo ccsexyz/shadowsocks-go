@@ -17,72 +17,48 @@ func RunTCPRemoteServer(c *ss.Config) {
 
 func tcpRemoteHandler(conn net.Conn, c *ss.Config) {
 	defer conn.Close()
-	C := conn.(*ss.Conn)
-	target := C.Target
-	if len(target.Addr) == 0 {
-		c.LogD("target.addr length is 0")
+	C := conn.(*ss.DstConn).Conn.(*ss.RemainConn).Conn.(*ss.Conn)
+	target := conn.(*ss.DstConn).GetDst()
+	if len(target) == 0 {
+		c.LogD("target length is 0")
 		return
 	}
-	if target.Addr == ss.Udprelayaddr {
+	if target == ss.Udprelayaddr {
 		C.Xu0s()
 		if c.UDPOverTCP {
-			udpRelayOverTCP(conn, target.Remain)
+			udpRelayOverTCP(conn)
 		}
 		return
 	}
-	rconn, err := net.Dial("tcp", target.Addr)
+	rconn, err := net.Dial("tcp", target)
 	if err != nil {
 		c.Log(err)
 		return
 	}
 	defer rconn.Close()
 	C.Xu0s()
-	if len(target.Remain) != 0 {
-		_, err = rconn.Write(target.Remain)
-		if err != nil {
-			c.Log(err)
-			return
-		}
-	}
-	c.Log("connect to", target.Addr, "from", conn.RemoteAddr().String())
+	c.Log("connect to", target, "from", conn.RemoteAddr().String())
 	ss.Pipe(conn, rconn)
 }
 
-func udpRelayOverTCP(conn net.Conn, remain []byte) {
-	var nbytes int
-	var target string
+func udpRelayOverTCP(conn net.Conn) {
 	buf := make([]byte, 256)
-	if len(remain) == 0 {
-		_, err := io.ReadFull(conn, buf[:1])
-		if err != nil {
-			return
-		}
-		nbytes = int(buf[0])
-	} else {
-		nbytes = int(remain[0])
-		remain = remain[1:]
+	_, err := io.ReadFull(conn, buf[:1])
+	if err != nil {
+		return
 	}
-	if len(remain) >= nbytes {
-		target = string(remain[:nbytes])
-		remain = remain[nbytes:]
-	} else {
-		copy(buf, remain)
-		_, err := io.ReadFull(conn, buf[len(remain):nbytes])
-		if err != nil {
-			return
-		}
-		target = string(buf[:nbytes])
-		remain = nil
+	nbytes := int(buf[0])
+	_, err = io.ReadFull(conn, buf[:nbytes])
+	if err != nil {
+		return
 	}
+	target := string(buf[:nbytes])
 	buf = nil
 	rconn, err := net.Dial("udp", target)
 	if err != nil {
 		return
 	}
 	defer rconn.Close()
-	if len(remain) > 0 {
-		rconn.Write(remain)
-	}
 	conn = ss.NewConn2(conn)
 	ss.Pipe(conn, rconn)
 }
