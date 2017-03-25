@@ -254,27 +254,23 @@ func ssAcceptHandler(conn net.Conn, lis *listener) (c net.Conn) {
 			conn.Close()
 		}
 	}()
-	C := conn.(*Conn)
-	C.Xu1s()
-	timer := time.AfterFunc(time.Second*4, func() {
-		C.Close()
-	})
-	buf := C.wbuf
+	buf := make([]byte, buffersize)
 	n, err := conn.Read(buf)
-	if timer != nil {
-		timer.Stop()
-		timer = nil
-	}
-	if err != nil {
-		lis.c.Log(err)
+	if err != nil || n < lis.c.Ivlen + 2 {
 		return
 	}
-	host, port, data := ParseAddr(buf[:n])
+	dec, err := NewDecrypter(lis.c.Method, lis.c.Password, buf[:lis.c.Ivlen])
+	if err != nil {
+		return
+	}
+	dbuf := make([]byte, buffersize)
+	dec.Decrypt(dbuf, buf[lis.c.Ivlen:n])
+	host, port, data := ParseAddr(dbuf[:n-lis.c.Ivlen])
 	if len(host) == 0 {
 		lis.c.Log("recv a unexpected header from %s.", conn.RemoteAddr().String())
 		return
 	}
-	iv := string(C.dec.GetIV())
+	iv := string(dec.GetIV())
 	lis.IvMapLock.Lock()
 	_, ok := lis.IvMap[iv]
 	if !ok {
@@ -285,7 +281,10 @@ func ssAcceptHandler(conn net.Conn, lis *listener) (c net.Conn) {
 		lis.c.Log("receive duplicate iv from %s, this means that you maight be attacked!", conn.RemoteAddr().String())
 		return
 	}
-	conn = &RemainConn{Conn: conn, remain: data}
+	C := NewConn(conn, lis.c)
+	C.dec = dec
+	C.Xu1s()
+	conn = &RemainConn{Conn: C, remain: data}
 	conn = NewDstConn(conn, net.JoinHostPort(host, strconv.Itoa(port)))
 	c = conn
 	return

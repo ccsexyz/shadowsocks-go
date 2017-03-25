@@ -12,7 +12,11 @@ func RunTCPLocalServer(c *ss.Config) {
 
 func tcpLocalHandler(conn net.Conn, c *ss.Config) {
 	defer conn.Close()
-	target := conn.(*ss.DstConn).GetDst()
+	dst, err := ss.GetDstConn(conn)
+	if err != nil {
+		return
+	}
+	target := dst.GetDst()
 	rconn, err := ss.DialSS(target, c.Remoteaddr, c)
 	if err != nil {
 		c.Log("failed connect to", target, err)

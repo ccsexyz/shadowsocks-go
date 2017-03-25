@@ -17,8 +17,15 @@ func RunTCPRemoteServer(c *ss.Config) {
 
 func tcpRemoteHandler(conn net.Conn, c *ss.Config) {
 	defer conn.Close()
-	C := conn.(*ss.DstConn).Conn.(*ss.RemainConn).Conn.(*ss.Conn)
-	target := conn.(*ss.DstConn).GetDst()
+	C, err := ss.GetConn(conn)
+	if err != nil {
+		return
+	}
+	dst, err := ss.GetDstConn(conn)
+	if err != nil {
+		return
+	}
+	target := dst.GetDst()
 	if len(target) == 0 {
 		c.LogD("target length is 0")
 		return

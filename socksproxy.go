@@ -12,7 +12,11 @@ func RunSocksProxyServer(c *ss.Config) {
 
 func socksProxyHandler(conn net.Conn, c *ss.Config) {
 	defer conn.Close()
-	target := conn.(*ss.DstConn).GetDst()
+	dst, err := ss.GetDstConn(conn)
+	if err != nil {
+		return
+	}
+	target := dst.GetDst()
 	rconn, err := ss.DialMultiSS(target, c.Backends)
 	if err != nil {
 		c.Log(err)

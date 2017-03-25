@@ -127,3 +127,50 @@ func Pipe(c1, c2 net.Conn) {
 	case <-c2die:
 	}
 }
+
+func GetInnerConn(conn net.Conn) (c net.Conn, err error) {
+	defer func() {
+		if c == nil {
+			err = fmt.Errorf("unexpected conn")
+		}
+	}()
+	switch i := conn.(type) {
+	case *Conn:
+		c = i.Conn
+	case *Conn2:
+		c = i.Conn
+	case *DebugConn:
+		c = i.Conn
+	case *DstConn:
+		c = i.Conn
+	case *RemainConn:
+		c = i.Conn
+	case *DelayConn:
+		c = i.Conn
+	}
+	return
+}
+
+func GetConn(conn net.Conn) (c *Conn, err error) {
+	c, ok := conn.(*Conn)
+	if !ok {
+		conn, err = GetInnerConn(conn)
+		if err != nil {
+			return
+		}
+		c, err = GetConn(conn)
+	}
+	return
+}
+
+func GetDstConn(conn net.Conn) (dst *DstConn, err error) {
+	dst, ok := conn.(*DstConn)
+	if !ok {
+		conn, err = GetInnerConn(conn)
+		if err != nil {
+			return
+		}
+		dst, err = GetDstConn(conn)
+	}
+	return
+}
