@@ -5,8 +5,9 @@ shadowsocks-go
 Features
 --------
 
-* 实现了完整的 shadowsocks 协议(没有支持 AEAD 的计划,因为我不需要)  
+* 实现了完整的 shadowsocks 协议(没有支持 AEAD 的计划,因为原始的 ss 协议已经足够安全可靠)  
 * 解决 ss 服务器可能被探测攻击的问题  
+* 解决 ss 流量特征与承载流量高度一致的问题  
 * 与官方的 ss 实现相互兼容,注意在使用客户端连接官方的 ss 服务器时必须设置 nonop 选项为 true  
 * 支持 aes-128/192/256-ctr aes-128/192/256-cfb chacha20 chacha20-ietf rc4-md5 加密  
 * 支持代理中继功能,可以从多个 ss 服务端中选取一个响应最快的服务端建立连接  
@@ -75,6 +76,10 @@ json 对象中的可选配置:
 * backends: 用于 *proxy 中,设置一组用于转发的 ss 服务端的配置信息  
 * obfs: 设置是否启用 HTTP 伪装,服务端开启此选项后仍然兼容不适用 HTTP 伪装的客户端    
 * obfshost: 设置一组 HOST,用于伪装中的 HOST 字段  
+* logfile: 设置日志文件的输出路径  
+* verbose: 输出详细日志  
+* debug: 输出调试日志  
+* delay: 设置为 true 时在发送数据时将会延迟一段时间(目前是10ms)来尝试将更多的数据合并发送,可以显著改变流量特征  
 
 type 字段的可选值:  
 * local: ss 客户端

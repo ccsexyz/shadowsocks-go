@@ -3,7 +3,6 @@ package shadowsocks
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"io/ioutil"
 	"log"
 	"os"
@@ -29,6 +28,7 @@ type Config struct {
 	Vlogger    *log.Logger
 	Dlogger    *log.Logger
 	Logger     *log.Logger
+	logfile    *os.File
 	Ivlen      int
 	Any        interface{}
 	Die        chan bool
@@ -48,9 +48,34 @@ func ReadConfig(path string) (configs []*Config, err error) {
 		}
 	}
 	for _, c := range configs {
+		CheckLogFile(c)
 		CheckConfig(c)
 	}
 	return
+}
+
+func (c *Config) Close() error {
+	if len(c.LogFile) != 0 && c.logfile != os.Stderr {
+		c.logfile.Close()
+	}
+	for _, bkn := range c.Backends {
+		bkn.Close()
+	}
+	return nil
+}
+
+func CheckLogFile(c *Config) {
+	if len(c.LogFile) == 0 {
+		c.logfile = os.Stderr
+		return
+	}
+	f, err := os.OpenFile(c.LogFile, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0644)
+	if err != nil {
+		c.logfile = os.Stderr
+		log.Println(err)
+	} else {
+		c.logfile = f
+	}
 }
 
 func CheckConfig(c *Config) {
@@ -79,31 +104,37 @@ func CheckConfig(c *Config) {
 	if c.UDPOverTCP && c.Type != "server" && c.Type != "local" && c.Type != "udptun" && c.Type != "multiserver" {
 		c.UDPOverTCP = false
 	}
+	c.Logger = log.New(c.logfile, "[info] ", log.Lshortfile|log.Ldate|log.Ltime|log.Lmicroseconds)
+	if c.Verbose {
+		c.Vlogger = log.New(c.logfile, "[verbose] ", log.Lshortfile|log.Ldate|log.Ltime|log.Lmicroseconds)
+	}
+	if c.Debug {
+		c.Dlogger = log.New(c.logfile, "[debug] ", log.Lshortfile|log.Ldate|log.Ltime|log.Lmicroseconds)
+	}
 	for _, v := range c.Backends {
 		v.Type = c.Type
-		CheckConfig(v)
 		if c.Obfs {
 			v.Obfs = true
 			v.ObfsHost = append(v.ObfsHost, c.ObfsHost...)
 		}
-	}
-	var writer io.Writer
-	if len(c.LogFile) == 0 {
-		writer = os.Stderr
-	} else {
-		var err error
-		writer, err = os.OpenFile(c.LogFile, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0644)
-		if err != nil {
-			log.Println(err)
-			writer = os.Stderr
+		if c.Debug {
+			v.Debug = true
 		}
-	}
-	c.Logger = log.New(writer, "[info] ", log.Lshortfile|log.Ldate|log.Ltime|log.Lmicroseconds)
-	if c.Verbose {
-		c.Vlogger = log.New(writer, "[verbose] ", log.Lshortfile|log.Ldate|log.Ltime|log.Lmicroseconds)
-	}
-	if c.Debug {
-		c.Dlogger = log.New(writer, "[debug] ", log.Lshortfile|log.Ldate|log.Ltime|log.Lmicroseconds)
+		if c.Verbose {
+			v.Verbose = true
+		}
+		if c.Delay {
+			v.Delay = true
+		}
+		if c.LogFile == v.LogFile {
+			v.logfile = c.logfile
+		} else {
+			CheckLogFile(v)
+			if v.logfile == os.Stderr && c.logfile != os.Stderr {
+				v.logfile = c.logfile
+			}
+		}
+		CheckConfig(v)
 	}
 }
 

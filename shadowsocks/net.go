@@ -248,7 +248,6 @@ func ssMultiAcceptHandler(conn net.Conn, lis *listener) (c net.Conn) {
 }
 
 func ssAcceptHandler(conn net.Conn, lis *listener) (c net.Conn) {
-	conn = NewConn(conn, lis.c)
 	defer func() {
 		if conn != nil && c == nil {
 			conn.Close()
@@ -256,7 +255,7 @@ func ssAcceptHandler(conn net.Conn, lis *listener) (c net.Conn) {
 	}()
 	buf := make([]byte, buffersize)
 	n, err := conn.Read(buf)
-	if err != nil || n < lis.c.Ivlen + 2 {
+	if err != nil || n < lis.c.Ivlen+2 {
 		return
 	}
 	dec, err := NewDecrypter(lis.c.Method, lis.c.Password, buf[:lis.c.Ivlen])
@@ -459,7 +458,7 @@ func DialSSWithRawHeader(header []byte, service string, c *Config) (conn net.Con
 	conn = NewConn(conn, c)
 	if c.Nonop {
 		rconn := &RemainConn{
-			Conn: conn,
+			Conn:   conn,
 			remain: make([]byte, len(header)),
 		}
 		copy(rconn.remain, header)

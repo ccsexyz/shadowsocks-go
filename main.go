@@ -117,5 +117,8 @@ func main() {
 			return
 		}
 		time.Sleep(time.Second)
+		for _, c := range configs {
+			c.Close()
+		}
 	}
 }

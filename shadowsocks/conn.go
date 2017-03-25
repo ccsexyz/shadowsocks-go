@@ -48,12 +48,12 @@ func (c *DebugConn) Write(b []byte) (n int, err error) {
 
 type Conn struct {
 	net.Conn
-	enc    Encrypter
-	dec    Decrypter
-	rbuf   []byte
-	wbuf   []byte
-	c      *Config
-	xu1s   bool
+	enc  Encrypter
+	dec  Decrypter
+	rbuf []byte
+	wbuf []byte
+	c    *Config
+	xu1s bool
 }
 
 func (c *Conn) Close() error {

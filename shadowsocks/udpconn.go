@@ -10,9 +10,9 @@ import (
 
 type UDPConn struct {
 	*net.UDPConn
-	rbuf   []byte
-	wbuf   []byte
-	c      *Config
+	rbuf []byte
+	wbuf []byte
+	c    *Config
 }
 
 func NewUDPConn(conn *net.UDPConn, c *Config) *UDPConn {
