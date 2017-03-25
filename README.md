@@ -17,7 +17,7 @@ Features
 * 支持 TCP redirect,类似 ss-libev 的 redir 模式  
 * 支持单个端口设置不同的加密方式及密码  
 * 配置文件更改后自动重载配置文件,并且不影响已经建立的连接  
-* 实现了简单的 HTTP 伪装  
+* 实现了简单的 HTTP 伪装,伪装的目的是欺骗运营商而不是绕过某些设备,应当谨慎使用    
 
 Build
 -----
@@ -92,6 +92,28 @@ type 字段的可选值:
 * multiserver: 单个端口多加密方式及密码的 ss 服务端, 注意 aes 加密的 ctr 和 cfb 模式不能设置为同一个密码,因为这两种模式的第一个分组的解密结果是相同的,无法区分  
 
 具体的使用可以参考 sample-config 中的示例配置文件  
+
+Advanced Usage 
+--------------
+
+在设置 obfs 的情况下可以在服务端的前方启动一个 nginx 然后将指定 Host 的请求转发到服务端，从而实现某一个端口 ss 服务与其他服务的共存  
+在 nginx 配置文件中增加一个 server 块即可实现将所有 Host 字段为 www.google.com 的请求转发到 9377 端口       
+```
+server {
+	listen 80;
+	listen [::]:80;
+	server_name  www.google.com;
+
+	location / {
+		expires off;
+		proxy_buffering off;
+		proxy_request_buffering off;
+		proxy_http_version 1.1;
+		proxy_pass http://localhost:9377/;
+	}
+}
+
+``` 
 
 TODO  
 ____  
