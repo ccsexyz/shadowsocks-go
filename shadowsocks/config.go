@@ -55,7 +55,7 @@ func ReadConfig(path string) (configs []*Config, err error) {
 }
 
 func (c *Config) Close() error {
-	if len(c.LogFile) != 0 && c.logfile != os.Stderr {
+	if len(c.LogFile) != 0 && c.logfile != os.Stderr && c.logfile != nil {
 		c.logfile.Close()
 	}
 	for _, bkn := range c.Backends {

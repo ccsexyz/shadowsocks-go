@@ -56,12 +56,11 @@ func (c *DelayConn) sendLoopOnce() (ok bool) {
 		return true
 	}
 	c.cond.L.Unlock()
-	timer := time.NewTimer(delayConnTick)
 	select {
 	case <-c.die:
 		c.cond.L.Lock()
 		return
-	case <-timer.C:
+	case <-time.After(delayConnTick):
 	}
 	c.cond.L.Lock()
 	if c.off == 0 {
@@ -350,5 +349,49 @@ func obfsAcceptHandler(conn net.Conn, lis *listener) (c net.Conn) {
 	obfsconn.wremain = []byte(resp)
 	obfsconn.req = true
 	c = obfsconn
+	return
+}
+
+type LimitConn struct {
+	net.Conn
+	rlimit int
+	rlast  int64
+	rbytes int
+	wlimit int
+	wlast  int64
+	wbytes int
+}
+
+func (c *LimitConn) Read(b []byte) (n int, err error) {
+	if c.rlimit == 0 {
+		return c.Conn.Read(b)
+	}
+	ns := time.Now().UnixNano()
+	if c.rlast == 0 || c.rlast+int64(1000000000) < ns {
+		c.rlast = ns
+		c.rbytes = c.rlimit
+	}
+	if c.rbytes <= 0 {
+		time.Sleep(time.Nanosecond * time.Duration(ns-c.rlast))
+	}
+	n, err = c.Conn.Read(b)
+	c.rbytes -= n
+	return
+}
+
+func (c *LimitConn) Write(b []byte) (n int, err error) {
+	if c.wlimit == 0 {
+		return c.Conn.Write(b)
+	}
+	ns := time.Now().UnixNano()
+	if c.wlast == 0 || c.wlast+int64(1000000000) < ns {
+		c.wlast = ns
+		c.wbytes = c.wlimit
+	}
+	if c.wbytes <= 0 {
+		time.Sleep(time.Nanosecond * time.Duration(ns-c.wlast))
+	}
+	n, err = c.Conn.Write(b)
+	c.wbytes -= n
 	return
 }

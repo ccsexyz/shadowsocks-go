@@ -147,6 +147,8 @@ func GetInnerConn(conn net.Conn) (c net.Conn, err error) {
 		c = i.Conn
 	case *DelayConn:
 		c = i.Conn
+	case *LimitConn:
+		c = i.Conn
 	}
 	return
 }
@@ -171,6 +173,18 @@ func GetDstConn(conn net.Conn) (dst *DstConn, err error) {
 			return
 		}
 		dst, err = GetDstConn(conn)
+	}
+	return
+}
+
+func GetLimitConn(conn net.Conn) (l *LimitConn, err error) {
+	l, ok := conn.(*LimitConn)
+	if !ok {
+		conn, err = GetInnerConn(conn)
+		if err != nil {
+			return
+		}
+		l, err = GetLimitConn(conn)
 	}
 	return
 }
