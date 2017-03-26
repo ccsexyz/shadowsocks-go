@@ -25,6 +25,8 @@ type listener struct {
 	handlers  []ListenHandler
 	IvMap     map[string]bool
 	IvMapLock sync.Mutex
+	rlimiter  *Limiter
+	wlimiter  *Limiter
 }
 
 func NewListener(lis *net.TCPListener, c *Config, handlers []ListenHandler) *listener {
@@ -35,6 +37,8 @@ func NewListener(lis *net.TCPListener, c *Config, handlers []ListenHandler) *lis
 		die:         make(chan bool),
 		connch:      make(chan net.Conn, 32),
 		IvMap:       make(map[string]bool),
+		rlimiter:    NewLimiter(0),
+		wlimiter:    NewLimiter(0),
 	}
 	go l.acceptor()
 	go l.ivMapCleaner()
@@ -128,6 +132,7 @@ func ListenSS(service string, c *Config) (lis net.Listener, err error) {
 		return
 	}
 	var handlers []ListenHandler
+	handlers = append(handlers, limitAcceptHandler)
 	if c.Delay {
 		handlers = append(handlers, delayAcceptHandler)
 	}
@@ -159,6 +164,7 @@ func ListenMultiSS(service string, c *Config) (lis net.Listener, err error) {
 	}
 	c.Any = h
 	var handlers []ListenHandler
+	handlers = append(handlers, limitAcceptHandler)
 	if c.Delay {
 		handlers = append(handlers, delayAcceptHandler)
 	}
@@ -298,7 +304,7 @@ func ListenSocks5(address string, c *Config) (lis net.Listener, err error) {
 	if err != nil {
 		return
 	}
-	lis = NewListener(l, c, []ListenHandler{socksAcceptor})
+	lis = NewListener(l, c, []ListenHandler{limitAcceptHandler, socksAcceptor})
 	return
 }
 
@@ -365,7 +371,7 @@ func ListenRedir(address string, c *Config) (lis net.Listener, err error) {
 	if err != nil {
 		return
 	}
-	lis = NewListener(l, c, []ListenHandler{redirAcceptor})
+	lis = NewListener(l, c, []ListenHandler{limitAcceptHandler, redirAcceptor})
 	return
 }
 
@@ -451,6 +457,11 @@ func DialSSWithRawHeader(header []byte, service string, c *Config) (conn net.Con
 	}
 	if err != nil {
 		return
+	}
+	conn = &LimitConn{
+		Conn:      conn,
+		Rlimiters: []*Limiter{NewLimiter(0)},
+		Wlimiters: []*Limiter{NewLimiter(0)},
 	}
 	if c.Delay {
 		conn = NewDelayConn(conn)

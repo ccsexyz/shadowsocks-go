@@ -24,6 +24,17 @@ func tcpLocalHandler(conn net.Conn, c *ss.Config) {
 	}
 	defer rconn.Close()
 	c.Log("connect to ", target, "from", conn.RemoteAddr().String())
+	// lim, err := ss.GetLimitConn(conn)
+	// if err == nil {
+	// 	defer func() {
+	// 		for _, v := range lim.Rlimiters {
+	// 			c.Log("read", v.GetTotalBytes(), "bytes")
+	// 		}
+	// 		for _, v := range lim.Wlimiters {
+	// 			c.Log("write", v.GetTotalBytes(), "bytes")
+	// 		}
+	// 	}()
+	// }
 	ss.Pipe(conn, rconn)
 }
 

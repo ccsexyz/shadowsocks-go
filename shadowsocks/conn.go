@@ -46,6 +46,18 @@ func (c *DebugConn) Write(b []byte) (n int, err error) {
 	return
 }
 
+func debugAcceptHandler(conn net.Conn, lis *listener) (c net.Conn) {
+	if lis.c.Debug {
+		c = &DebugConn{
+			Conn: conn,
+			c:    lis.c,
+		}
+	} else {
+		c = conn
+	}
+	return
+}
+
 type Conn struct {
 	net.Conn
 	enc  Encrypter
@@ -83,10 +95,6 @@ func (c *Conn) Xu1s() {
 
 func (c *Conn) Xu0s() {
 	c.xu1s = false
-}
-
-func (c *Conn) Wbuf() []byte {
-	return c.wbuf
 }
 
 func (c *Conn) Read(b []byte) (n int, err error) {
@@ -237,4 +245,39 @@ func NewDstConn(conn net.Conn, dst string) *DstConn {
 
 func (c *DstConn) GetDst() string {
 	return c.dst
+}
+
+type LimitConn struct {
+	net.Conn
+	Rlimiters []*Limiter
+	Wlimiters []*Limiter
+}
+
+func (c *LimitConn) Read(b []byte) (n int, err error) {
+	n, err = c.Conn.Read(b)
+	if err == nil {
+		for _, v := range c.Rlimiters {
+			v.Update(n)
+		}
+	}
+	return
+}
+
+func (c *LimitConn) Write(b []byte) (n int, err error) {
+	n, err = c.Conn.Write(b)
+	if err == nil {
+		for _, v := range c.Wlimiters {
+			v.Update(n)
+		}
+	}
+	return
+}
+
+func limitAcceptHandler(conn net.Conn, lis *listener) (c net.Conn) {
+	c = &LimitConn{
+		Conn:      conn,
+		Rlimiters: []*Limiter{lis.rlimiter, NewLimiter(0)},
+		Wlimiters: []*Limiter{lis.wlimiter, NewLimiter(0)},
+	}
+	return
 }

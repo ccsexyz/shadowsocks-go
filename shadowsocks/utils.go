@@ -5,6 +5,8 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net"
+	"sync"
+	"time"
 )
 
 const (
@@ -126,6 +128,58 @@ func Pipe(c1, c2 net.Conn) {
 	case <-c1die:
 	case <-c2die:
 	}
+}
+
+type Limiter struct {
+	limit      int
+	nbytes     int
+	last       int64
+	totalBytes int64
+	lock       sync.Mutex
+}
+
+func NewLimiter(limit int) *Limiter {
+	return &Limiter{limit: limit, last: time.Now().UnixNano(), nbytes: limit}
+}
+
+func (l *Limiter) refresh(ns int64) {
+	l.last = ns
+	l.nbytes = l.limit
+}
+
+func (l *Limiter) Update(nbytes int) {
+	l.lock.Lock()
+	defer l.lock.Unlock()
+	l.totalBytes += int64(nbytes)
+	if l.limit == 0 {
+		return
+	}
+	ns := time.Now().UnixNano()
+	if l.last == 0 {
+		l.refresh(ns)
+	}
+	l.nbytes -= nbytes
+	if l.nbytes <= 0 {
+		nextNs := l.last + int64(1000000000)
+		if nextNs > ns {
+			time.Sleep(time.Nanosecond * time.Duration(nextNs-ns))
+		}
+		l.refresh(ns)
+	}
+}
+
+func (l *Limiter) GetLimit() int {
+	return l.limit
+}
+
+func (l *Limiter) SetLimit(limit int) {
+	l.lock.Lock()
+	defer l.lock.Unlock()
+	l.limit = limit
+}
+
+func (l *Limiter) GetTotalBytes() int64 {
+	return l.totalBytes
 }
 
 func GetInnerConn(conn net.Conn) (c net.Conn, err error) {
