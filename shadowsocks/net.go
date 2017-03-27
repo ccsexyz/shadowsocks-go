@@ -168,7 +168,9 @@ func ListenMultiSS(service string, c *Config) (lis net.Listener, err error) {
 	lis = NewListener(l, c, handlers)
 	go func(lis *listener) {
 		ticker := time.NewTicker(30 * time.Second)
+		i := 0
 		for {
+			i++
 			select {
 			case <-lis.die:
 				return
@@ -177,11 +179,13 @@ func ListenMultiSS(service string, c *Config) (lis net.Listener, err error) {
 			lis.IvMapLock.Lock()
 			sort.SliceStable(lis.c.Backends, func(i, j int) bool {
 				ihits := *(lis.c.Backends[i].Any.(*int))
-				jhits := *(lis.c.Backends[i].Any.(*int))
-				return ihits > jhits
+				jhits := *(lis.c.Backends[j].Any.(*int))
+				return jhits < ihits
 			})
-			for _, v := range lis.c.Backends {
-				*(v.Any.(*int)) /= 2
+			if i % 60 {
+				for _, v := range lis.c.Backends {
+					*(v.Any.(*int)) /= 2
+				}
 			}
 			lis.IvMapLock.Unlock()
 		}

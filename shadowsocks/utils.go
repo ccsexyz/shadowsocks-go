@@ -174,6 +174,7 @@ func ParseAddrWithMultipleBackends(b []byte, configs []*Config) (host string, po
 			copy(buf, b[cand.off:])
 			d.Decrypt(b, buf[:n])
 			data = b[:n]
+			return 
 		}
 		cand.c = config
 		candidates = append(candidates, &cand)
