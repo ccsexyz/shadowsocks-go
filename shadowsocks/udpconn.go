@@ -122,27 +122,17 @@ func (c *MultiUDPConn) ReadFrom(b []byte) (n int, addr net.Addr, err error) {
 			n -= v.Ivlen
 			return
 		}
-		for _, v = range c.c.Backends {
-			if len(b) <= v.Ivlen {
-				continue
-			}
-			var dec Decrypter
-			dec, err = NewDecrypter(v.Method, v.Password, c.rbuf[:v.Ivlen])
-			if err != nil {
-				continue
-			}
-			dec.Decrypt(b, c.rbuf[v.Ivlen:n])
-			host, _, _ := ParseAddr(b[:n-v.Ivlen])
-			if len(host) == 0 {
-				continue
-			}
-			n -= v.Ivlen
-			c.lock.Lock()
-			c.sessions[addr.String()] = v
-			c.lock.Unlock()
-			return
+		host, port, data, dec, chs := ParseAddrWithMultipleBackends(c.rbuf[:n], c.c.Backends)
+		if len(host) == 0 {
+			continue
 		}
-		continue
+		n = PutHeader(b, host, port)
+		n += copy(b[n:], data)
+		c.lock.Lock()
+		c.sessions[addr.String()] = chs
+		c.lock.Unlock()
+		// *(chs.Any.(*int))++
+		return
 	}
 }
 

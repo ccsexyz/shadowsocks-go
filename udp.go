@@ -90,6 +90,7 @@ func RunMultiUDPRemoteServer(c *ss.Config) {
 		target := net.JoinHostPort(host, strconv.Itoa(port))
 		rconn, err = net.Dial("udp", target)
 		if err != nil {
+			c.LogD(err)
 			return
 		}
 		hdrlen := len(b) - len(data)

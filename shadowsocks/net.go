@@ -8,7 +8,6 @@ import (
 	"sort"
 	"strconv"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/ccsexyz/shadowsocks-go/redir"
@@ -144,11 +143,6 @@ func ListenSS(service string, c *Config) (lis net.Listener, err error) {
 	return
 }
 
-type hitsCounter struct {
-	hits int64
-	c    *Config
-}
-
 func ListenMultiSS(service string, c *Config) (lis net.Listener, err error) {
 	addr, err := net.ResolveTCPAddr("tcp", service)
 	if err != nil {
@@ -158,11 +152,10 @@ func ListenMultiSS(service string, c *Config) (lis net.Listener, err error) {
 	if err != nil {
 		return
 	}
-	var h []hitsCounter
 	for _, v := range c.Backends {
-		h = append(h, hitsCounter{hits: 0, c: v})
+		hits := 0
+		v.Any = &hits
 	}
-	c.Any = h
 	var handlers []ListenHandler
 	handlers = append(handlers, limitAcceptHandler)
 	if c.Delay {
@@ -181,13 +174,16 @@ func ListenMultiSS(service string, c *Config) (lis net.Listener, err error) {
 				return
 			case <-ticker.C:
 			}
-			h = c.Any.([]hitsCounter)
-			h2 := make([]hitsCounter, len(h))
-			copy(h2, h)
-			sort.SliceStable(h2, func(i, j int) bool {
-				return h2[i].hits > h2[j].hits
+			lis.IvMapLock.Lock()
+			sort.SliceStable(lis.c.Backends, func(i, j int) bool {
+				ihits := *(lis.c.Backends[i].Any.(*int))
+				jhits := *(lis.c.Backends[i].Any.(*int))
+				return ihits > jhits
 			})
-			lis.c.Any = h2
+			for _, v := range lis.c.Backends {
+				*(v.Any.(*int)) /= 2
+			}
+			lis.IvMapLock.Unlock()
 		}
 	}(lis.(*listener))
 	return
@@ -212,44 +208,28 @@ func ssMultiAcceptHandler(conn net.Conn, lis *listener) (c net.Conn) {
 	if err != nil {
 		return
 	}
-	rbuf := C.rbuf
-	var dec Decrypter
-	lis.IvMapLock.Lock()
-	h := lis.c.Any.([]hitsCounter)
-	lis.IvMapLock.Unlock()
-	for _, vh := range h {
-		v := vh.c
-		if n <= v.Ivlen {
-			continue
-		}
-		dec, err = NewDecrypter(v.Method, v.Password, buf[:v.Ivlen])
-		if err != nil {
-			continue
-		}
-		dec.Decrypt(rbuf, buf[v.Ivlen:n])
-		host, port, data := ParseAddr(rbuf[:n-v.Ivlen])
-		if len(host) == 0 {
-			continue
-		}
-		iv := string(dec.GetIV())
-		lis.IvMapLock.Lock()
-		_, ok := lis.IvMap[iv]
-		if !ok {
-			lis.IvMap[iv] = true
-		}
-		lis.IvMapLock.Unlock()
-		if ok {
-			lis.c.Log("receive duplicate iv from %s, this means that you maight be attacked!", conn.RemoteAddr().String())
-			return
-		}
-		C.dec = dec
-		C.c = v
-		conn = &RemainConn{Conn: C, remain: data}
-		conn = NewDstConn(conn, net.JoinHostPort(host, strconv.Itoa(port)))
-		atomic.AddInt64(&vh.hits, 1)
-		c = conn
+	host, port, data, dec, chs := ParseAddrWithMultipleBackends(buf[:n], lis.c.Backends)
+	if len(host) == 0 {
 		return
 	}
+	iv := string(dec.GetIV())
+	lis.IvMapLock.Lock()
+	_, ok := lis.IvMap[iv]
+	if !ok {
+		lis.IvMap[iv] = true
+		*(chs.Any.(*int))++
+	}
+	lis.IvMapLock.Unlock()
+	if ok {
+		lis.c.Log("receive duplicate iv from %s, this means that you maight be attacked!", conn.RemoteAddr().String())
+		return
+	}
+	C.dec = dec
+	C.c = chs
+	conn = &RemainConn{Conn: C, remain: data}
+	conn = NewDstConn(conn, net.JoinHostPort(host, strconv.Itoa(port)))
+	c = conn
+	lis.c.LogD("choose", chs.Method, chs.Password)
 	return
 }
 
