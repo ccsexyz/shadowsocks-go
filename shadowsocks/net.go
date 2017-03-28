@@ -182,7 +182,7 @@ func ListenMultiSS(service string, c *Config) (lis net.Listener, err error) {
 				jhits := *(lis.c.Backends[j].Any.(*int))
 				return jhits < ihits
 			})
-			if i % 60 {
+			if i % 60 == 0 {
 				for _, v := range lis.c.Backends {
 					*(v.Any.(*int)) /= 2
 				}
@@ -233,7 +233,7 @@ func ssMultiAcceptHandler(conn net.Conn, lis *listener) (c net.Conn) {
 	conn = &RemainConn{Conn: C, remain: data}
 	conn = NewDstConn(conn, net.JoinHostPort(host, strconv.Itoa(port)))
 	c = conn
-	lis.c.LogD("choose", chs.Method, chs.Password)
+	chs.LogD("choose", chs.Method, chs.Password)
 	return
 }
 

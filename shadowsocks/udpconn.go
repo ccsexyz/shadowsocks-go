@@ -132,6 +132,7 @@ func (c *MultiUDPConn) ReadFrom(b []byte) (n int, addr net.Addr, err error) {
 		c.sessions[addr.String()] = chs
 		c.lock.Unlock()
 		// *(chs.Any.(*int))++
+		chs.LogD("udp mode choose", chs.Method, chs.Password)
 		return
 	}
 }

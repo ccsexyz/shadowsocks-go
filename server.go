@@ -21,6 +21,9 @@ func tcpRemoteHandler(conn net.Conn, c *ss.Config) {
 	if err != nil {
 		return
 	}
+	if C.GetConfig() != nil {
+		c = C.GetConfig()
+	}
 	dst, err := ss.GetDstConn(conn)
 	if err != nil {
 		return

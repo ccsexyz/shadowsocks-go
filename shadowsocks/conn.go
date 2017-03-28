@@ -68,6 +68,10 @@ type Conn struct {
 	xu1s bool
 }
 
+func (c *Conn) GetConfig() *Config {
+	return c.c
+}
+
 func (c *Conn) Close() error {
 	if c.xu1s {
 		c.xu1s = false
