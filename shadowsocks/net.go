@@ -24,8 +24,6 @@ type listener struct {
 	handlers  []ListenHandler
 	IvMap     map[string]bool
 	IvMapLock sync.Mutex
-	rlimiter  *Limiter
-	wlimiter  *Limiter
 }
 
 func NewListener(lis *net.TCPListener, c *Config, handlers []ListenHandler) *listener {
@@ -36,8 +34,6 @@ func NewListener(lis *net.TCPListener, c *Config, handlers []ListenHandler) *lis
 		die:         make(chan bool),
 		connch:      make(chan net.Conn, 32),
 		IvMap:       make(map[string]bool),
-		rlimiter:    NewLimiter(0),
-		wlimiter:    NewLimiter(0),
 	}
 	go l.acceptor()
 	go l.ivMapCleaner()
@@ -182,7 +178,7 @@ func ListenMultiSS(service string, c *Config) (lis net.Listener, err error) {
 				jhits := *(lis.c.Backends[j].Any.(*int))
 				return jhits < ihits
 			})
-			if i % 60 == 0 {
+			if i%60 == 0 {
 				for _, v := range lis.c.Backends {
 					*(v.Any.(*int)) /= 2
 				}
@@ -442,10 +438,16 @@ func DialSSWithRawHeader(header []byte, service string, c *Config) (conn net.Con
 	if err != nil {
 		return
 	}
-	conn = &LimitConn{
-		Conn:      conn,
-		Rlimiters: []*Limiter{NewLimiter(0)},
-		Wlimiters: []*Limiter{NewLimiter(0)},
+	if len(c.limiters) != 0 || c.LimitPerConn != 0 {
+		limiters := make([]*Limiter, len(c.limiters))
+		copy(limiters, c.limiters)
+		if c.LimitPerConn != 0 {
+			limiters = append(limiters, NewLimiter(c.LimitPerConn))
+		}
+		conn = &LimitConn{
+			Conn:      conn,
+			Rlimiters: limiters,
+		}
 	}
 	if c.Delay {
 		conn = NewDelayConn(conn)

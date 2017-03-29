@@ -9,29 +9,33 @@ import (
 )
 
 type Config struct {
-	Type       string    `json:"type"`
-	Localaddr  string    `json:"localaddr"`
-	Remoteaddr string    `json:"remoteaddr"`
-	Method     string    `json:"method"`
-	Password   string    `json:"password"`
-	Nonop      bool      `json:"nonop"`
-	UDPRelay   bool      `json:"udprelay"`
-	UDPOverTCP bool      `json:"udpovertcp"`
-	Backend    *Config   `json:"backend"`
-	Backends   []*Config `json:"backends"`
-	Verbose    bool      `json:"verbose"`
-	Debug      bool      `json:"debug"`
-	LogFile    string    `json:"logfile"`
-	Obfs       bool      `json:"obfs"`
-	ObfsHost   []string  `json:"obfshost"`
-	Delay      bool      `json:"delay"`
-	Vlogger    *log.Logger
-	Dlogger    *log.Logger
-	Logger     *log.Logger
-	logfile    *os.File
-	Ivlen      int
-	Any        interface{}
-	Die        chan bool
+	Nickname     string    `json:"nickname"`
+	Type         string    `json:"type"`
+	Localaddr    string    `json:"localaddr"`
+	Remoteaddr   string    `json:"remoteaddr"`
+	Method       string    `json:"method"`
+	Password     string    `json:"password"`
+	Nonop        bool      `json:"nonop"`
+	UDPRelay     bool      `json:"udprelay"`
+	UDPOverTCP   bool      `json:"udpovertcp"`
+	Backend      *Config   `json:"backend"`
+	Backends     []*Config `json:"backends"`
+	Verbose      bool      `json:"verbose"`
+	Debug        bool      `json:"debug"`
+	LogFile      string    `json:"logfile"`
+	Obfs         bool      `json:"obfs"`
+	ObfsHost     []string  `json:"obfshost"`
+	Delay        bool      `json:"delay"`
+	Limit        int       `json:"limit"`
+	LimitPerConn int       `json:"limitperconn"`
+	limiters     []*Limiter
+	Vlogger      *log.Logger
+	Dlogger      *log.Logger
+	Logger       *log.Logger
+	logfile      *os.File
+	Ivlen        int
+	Any          interface{}
+	Die          chan bool
 }
 
 func ReadConfig(path string) (configs []*Config, err error) {
@@ -48,7 +52,6 @@ func ReadConfig(path string) (configs []*Config, err error) {
 		}
 	}
 	for _, c := range configs {
-		CheckLogFile(c)
 		CheckConfig(c)
 	}
 	return
@@ -59,7 +62,9 @@ func (c *Config) Close() error {
 		c.logfile.Close()
 	}
 	for _, bkn := range c.Backends {
-		bkn.Close()
+		if bkn.logfile != c.logfile && bkn.logfile != os.Stderr {
+			bkn.logfile.Close()
+		}
 	}
 	return nil
 }
@@ -78,7 +83,7 @@ func CheckLogFile(c *Config) {
 	}
 }
 
-func CheckConfig(c *Config) {
+func CheckBasicConfig(c *Config) {
 	if len(c.Password) == 0 {
 		c.Password = defaultPassword
 	}
@@ -88,9 +93,22 @@ func CheckConfig(c *Config) {
 	if c.Ivlen == 0 {
 		c.Ivlen = GetIvLen(c.Method)
 	}
-	if c.Backend != nil {
-		c.Backends = append(c.Backends, c.Backend)
+	if len(c.Nickname) == 0 {
+		c.Nickname = fmt.Sprintf("%v-%v-%v", c.Method, c.Password, c.Localaddr)
 	}
+	c.Logger = log.New(c.logfile, fmt.Sprintf("[info] [%s] ", c.Nickname), log.Lshortfile|log.Ldate|log.Ltime|log.Lmicroseconds)
+	if c.Verbose {
+		c.Vlogger = log.New(c.logfile, fmt.Sprintf("[verbose] [%s] ", c.Nickname), log.Lshortfile|log.Ldate|log.Ltime|log.Lmicroseconds)
+	}
+	if c.Debug {
+		c.Dlogger = log.New(c.logfile, fmt.Sprintf("[debug] [%s] ", c.Nickname), log.Lshortfile|log.Ldate|log.Ltime|log.Lmicroseconds)
+	}
+	if c.Limit != 0 {
+		c.limiters = append(c.limiters, NewLimiter(c.Limit))
+	}
+}
+
+func CheckConfig(c *Config) {
 	if len(c.Type) == 0 {
 		if len(c.Localaddr) != 0 && len(c.Remoteaddr) != 0 {
 			c.Type = "local"
@@ -98,18 +116,16 @@ func CheckConfig(c *Config) {
 			c.Type = "server"
 		}
 	}
+	CheckLogFile(c)
+	CheckBasicConfig(c)
+	if c.Backend != nil {
+		c.Backends = append(c.Backends, c.Backend)
+	}
 	if c.UDPRelay && c.Type != "server" && c.Type != "local" && c.Type != "udptun" && c.Type != "multiserver" {
 		c.UDPRelay = false
 	}
 	if c.UDPOverTCP && c.Type != "server" && c.Type != "local" && c.Type != "udptun" && c.Type != "multiserver" {
 		c.UDPOverTCP = false
-	}
-	c.Logger = log.New(c.logfile, "[info] ", log.Lshortfile|log.Ldate|log.Ltime|log.Lmicroseconds)
-	if c.Verbose {
-		c.Vlogger = log.New(c.logfile, "[verbose] ", log.Lshortfile|log.Ldate|log.Ltime|log.Lmicroseconds)
-	}
-	if c.Debug {
-		c.Dlogger = log.New(c.logfile, "[debug] ", log.Lshortfile|log.Ldate|log.Ltime|log.Lmicroseconds)
 	}
 	for _, v := range c.Backends {
 		v.Type = c.Type
@@ -134,7 +150,13 @@ func CheckConfig(c *Config) {
 				v.logfile = c.logfile
 			}
 		}
-		CheckConfig(v)
+		CheckBasicConfig(v)
+		if c.LimitPerConn != 0 && v.LimitPerConn == 0 {
+			v.LimitPerConn = c.LimitPerConn
+		}
+		if len(c.limiters) != 0 {
+			v.limiters = append(v.limiters, c.limiters...)
+		}
 	}
 }
 

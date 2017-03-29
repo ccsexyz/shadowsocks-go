@@ -174,7 +174,7 @@ func ParseAddrWithMultipleBackends(b []byte, configs []*Config) (host string, po
 			copy(buf, b[cand.off:])
 			d.Decrypt(b, buf[:n])
 			data = b[:n]
-			return 
+			return
 		}
 		cand.c = config
 		candidates = append(candidates, &cand)
@@ -283,11 +283,6 @@ func NewLimiter(limit int) *Limiter {
 	return &Limiter{limit: limit, last: time.Now().UnixNano(), nbytes: limit}
 }
 
-func (l *Limiter) refresh(ns int64) {
-	l.last = ns
-	l.nbytes = l.limit
-}
-
 func (l *Limiter) Update(nbytes int) {
 	l.lock.Lock()
 	defer l.lock.Unlock()
@@ -297,15 +292,17 @@ func (l *Limiter) Update(nbytes int) {
 	}
 	ns := time.Now().UnixNano()
 	if l.last == 0 {
-		l.refresh(ns)
+		l.last = ns
+		l.nbytes = l.limit
 	}
 	l.nbytes -= nbytes
-	if l.nbytes <= 0 {
+	for l.nbytes <= 0 {
 		nextNs := l.last + int64(1000000000)
 		if nextNs > ns {
 			time.Sleep(time.Nanosecond * time.Duration(nextNs-ns))
 		}
-		l.refresh(ns)
+		l.last = ns
+		l.nbytes += l.limit
 	}
 }
 

@@ -278,10 +278,14 @@ func (c *LimitConn) Write(b []byte) (n int, err error) {
 }
 
 func limitAcceptHandler(conn net.Conn, lis *listener) (c net.Conn) {
+	limiters := make([]*Limiter, len(lis.c.limiters))
+	copy(limiters, lis.c.limiters)
+	if lis.c.LimitPerConn != 0 {
+		limiters = append(limiters, NewLimiter(lis.c.LimitPerConn))
+	}
 	c = &LimitConn{
 		Conn:      conn,
-		Rlimiters: []*Limiter{lis.rlimiter, NewLimiter(0)},
-		Wlimiters: []*Limiter{lis.wlimiter, NewLimiter(0)},
+		Rlimiters: limiters,
 	}
 	return
 }
