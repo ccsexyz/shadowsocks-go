@@ -94,7 +94,11 @@ func CheckBasicConfig(c *Config) {
 		c.Ivlen = GetIvLen(c.Method)
 	}
 	if len(c.Nickname) == 0 {
-		c.Nickname = fmt.Sprintf("%v-%v-%v", c.Method, c.Password, c.Localaddr)
+		if len(c.Localaddr) == 0 {
+			c.Nickname = fmt.Sprintf("%v-%v-%v", c.Type, c.Method, c.Password)
+		} else {
+			c.Nickname = fmt.Sprintf("%v-%v", c.Type, c.Localaddr)
+		}
 	}
 	c.Logger = log.New(c.logfile, fmt.Sprintf("[info] [%s] ", c.Nickname), log.Lshortfile|log.Ldate|log.Ltime|log.Lmicroseconds)
 	if c.Verbose {
