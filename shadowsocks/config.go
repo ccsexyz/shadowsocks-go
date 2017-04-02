@@ -126,7 +126,7 @@ func CheckConfig(c *Config) {
 	}
 	CheckLogFile(c)
 	CheckBasicConfig(c)
-	if c.pool == nil && c.Obfs && (c.Type == "server" || c.Type == "multiserver") {
+	if c.pool == nil && c.Obfs && (c.Type == "server" || c.Type == "multiserver" || c.Type == "local") {
 		c.pool = NewConnPool()
 	}
 	if c.Backend != nil {
