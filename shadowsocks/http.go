@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"log"
 	"strconv"
 	"strings"
 )
@@ -70,7 +69,6 @@ func (parser *httpRelyParser) read(b byte) (ok bool, err error) {
 		} else if b >= '0' && b <= '9' {
 			parser.replyStatusString += string(b)
 		} else {
-			log.Print(parser.httpVersionString)
 			err = errors.New("Bad Reply Status Code")
 		}
 		break

@@ -29,6 +29,20 @@ type Decrypter interface {
 	GetIV() []byte
 }
 
+type PlainEncDecrypter struct{}
+
+func (p *PlainEncDecrypter) GetIV() (iv []byte) {
+	return
+}
+
+func (p *PlainEncDecrypter) Encrypt(dst, src []byte) {
+	copy(dst, src)
+}
+
+func (p *PlainEncDecrypter) Decrypt(dst, src []byte) {
+	copy(dst, src)
+}
+
 // copy from https://github.com/riobard/go-shadowsocks2/blob/master/core/cipher.go
 // key-derivation function from original Shadowsocks
 func kdf(password string, keyLen int) []byte {
@@ -169,6 +183,14 @@ func newRC4MD5Stream(key, iv []byte) (cipher.Stream, error) {
 	return rc4.NewCipher(m.Sum(nil))
 }
 
+func NewPlainEncrypter(_, _ []byte) (Encrypter, error) {
+	return &PlainEncDecrypter{}, nil
+}
+
+func NewPlainDecrypter(_, _ []byte) (Decrypter, error) {
+	return &PlainEncDecrypter{}, nil
+}
+
 var cipherMethod = map[string]struct {
 	keylen       int
 	ivlen        int
@@ -184,6 +206,7 @@ var cipherMethod = map[string]struct {
 	"chacha20":      {32, 8, NewChaCha20Encrypter, NewChaCha20Decrypter},
 	"chacha20-ietf": {32, 12, NewChaCha20Encrypter, NewChaCha20Decrypter},
 	"rc4-md5":       {16, 16, NewRC4MD5Encrypter, NewRC4MD5Decrypter},
+	"plain":         {0, 0, NewPlainEncrypter, NewPlainDecrypter},
 }
 
 func NewEncrypter(method, password string) (enc Encrypter, err error) {

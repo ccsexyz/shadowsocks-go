@@ -36,6 +36,7 @@ type Config struct {
 	Ivlen        int
 	Any          interface{}
 	Die          chan bool
+	pool         *ConnPool
 }
 
 func ReadConfig(path string) (configs []*Config, err error) {
@@ -65,6 +66,9 @@ func (c *Config) Close() error {
 		if bkn.logfile != c.logfile && bkn.logfile != os.Stderr {
 			bkn.logfile.Close()
 		}
+	}
+	if c.pool != nil {
+		c.pool.Close()
 	}
 	return nil
 }
@@ -122,6 +126,9 @@ func CheckConfig(c *Config) {
 	}
 	CheckLogFile(c)
 	CheckBasicConfig(c)
+	if c.pool == nil && c.Obfs && (c.Type == "server" || c.Type == "multiserver") {
+		c.pool = NewConnPool()
+	}
 	if c.Backend != nil {
 		c.Backends = append(c.Backends, c.Backend)
 	}
@@ -152,6 +159,13 @@ func CheckConfig(c *Config) {
 			CheckLogFile(v)
 			if v.logfile == os.Stderr && c.logfile != os.Stderr {
 				v.logfile = c.logfile
+			}
+		}
+		if v.Obfs {
+			if v.Type != "server" && v.Type != "multiserver" {
+				v.pool = NewConnPool()
+			} else {
+				v.pool = c.pool
 			}
 		}
 		CheckBasicConfig(v)

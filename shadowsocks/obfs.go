@@ -2,6 +2,7 @@ package shadowsocks
 
 import (
 	"fmt"
+	"io"
 	"net"
 	"strconv"
 	"sync"
@@ -126,13 +127,67 @@ type ObfsConn struct {
 	resp     bool
 	req      bool
 	chunkLen int
+	pool     *ConnPool
+	eos      bool // end of stream
+	lock     sync.Mutex
+	rlock    sync.Mutex
+	reading  bool
+	destroy  bool
+}
+
+func (c *ObfsConn) Close() (err error) {
+	c.lock.Lock()
+	if c.destroy {
+		c.lock.Unlock()
+		return
+	}
+	c.destroy = true
+	c.lock.Unlock()
+	if c.pool == nil {
+		err = c.RemainConn.Close()
+		return
+	}
+	_, err = c.Write(nil)
+	if err != nil {
+		err = c.RemainConn.Close()
+		return
+	}
+	buf := make([]byte, buffersize)
+	for {
+		c.lock.Lock()
+		if c.eos {
+			c.lock.Unlock()
+			break
+		}
+		if c.reading {
+			c.lock.Unlock()
+			c.rlock.Lock()
+			c.rlock.Unlock()
+			continue
+		}
+		_, err = c.readInLock(buf)
+		c.lock.Unlock()
+		if err != nil {
+			if c.eos {
+				break
+			} else {
+				err = c.RemainConn.Close()
+				return
+			}
+		}
+	}
+	err = c.pool.Put(&ObfsConn{
+		RemainConn: c.RemainConn,
+		pool:       c.pool,
+	})
+	if err != nil {
+		err = c.RemainConn.Close()
+	}
+	return
 }
 
 func (c *ObfsConn) Write(b []byte) (n int, err error) {
 	n = len(b)
-	if n == 0 {
-		return c.RemainConn.Write(b)
-	}
 	defer func() {
 		if err != nil {
 			n = 0
@@ -202,7 +257,7 @@ func (c *ObfsConn) doRead(b []byte) (n int, err error) {
 	return c.RemainConn.Read(b)
 }
 
-func (c *ObfsConn) Read(b []byte) (n int, err error) {
+func (c *ObfsConn) readInLock(b []byte) (n int, err error) {
 	if len(b) == 0 {
 		return
 	}
@@ -249,6 +304,16 @@ func (c *ObfsConn) Read(b []byte) (n int, err error) {
 		}
 		c.chunkLen = int(i) + 2
 	}
+	if c.chunkLen == 2 {
+		buf := make([]byte, 2)
+		_, err = io.ReadFull(&(c.RemainConn), buf)
+		if err == nil {
+			n = 0
+			c.eos = true
+			err = fmt.Errorf("read from closed obfsconn")
+		}
+		return
+	}
 	var buf []byte
 	if c.chunkLen > len(b) {
 		buf = b
@@ -263,6 +328,31 @@ func (c *ObfsConn) Read(b []byte) (n int, err error) {
 	if c.chunkLen < 2 {
 		n -= 2 - c.chunkLen
 	}
+	return
+}
+
+func (c *ObfsConn) Read(b []byte) (n int, err error) {
+	c.lock.Lock()
+	if c.destroy {
+		c.lock.Unlock()
+		err = fmt.Errorf("read from closed connection")
+		return
+	}
+	if c.reading {
+		c.lock.Unlock()
+		err = fmt.Errorf("concurrent read")
+		return
+	}
+	c.reading = true
+	c.lock.Unlock()
+	defer func() {
+		c.lock.Lock()
+		defer c.lock.Unlock()
+		c.reading = false
+	}()
+	c.rlock.Lock()
+	defer c.rlock.Unlock()
+	n, err = c.readInLock(b)
 	return
 }
 
@@ -308,7 +398,10 @@ func DialObfs(target string, c *Config) (conn net.Conn, err error) {
 			conn.Close()
 		}
 	}()
-	conn, err = net.Dial("tcp", target)
+	conn, err = c.pool.GetNonblock()
+	if err != nil {
+		conn, err = net.Dial("tcp", target)
+	}
 	if err != nil {
 		return
 	}
@@ -321,7 +414,11 @@ func DialObfs(target string, c *Config) (conn net.Conn, err error) {
 		host = c.ObfsHost[int(src.Int63()%int64(len(c.ObfsHost)))]
 	}
 	req := buildHTTPRequest(fmt.Sprintf("Host: %s\r\nX-Online-Host: %s\r\n", host, host))
-	obfsconn := NewObfsConn(conn)
+	obfsconn, ok := conn.(*ObfsConn)
+	if !ok {
+		obfsconn = NewObfsConn(conn)
+		obfsconn.pool = c.pool
+	}
 	obfsconn.wremain = []byte(req)
 	obfsconn.resp = true
 	conn = obfsconn
@@ -348,6 +445,7 @@ func obfsAcceptHandler(conn net.Conn, lis *listener) (c net.Conn) {
 	obfsconn.remain = buf[:n]
 	obfsconn.wremain = []byte(resp)
 	obfsconn.req = true
+	obfsconn.pool = lis.c.pool
 	c = obfsconn
 	return
 }

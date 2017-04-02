@@ -15,6 +15,8 @@ import (
 
 type ListenHandler func(net.Conn, *listener) net.Conn
 
+type Dialer func() (net.Conn, error)
+
 type listener struct {
 	net.TCPListener
 	c         *Config
@@ -65,6 +67,7 @@ func (lis *listener) handleNewConn(conn net.Conn) {
 	}
 	select {
 	case <-lis.die:
+		conn.Close()
 	case lis.connch <- conn:
 	}
 }
@@ -135,7 +138,33 @@ func ListenSS(service string, c *Config) (lis net.Listener, err error) {
 		handlers = append(handlers, obfsAcceptHandler)
 	}
 	handlers = append(handlers, ssAcceptHandler)
-	lis = NewListener(l, c, handlers)
+	li := NewListener(l, c, handlers)
+	if c.Obfs && c.pool != nil {
+		go func() {
+			for {
+				conn, err := c.pool.Get()
+				if err != nil {
+					return
+				}
+				obfsconn := conn.(*ObfsConn)
+				obfsconn.wremain = []byte(buildHTTPResponse(""))
+				obfsconn.req = true
+				obfsconn.chunkLen = 0
+				go func(obfsconn *ObfsConn) {
+					conn := ssAcceptHandler(conn, li)
+					if conn == nil {
+						return
+					}
+					select {
+					case <-li.die:
+						conn.Close()
+					case li.connch <- conn:
+					}
+				}(obfsconn)
+			}
+		}()
+	}
+	lis = li
 	return
 }
 
@@ -161,7 +190,33 @@ func ListenMultiSS(service string, c *Config) (lis net.Listener, err error) {
 		handlers = append(handlers, obfsAcceptHandler)
 	}
 	handlers = append(handlers, ssMultiAcceptHandler)
-	lis = NewListener(l, c, handlers)
+	li := NewListener(l, c, handlers)
+	if c.Obfs && c.pool != nil {
+		go func() {
+			for {
+				conn, err := c.pool.Get()
+				if err != nil {
+					return
+				}
+				obfsconn := conn.(*ObfsConn)
+				obfsconn.wremain = []byte(buildHTTPResponse(""))
+				obfsconn.req = true
+				obfsconn.chunkLen = 0
+				go func(obfsconn *ObfsConn) {
+					conn := ssMultiAcceptHandler(conn, li)
+					if conn == nil {
+						return
+					}
+					select {
+					case <-li.die:
+						conn.Close()
+					case li.connch <- conn:
+					}
+				}(obfsconn)
+			}
+		}()
+	}
+	lis = li
 	go func(lis *listener) {
 		ticker := time.NewTicker(30 * time.Second)
 		i := 0
@@ -212,17 +267,19 @@ func ssMultiAcceptHandler(conn net.Conn, lis *listener) (c net.Conn) {
 	if len(host) == 0 {
 		return
 	}
-	iv := string(dec.GetIV())
-	lis.IvMapLock.Lock()
-	_, ok := lis.IvMap[iv]
-	if !ok {
-		lis.IvMap[iv] = true
-		*(chs.Any.(*int))++
-	}
-	lis.IvMapLock.Unlock()
-	if ok {
-		lis.c.Log("receive duplicate iv from %s, this means that you maight be attacked!", conn.RemoteAddr().String())
-		return
+	if chs.Ivlen != 0 {
+		iv := string(dec.GetIV())
+		lis.IvMapLock.Lock()
+		_, ok := lis.IvMap[iv]
+		if !ok {
+			lis.IvMap[iv] = true
+			*(chs.Any.(*int))++
+		}
+		lis.IvMapLock.Unlock()
+		if ok {
+			lis.c.Log("receive duplicate iv from %s, this means that you maight be attacked!", conn.RemoteAddr().String())
+			return
+		}
 	}
 	C.dec = dec
 	C.c = chs
@@ -255,16 +312,18 @@ func ssAcceptHandler(conn net.Conn, lis *listener) (c net.Conn) {
 		lis.c.Log("recv a unexpected header from %s.", conn.RemoteAddr().String())
 		return
 	}
-	iv := string(dec.GetIV())
-	lis.IvMapLock.Lock()
-	_, ok := lis.IvMap[iv]
-	if !ok {
-		lis.IvMap[iv] = true
-	}
-	lis.IvMapLock.Unlock()
-	if ok {
-		lis.c.Log("receive duplicate iv from %s, this means that you maight be attacked!", conn.RemoteAddr().String())
-		return
+	if lis.c.Ivlen != 0 {
+		iv := string(dec.GetIV())
+		lis.IvMapLock.Lock()
+		_, ok := lis.IvMap[iv]
+		if !ok {
+			lis.IvMap[iv] = true
+		}
+		lis.IvMapLock.Unlock()
+		if ok {
+			lis.c.Log("receive duplicate iv from %s, this means that you maight be attacked!", conn.RemoteAddr().String())
+			return
+		}
 	}
 	C := NewConn(conn, lis.c)
 	C.dec = dec
