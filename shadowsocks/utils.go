@@ -380,3 +380,13 @@ func GetLimitConn(conn net.Conn) (l *LimitConn, err error) {
 	}
 	return
 }
+
+// CheckConn Check the Conn whether is still alive
+func CheckConn(conn net.Conn) bool {
+	if conn != nil {
+		if _, err := conn.Write([]byte{}); err == nil {
+			return true
+		}
+	}
+	return false
+}

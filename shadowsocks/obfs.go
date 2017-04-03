@@ -147,7 +147,7 @@ func (c *ObfsConn) Close() (err error) {
 		err = c.RemainConn.Close()
 		return
 	}
-	_, err = c.Write(nil)
+	_, err = c.write(nil)
 	if err != nil {
 		err = c.RemainConn.Close()
 		return
@@ -186,7 +186,7 @@ func (c *ObfsConn) Close() (err error) {
 	return
 }
 
-func (c *ObfsConn) Write(b []byte) (n int, err error) {
+func (c *ObfsConn) write(b []byte) (n int, err error) {
 	n = len(b)
 	defer func() {
 		if err != nil {
@@ -201,6 +201,13 @@ func (c *ObfsConn) Write(b []byte) (n int, err error) {
 	wbuf[length+1] = '\n'
 	_, err = c.RemainConn.Write(wbuf[:length+2])
 	return
+}
+
+func (c *ObfsConn) Write(b []byte) (n int, err error) {
+	if len(b) == 0 {
+		return c.RemainConn.Write(b)
+	}
+	return c.write(b)
 }
 
 func (c *ObfsConn) readObfsHeader(b []byte) (n int, err error) {

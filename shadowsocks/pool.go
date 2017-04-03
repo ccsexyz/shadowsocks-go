@@ -22,11 +22,18 @@ func (p *ConnPool) GetNonblock() (conn net.Conn, err error) {
 	if p.destroy {
 		err = fmt.Errorf("cannot get connection from a closed pool")
 	} else {
-		if len(p.conns) == 0 {
-			err = fmt.Errorf("no available connection")
-		} else {
-			conn = p.conns[0]
-			p.conns = p.conns[1:]
+		for err == nil {
+			if len(p.conns) == 0 {
+				err = fmt.Errorf("no available connection")
+			} else {
+				conn = p.conns[0]
+				p.conns = p.conns[1:]
+				if CheckConn(conn) {
+					break
+				}
+				conn.Close()
+				conn = nil
+			}
 		}
 	}
 	return
@@ -58,6 +65,10 @@ func (p *ConnPool) Get() (conn net.Conn, err error) {
 		p.conns = p.conns[1:]
 		p.cond.L.Unlock()
 	}
+	if !CheckConn(conn) {
+		conn.Close()
+		conn, err = p.Get()
+	}
 	return
 }
 
@@ -66,6 +77,8 @@ func (p *ConnPool) Put(conn net.Conn) (err error) {
 	defer p.cond.L.Unlock()
 	if p.destroy {
 		err = fmt.Errorf("cannot put into a closed connection pool")
+	} else if !CheckConn(conn) {
+		err = fmt.Errorf("cannot put a closed connetion")
 	} else {
 		p.conns = append(p.conns, conn)
 		p.cond.Signal()
