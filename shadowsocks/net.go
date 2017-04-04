@@ -286,7 +286,7 @@ func ssMultiAcceptHandler(conn net.Conn, lis *listener) (c net.Conn) {
 	conn = &RemainConn{Conn: C, remain: data}
 	conn = NewDstConn(conn, net.JoinHostPort(host, strconv.Itoa(port)))
 	c = conn
-	chs.LogD("choose", chs.Method, chs.Password)
+	chs.LogD("choose", chs.Method, chs.Password, host, port)
 	return
 }
 

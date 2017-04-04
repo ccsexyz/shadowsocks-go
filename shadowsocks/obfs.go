@@ -15,106 +15,58 @@ const (
 
 type DelayConn struct {
 	net.Conn
-	wbuf      [buffersize]byte
-	off       int
-	cond      *sync.Cond
-	die       chan bool
-	started   bool
-	destroyed bool
-}
-
-func (c *DelayConn) Close() error {
-	c.cond.L.Lock()
-	defer c.cond.L.Unlock()
-	if c.destroyed {
-		return nil
-	}
-	c.destroyed = true
-	close(c.die)
-	c.cond.Broadcast()
-	return c.Conn.Close()
-}
-
-func (c *DelayConn) sendLoopOnce() (ok bool) {
-	c.cond.L.Lock()
-	var err error
-	defer func() {
-		c.cond.L.Unlock()
-		if err != nil {
-			c.Close()
-		}
-	}()
-	if c.destroyed {
-		return
-	}
-	if c.off == 0 {
-		c.cond.Wait()
-	}
-	if c.destroyed {
-		return
-	}
-	if c.off == 0 {
-		return true
-	}
-	c.cond.L.Unlock()
-	select {
-	case <-c.die:
-		c.cond.L.Lock()
-		return
-	case <-time.After(delayConnTick):
-	}
-	c.cond.L.Lock()
-	if c.off == 0 {
-		return true
-	}
-	_, err = c.Conn.Write(c.wbuf[:c.off])
-	c.off = 0
-	return err == nil
-}
-
-func (c *DelayConn) sendLoop() {
-	for {
-		if !c.sendLoopOnce() {
-			break
-		}
-	}
+	wbuf  [buffersize]byte
+	off   int
+	lock  sync.Mutex
+	timer *time.Timer
 }
 
 func (c *DelayConn) Write(b []byte) (n int, err error) {
-	c.cond.L.Lock()
-	defer c.cond.L.Unlock()
-	n = len(b)
-	defer func() {
-		if err != nil {
-			n = 0
+	l := len(b)
+	c.lock.Lock()
+	defer c.lock.Unlock()
+	if l+c.off >= buffersize {
+		if c.off != 0 {
+			buf := make([]byte, l+c.off)
+			copy(buf, c.wbuf[:c.off])
+			copy(buf[c.off:], b)
+			b = buf
 		}
-	}()
-	if n == 0 {
-		return
-	}
-	if n+c.off >= buffersize {
-		buf := make([]byte, n+c.off)
-		copy(buf, c.wbuf[:c.off])
-		copy(buf[c.off:], b)
-		_, err = c.Conn.Write(buf)
+		_, err = c.Conn.Write(b)
 		c.off = 0
+		if err == nil {
+			n = l
+		}
+		if c.timer != nil {
+			c.timer.Stop()
+			c.timer = nil
+		}
 		return
 	}
 	copy(c.wbuf[c.off:], b)
-	c.off += len(b)
-	if !c.started {
-		c.started = true
-		go c.sendLoop()
+	c.off += l
+	n = l
+	if c.timer == nil {
+		c.timer = time.AfterFunc(delayConnTick, func() {
+			c.lock.Lock()
+			defer c.lock.Unlock()
+			c.timer = nil
+			if c.off == 0 {
+				return
+			}
+			_, err := c.Conn.Write(c.wbuf[:c.off])
+			c.off = 0
+			if err != nil {
+				c.Close()
+			}
+		})
 	}
-	c.cond.Signal()
 	return
 }
 
 func NewDelayConn(conn net.Conn) *DelayConn {
 	return &DelayConn{
 		Conn: conn,
-		die:  make(chan bool),
-		cond: sync.NewCond(&sync.Mutex{}),
 	}
 }
 
