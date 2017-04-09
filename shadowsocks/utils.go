@@ -16,7 +16,7 @@ const (
 	typeIPv4            = 1
 	typeDm              = 3
 	typeIPv6            = 4
-	typeNop             = 0x90 // [nop 1 byte] [noplen 1 byte (< 128)] [random data noplen byte]
+	typeNop             = 0x90 // [nop 1 byte] [noplen 1 byte (< 128)] [zero data, noplen byte]
 	lenIPv4             = 4
 	lenIPv6             = 16
 	ivmapHighWaterLevel = 100000

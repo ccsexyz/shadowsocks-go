@@ -113,26 +113,24 @@ func (c *MultiUDPConn) ReadFrom(b []byte) (n int, addr net.Addr, err error) {
 		v, ok := c.sessions[addr.String()]
 		c.lock.Unlock()
 		var dec Decrypter
-		if ok {
-			dec, err = NewDecrypter(v.Method, v.Password, c.rbuf[:v.Ivlen])
-			if err != nil {
-				return
+		if !ok {
+			host, _, _, _, chs := ParseAddrWithMultipleBackends(c.rbuf[:n], c.c.Backends)
+			if len(host) == 0 {
+				continue
 			}
-			dec.Decrypt(b, c.rbuf[v.Ivlen:n])
-			n -= v.Ivlen
+			c.lock.Lock()
+			c.sessions[addr.String()] = chs
+			c.lock.Unlock()
+			v = chs
+			// *(chs.Any.(*int))++
+			chs.LogD("udp mode choose", chs.Method, chs.Password)
+		}
+		dec, err = NewDecrypter(v.Method, v.Password, c.rbuf[:v.Ivlen])
+		if err != nil {
 			return
 		}
-		host, port, data, dec, chs := ParseAddrWithMultipleBackends(c.rbuf[:n], c.c.Backends)
-		if len(host) == 0 {
-			continue
-		}
-		n = PutHeader(b, host, port)
-		n += copy(b[n:], data)
-		c.lock.Lock()
-		c.sessions[addr.String()] = chs
-		c.lock.Unlock()
-		// *(chs.Any.(*int))++
-		chs.LogD("udp mode choose", chs.Method, chs.Password)
+		dec.Decrypt(b, c.rbuf[v.Ivlen:n])
+		n -= v.Ivlen
 		return
 	}
 }
