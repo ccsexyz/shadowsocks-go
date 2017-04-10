@@ -287,7 +287,7 @@ func ssMultiAcceptHandler(conn net.Conn, lis *listener) (c net.Conn) {
 	if len(data) != 0 {
 		conn = &RemainConn{Conn: C, remain: data}
 	}
-	conn = NewDstConn(conn, net.JoinHostPort(addr.Host(), addr.Port()))
+	conn = NewDstConn(conn, addr)
 	c = conn
 	chs.LogD("choose", chs.Method, chs.Password, addr.Host(), addr.Port())
 	return
@@ -336,7 +336,7 @@ func ssAcceptHandler(conn net.Conn, lis *listener) (c net.Conn) {
 		copy(C.rbuf, data)
 		conn = &RemainConn{Conn: C, remain: C.rbuf[:len(data)]}
 	}
-	conn = NewDstConn(conn, net.JoinHostPort(addr.Host(), addr.Port()))
+	conn = NewDstConn(conn, addr)
 	c = conn
 	return
 }
@@ -403,7 +403,7 @@ func socksAcceptor(conn net.Conn, lis *listener) (c net.Conn) {
 	if err != nil {
 		return
 	}
-	c = NewDstConn(conn, net.JoinHostPort(addr.Host(), addr.Port()))
+	c = NewDstConn(conn, addr)
 	return
 }
 
@@ -431,7 +431,11 @@ func redirAcceptor(conn net.Conn, lis *listener) (c net.Conn) {
 	if err != nil || len(target) == 0 {
 		return
 	}
-	c = NewDstConn(conn, target)
+	host, port, err := net.SplitHostPort(target)
+	if err != nil {
+		return
+	}
+	c = NewDstConn(conn, &DstAddr{host: host, port: port})
 	return
 }
 

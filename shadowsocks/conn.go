@@ -240,15 +240,15 @@ func (c *Conn2) Write(b []byte) (n int, err error) {
 
 type DstConn struct {
 	net.Conn
-	dst string
+	dst Addr
 }
 
-func NewDstConn(conn net.Conn, dst string) *DstConn {
+func NewDstConn(conn net.Conn, dst Addr) *DstConn {
 	return &DstConn{Conn: conn, dst: dst}
 }
 
 func (c *DstConn) GetDst() string {
-	return c.dst
+	return net.JoinHostPort(c.dst.Host(), c.dst.Port())
 }
 
 type LimitConn struct {
