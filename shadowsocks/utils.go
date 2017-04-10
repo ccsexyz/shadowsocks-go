@@ -5,8 +5,11 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net"
+	"reflect"
+	"strconv"
 	"sync"
 	"time"
+	"unsafe"
 )
 
 const (
@@ -23,6 +26,10 @@ const (
 	ivmapLowWaterLevel  = 10000
 	Udprelayaddr        = "UdpRelayOverTcp:65535"
 	defaultObfsHost     = "www.bing.com"
+)
+
+var (
+	errInvalidHeader = fmt.Errorf("invalid header")
 )
 
 func PutRandomBytes(b []byte) {
@@ -59,150 +66,132 @@ func GetHeader(host string, port int) (buf []byte, err error) {
 	return
 }
 
-func ParseAddrWithMultipleBackends(b []byte, configs []*Config) (host string, port int, data []byte, dec Decrypter, chs *Config) {
+func ParseAddrWithMultipleBackends(b, buf []byte, configs []*Config) (addr SockAddr, data []byte, dec Decrypter, chs *Config, err error) {
+	defer func() {
+		if chs != nil {
+			err = nil
+		} else {
+			if err == nil {
+				err = errInvalidHeader
+			}
+			addr = nil
+			data = nil
+			dec = nil
+		}
+	}()
 	n := len(b)
 	if n < 1 {
 		return
 	}
-	type candidate struct {
-		atyp byte
-		nop  bool
-		off  int
-		dec  Decrypter
-		c    *Config
-		host string
-		port int
-	}
-	var candidates []*candidate
-	buf := make([]byte, n)
+	var candidates []*Config
+outer:
 	for _, config := range configs {
-		if n < config.Ivlen {
+		if n < config.Ivlen+4 {
 			continue
 		}
-		d, err := NewDecrypter(config.Method, config.Password, b[:config.Ivlen])
+		dec, err = NewDecrypter(config.Method, config.Password, b[:config.Ivlen])
 		if err != nil {
 			continue
 		}
-		cand := candidate{off: config.Ivlen, dec: d}
-		d.Decrypt(buf, b[config.Ivlen:config.Ivlen+1])
+		dec.Decrypt(buf, b[config.Ivlen:config.Ivlen+1])
+		off := config.Ivlen + 1
+		nop := false
 		atyp := buf[0]
-		ok := true
-	outer:
 		for atyp == typeNop {
-			d.Decrypt(buf, b[cand.off+1:cand.off+2])
+			dec.Decrypt(buf, b[off:off+1])
 			noplen := int(buf[0])
-			if noplen >= 128 || n < cand.off+noplen+2+1 {
-				ok = false
-				break outer
+			if noplen >= 128 || n < off+noplen+1+4 {
+				continue outer
 			}
-			d.Decrypt(buf, b[cand.off+2:cand.off+2+noplen])
-			for _, v := range buf[:cand.off] {
+			off++
+			dec.Decrypt(buf, b[off:off+noplen])
+			for _, v := range buf[:noplen] {
 				if v != 0 {
-					ok = false
-					break outer
+					continue outer
 				}
 			}
-			cand.off += 2 + noplen
-			cand.nop = true
-			d.Decrypt(buf, b[cand.off:cand.off+1])
+			off += noplen
+			nop = true
+			dec.Decrypt(buf, b[off:off+1])
 			atyp = buf[0]
+			off++
 		}
-		if !ok {
-			continue
-		}
-		cand.off++
+		var port int
 		switch atyp {
 		default:
 			continue
 		case typeDm:
-			if cand.off >= n {
+			if off+1 >= n {
 				continue
 			}
-			d.Decrypt(buf[:1], b[cand.off:cand.off+1])
-			cand.off++
-			dmlen := int(buf[0])
-			if n-cand.off < dmlen+2 {
+			dec.Decrypt(buf[1:2], b[off:off+1])
+			off++
+			dmlen := int(buf[1])
+			if off+dmlen+2 > n {
 				continue
 			}
-			d.Decrypt(buf[:dmlen], b[cand.off:cand.off+dmlen])
-			for _, v := range buf[:dmlen] {
+			dec.Decrypt(buf[2:2+dmlen+2], b[off:off+dmlen+2])
+			for _, v := range buf[2 : 2+dmlen] {
 				if !((v >= 'A' && v <= 'Z') || (v >= 'a' && v <= 'z') || (v >= '0' && v <= '9') || v == '.' || v == '-' || v == '_') {
-					ok = false
-					break
+					continue outer
 				}
 			}
-			if !ok {
-				continue
+			addr = SockAddr(buf[:2+dmlen+2])
+			off += dmlen + 2
+			if n > off {
+				dec.Decrypt(buf[2+dmlen+2:], b[off:])
+				data = buf[2+dmlen+2 : 2+dmlen+2+len(b[off:])]
 			}
-			cand.off += dmlen
-			host = string(buf[:dmlen])
-			d.Decrypt(buf[:2], b[cand.off:cand.off+2])
-			cand.off += 2
-			port = int(binary.BigEndian.Uint16(buf))
-			if n > cand.off {
-				n -= cand.off
-				copy(buf, b[cand.off:])
-				d.Decrypt(b, buf[:n])
-				data = b[:n]
-			}
-			dec = d
 			chs = config
 			return
 		case typeIPv6:
-			if cand.nop || n < cand.off+lenIPv6+2 {
+			if nop || n < off+lenIPv6+2 {
 				continue
 			}
-			d.Decrypt(buf[:lenIPv6+2], b[cand.off:cand.off+lenIPv6+2])
-			cand.host = net.IP(buf[:lenIPv6]).String()
-			cand.port = int(binary.BigEndian.Uint16(buf[lenIPv6:]))
-			cand.off += lenIPv6 + 2
+			dec.Decrypt(buf[1:lenIPv6+2+1], b[off:off+lenIPv6+2])
+			off += lenIPv6 + 2
+			port = int(binary.BigEndian.Uint16(buf[lenIPv6+1:]))
+			addr = SockAddr(buf[:lenIPv6+2+1])
 		case typeIPv4:
-			if cand.nop || n < cand.off+lenIPv4+2 {
+			if nop || n < off+lenIPv4+2 {
 				continue
 			}
-			d.Decrypt(buf[:lenIPv4+2], b[cand.off:cand.off+lenIPv4+2])
-			cand.host = net.IP(buf[:lenIPv4]).String()
-			cand.port = int(binary.BigEndian.Uint16(buf[lenIPv4:]))
-			cand.off += lenIPv4 + 2
+			dec.Decrypt(buf[1:lenIPv4+2+1], b[off:off+lenIPv4+2])
+			off += lenIPv4 + 2
+			port = int(binary.BigEndian.Uint16(buf[lenIPv4+1:]))
+			addr = SockAddr(buf[:lenIPv4+2+1])
 		}
-		if cand.port == 80 || cand.port == 443 || cand.port == 22 || cand.port == 53 {
-			host = cand.host
-			port = cand.port
-			dec = d
+		if port == 80 || port == 443 || port == 22 || port == 53 || port == 8080 {
+			dec.Decrypt(buf[off:], b[off:])
+			data = buf[off:len(b)]
 			chs = config
-			n -= cand.off
-			copy(buf, b[cand.off:])
-			d.Decrypt(b, buf[:n])
-			data = b[:n]
 			return
 		}
-		cand.c = config
-		candidates = append(candidates, &cand)
+		candidates = append(candidates, config)
 	}
 	if len(candidates) != 0 {
-		cand := candidates[0]
-		host = cand.host
-		port = cand.port
-		dec = cand.dec
-		chs = cand.c
-		n -= cand.off
-		copy(buf, b[cand.off:])
-		cand.dec.Decrypt(b, buf[:n])
-		data = b[:n]
+		chs = candidates[0]
+		dec, err = NewDecrypter(chs.Method, chs.Password, b[:chs.Ivlen])
+		if err != nil {
+			return
+		}
+		dec.Decrypt(buf, b[chs.Ivlen:])
+		addr, data, err = ParseAddr(buf)
 	}
 	return
 }
 
-func ParseAddr(b []byte) (host string, port int, data []byte) {
+func ParseAddr(b []byte) (addr SockAddr, data []byte, err error) {
+	err = errInvalidHeader
 	n := len(b)
-	if n < 1 {
+	if n < 4 {
 		return
 	}
-	atyp := b[0]
 	var nop bool
+	atyp := b[0]
 	for atyp == typeNop {
 		noplen := int(b[1])
-		if noplen >= 128 || n < noplen+2+1 {
+		if noplen >= 128 || n < noplen+2+4 {
 			return
 		}
 		for _, v := range b[2 : noplen+2] {
@@ -215,37 +204,41 @@ func ParseAddr(b []byte) (host string, port int, data []byte) {
 		atyp = b[0]
 		nop = true
 	}
+	var header []byte
 	switch atyp {
 	default:
+		err = fmt.Errorf("unsupported atyp value %v", atyp)
 		return
 	case typeIPv4:
 		if nop || n < lenIPv4+2+1 {
 			return
 		}
+		header = b[:lenIPv4+2+1]
 		data = b[lenIPv4+2+1:]
-		host = net.IP(b[1 : lenIPv4+1]).String()
-		port = int(binary.BigEndian.Uint16(b[lenIPv4+1:]))
 	case typeIPv6:
 		if nop || n < lenIPv6+2+1 {
 			return
 		}
+		header = b[:lenIPv6+2+1]
 		data = b[lenIPv6+2+1:]
-		host = net.IP(b[1 : 1+lenIPv6]).String()
-		port = int(binary.BigEndian.Uint16(b[lenIPv6+1:]))
 	case typeDm:
+		if n < 4 {
+			return
+		}
 		dmlen := int(b[1])
 		if n < dmlen+1+2+1 {
 			return
 		}
-		data = b[dmlen+1+2+1:]
 		for _, v := range b[2 : 2+dmlen] {
 			if !((v >= 'A' && v <= 'Z') || (v >= 'a' && v <= 'z') || (v >= '0' && v <= '9') || v == '.' || v == '-' || v == '_') {
 				return
 			}
 		}
-		host = string(b[2 : 2+dmlen])
-		port = int(binary.BigEndian.Uint16(b[dmlen+2:]))
+		header = b[:2+dmlen+2]
+		data = b[2+dmlen+2:]
 	}
+	addr = SockAddr(header)
+	err = nil
 	return
 }
 
@@ -389,4 +382,85 @@ func CheckConn(conn net.Conn) bool {
 		}
 	}
 	return false
+}
+
+type Addr interface {
+	Host() string
+	Port() string
+	Header() []byte
+}
+
+type SockAddr []byte
+
+func (b SockAddr) Host() string {
+	switch b[0] {
+	default:
+		return SliceToString(b[2 : 2+int(b[1])])
+	case typeIPv4:
+		return net.IP(b[1 : lenIPv4+1]).String()
+	case typeIPv6:
+		return net.IP(b[1 : lenIPv6+1]).String()
+	}
+}
+
+func (b SockAddr) Port() string {
+	var off int
+	switch b[0] {
+	default:
+		off = int(b[1]) + 2
+	case typeIPv4:
+		off = lenIPv4 + 1
+	case typeIPv6:
+		off = lenIPv6 + 1
+	}
+	return strconv.Itoa(int(binary.BigEndian.Uint16(b[off:])))
+}
+
+func (b SockAddr) Header() []byte {
+	return b
+}
+
+type DstAddr struct {
+	host   string
+	port   string
+	header []byte
+}
+
+func (d *DstAddr) Host() string {
+	return d.host
+}
+
+func (d *DstAddr) Port() string {
+	return d.port
+}
+
+func (d *DstAddr) Header() []byte {
+	if d.header == nil {
+		port, _ := strconv.Atoi(d.port)
+		d.header, _ = GetHeader(d.host, port)
+	}
+	return d.header
+}
+
+func SliceToString(b []byte) (s string) {
+	pbytes := (*reflect.SliceHeader)(unsafe.Pointer(&b))
+	pstring := (*reflect.StringHeader)(unsafe.Pointer(&s))
+	pstring.Data = pbytes.Data
+	pstring.Len = pbytes.Len
+	return
+}
+
+func StringToSlice(s string) (b []byte) {
+	pbytes := (*reflect.SliceHeader)(unsafe.Pointer(&b))
+	pstring := (*reflect.StringHeader)(unsafe.Pointer(&s))
+	pbytes.Data = pstring.Data
+	pbytes.Len = pstring.Len
+	pbytes.Cap = pstring.Len
+	return
+}
+
+func SliceCopy(b []byte) []byte {
+	c := make([]byte, len(b))
+	copy(c, b)
+	return c
 }

@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"net"
 
-	"strconv"
-
 	ss "github.com/ccsexyz/shadowsocks-go/shadowsocks"
 )
 
@@ -42,19 +40,19 @@ func RunUDPRemoteServer(c *ss.Config) {
 	var pconn net.PacketConn
 	pconn = ss.NewUDPConn(conn, c)
 	handle := func(sess *udpSession, b []byte) {
-		host, _, data := ss.ParseAddr(b)
-		if len(host) == 0 {
+		_, data, err := ss.ParseAddr(b)
+		if err != nil {
 			return
 		}
 		sess.conn.Write(data)
 	}
 	create := func(b []byte, from net.Addr) (rconn net.Conn, clean func(), header []byte, err error) {
-		host, port, data := ss.ParseAddr(b)
-		if len(host) == 0 {
+		addr, data, err := ss.ParseAddr(b)
+		if err != nil {
 			err = fmt.Errorf("unexpected header")
 			return
 		}
-		target := net.JoinHostPort(host, strconv.Itoa(port))
+		target := net.JoinHostPort(addr.Host(), addr.Port())
 		rconn, err = net.Dial("udp", target)
 		if err != nil {
 			return
@@ -75,19 +73,19 @@ func RunMultiUDPRemoteServer(c *ss.Config) {
 	}
 	mconn := ss.NewMultiUDPConn(conn, c)
 	handle := func(sess *udpSession, b []byte) {
-		host, _, data := ss.ParseAddr(b)
-		if len(host) == 0 {
+		_, data, err := ss.ParseAddr(b)
+		if err != nil {
 			return
 		}
 		sess.conn.Write(data)
 	}
 	create := func(b []byte, from net.Addr) (rconn net.Conn, clean func(), header []byte, err error) {
-		host, port, data := ss.ParseAddr(b)
-		if len(host) == 0 {
+		addr, data, err := ss.ParseAddr(b)
+		if err != nil {
 			err = fmt.Errorf("unexpected header")
 			return
 		}
-		target := net.JoinHostPort(host, strconv.Itoa(port))
+		target := net.JoinHostPort(addr.Host(), addr.Port())
 		rconn, err = net.Dial("udp", target)
 		if err != nil {
 			c.LogD(err)
@@ -120,16 +118,16 @@ func RunUDPLocalServer(c *ss.Config) {
 	var create func([]byte, net.Addr) (net.Conn, func(), []byte, error)
 	if c.UDPOverTCP {
 		handle = func(sess *udpSession, b []byte) {
-			_, _, data := ss.ParseAddr(b[3:])
+			_, data, _ := ss.ParseAddr(b[3:])
 			sess.conn.Write(data)
 		}
 		create = func(b []byte, from net.Addr) (rconn net.Conn, clean func(), header []byte, err error) {
-			host, port, data := ss.ParseAddr(b[3:])
-			if len(host) == 0 {
+			addr, data, err := ss.ParseAddr(b[3:])
+			if err != nil {
 				err = fmt.Errorf("unexcepted header")
 				return
 			}
-			rconn, err = ss.DialUDPOverTCP(net.JoinHostPort(host, strconv.Itoa(port)), c.Remoteaddr, c)
+			rconn, err = ss.DialUDPOverTCP(net.JoinHostPort(addr.Host(), addr.Port()), c.Remoteaddr, c)
 			if err != nil {
 				return
 			}

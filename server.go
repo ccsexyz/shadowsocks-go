@@ -19,6 +19,7 @@ func tcpRemoteHandler(conn net.Conn, c *ss.Config) {
 	defer conn.Close()
 	C, err := ss.GetConn(conn)
 	if err != nil {
+		c.LogD(err)
 		return
 	}
 	if C.GetConfig() != nil {
@@ -26,6 +27,7 @@ func tcpRemoteHandler(conn net.Conn, c *ss.Config) {
 	}
 	dst, err := ss.GetDstConn(conn)
 	if err != nil {
+		c.LogD(err)
 		return
 	}
 	target := dst.GetDst()

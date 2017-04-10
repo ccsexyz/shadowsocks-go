@@ -10,17 +10,13 @@ import (
 
 type UDPConn struct {
 	*net.UDPConn
-	rbuf []byte
-	wbuf []byte
-	c    *Config
+	c *Config
 }
 
 func NewUDPConn(conn *net.UDPConn, c *Config) *UDPConn {
 	return &UDPConn{
 		UDPConn: conn,
 		c:       c,
-		rbuf:    make([]byte, buffersize/2),
-		wbuf:    make([]byte, buffersize/2),
 	}
 }
 
@@ -29,8 +25,9 @@ func (c *UDPConn) ReadFrom(b []byte) (n int, addr net.Addr, err error) {
 		err = fmt.Errorf("the buffer length must be greater than 1500")
 		return
 	}
+	b2 := make([]byte, buffersize)
 	for {
-		n, addr, err = c.UDPConn.ReadFrom(c.rbuf)
+		n, addr, err = c.UDPConn.ReadFrom(b2)
 		if err != nil {
 			return
 		}
@@ -38,11 +35,11 @@ func (c *UDPConn) ReadFrom(b []byte) (n int, addr net.Addr, err error) {
 			continue
 		}
 		var dec Decrypter
-		dec, err = NewDecrypter(c.c.Method, c.c.Password, c.rbuf[:c.c.Ivlen])
+		dec, err = NewDecrypter(c.c.Method, c.c.Password, b2[:c.c.Ivlen])
 		if err != nil {
 			return
 		}
-		rbuf := c.rbuf[c.c.Ivlen:n]
+		rbuf := b2[c.c.Ivlen:n]
 		dec.Decrypt(b, rbuf)
 		n -= c.c.Ivlen
 		return
@@ -59,13 +56,13 @@ func (c *UDPConn) WriteTo(b []byte, addr net.Addr) (n int, err error) {
 	if err != nil {
 		return
 	}
-	nbytes := copy(c.wbuf, enc.GetIV())
-	enc.Encrypt(c.wbuf[nbytes:], b)
-	nbytes += len(b)
+	b2 := make([]byte, c.c.Ivlen+len(b))
+	copy(b2, enc.GetIV())
+	enc.Encrypt(b2[c.c.Ivlen:], b)
 	if addr != nil {
-		_, err = c.UDPConn.WriteTo(c.wbuf[:nbytes], addr)
+		_, err = c.UDPConn.WriteTo(b2, addr)
 	} else {
-		_, err = c.UDPConn.Write(c.wbuf[:nbytes])
+		_, err = c.UDPConn.Write(b2)
 	}
 	if err == nil {
 		n = len(b)
@@ -79,8 +76,6 @@ func (c *UDPConn) Write(b []byte) (n int, err error) {
 
 type MultiUDPConn struct {
 	*net.UDPConn
-	rbuf     []byte
-	wbuf     []byte
 	c        *Config
 	sessions map[string]*Config
 	lock     sync.Mutex
@@ -91,8 +86,6 @@ func NewMultiUDPConn(conn *net.UDPConn, c *Config) *MultiUDPConn {
 		UDPConn:  conn,
 		c:        c,
 		sessions: make(map[string]*Config),
-		rbuf:     make([]byte, buffersize/2),
-		wbuf:     make([]byte, buffersize/2),
 	}
 }
 
@@ -101,8 +94,9 @@ func (c *MultiUDPConn) ReadFrom(b []byte) (n int, addr net.Addr, err error) {
 		err = fmt.Errorf("the buffer length must be greater than 1500")
 		return
 	}
+	b2 := make([]byte, buffersize)
 	for {
-		n, addr, err = c.UDPConn.ReadFrom(c.rbuf)
+		n, addr, err = c.UDPConn.ReadFrom(b2)
 		if err != nil {
 			return
 		}
@@ -114,23 +108,26 @@ func (c *MultiUDPConn) ReadFrom(b []byte) (n int, addr net.Addr, err error) {
 		c.lock.Unlock()
 		var dec Decrypter
 		if !ok {
-			host, _, _, _, chs := ParseAddrWithMultipleBackends(c.rbuf[:n], c.c.Backends)
-			if len(host) == 0 {
+			buf := make([]byte, n)
+			sock, data, _, chs, err := ParseAddrWithMultipleBackends(b2[:n], buf, c.c.Backends)
+			if err != nil {
 				continue
 			}
 			c.lock.Lock()
 			c.sessions[addr.String()] = chs
 			c.lock.Unlock()
-			v = chs
 			// *(chs.Any.(*int))++
 			chs.LogD("udp mode choose", chs.Method, chs.Password)
+			n = copy(b, []byte(sock))
+			n += copy(b[n:], data)
+		} else {
+			dec, err = NewDecrypter(v.Method, v.Password, b2[:v.Ivlen])
+			if err != nil {
+				return
+			}
+			dec.Decrypt(b, b2[v.Ivlen:n])
+			n -= v.Ivlen
 		}
-		dec, err = NewDecrypter(v.Method, v.Password, c.rbuf[:v.Ivlen])
-		if err != nil {
-			return
-		}
-		dec.Decrypt(b, c.rbuf[v.Ivlen:n])
-		n -= v.Ivlen
 		return
 	}
 }
@@ -151,10 +148,10 @@ func (c *MultiUDPConn) WriteTo(b []byte, addr net.Addr) (n int, err error) {
 	if err != nil {
 		return
 	}
-	nbytes := copy(c.wbuf, enc.GetIV())
-	enc.Encrypt(c.wbuf[nbytes:], b)
-	nbytes += len(b)
-	_, err = c.UDPConn.WriteTo(c.wbuf[:nbytes], addr)
+	b2 := make([]byte, v.Ivlen+len(b))
+	copy(b2, enc.GetIV())
+	enc.Encrypt(b2[v.Ivlen:], b)
+	_, err = c.UDPConn.WriteTo(b2, addr)
 	return
 }
 

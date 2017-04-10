@@ -13,8 +13,8 @@ type TunUDPConn struct {
 
 func (c *TunUDPConn) WriteTo(b []byte, addr net.Addr) (n int, err error) {
 	n = len(b)
-	host, _, data := ss.ParseAddr(b)
-	if len(host) == 0 {
+	_, data, err := ss.ParseAddr(b)
+	if err != nil {
 		return
 	}
 	return c.UDPConn.WriteTo(data, addr)

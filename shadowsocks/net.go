@@ -263,8 +263,8 @@ func ssMultiAcceptHandler(conn net.Conn, lis *listener) (c net.Conn) {
 	if err != nil {
 		return
 	}
-	host, port, data, dec, chs := ParseAddrWithMultipleBackends(buf[:n], lis.c.Backends)
-	if len(host) == 0 {
+	addr, data, dec, chs, err := ParseAddrWithMultipleBackends(buf[:n], C.rbuf, lis.c.Backends)
+	if err != nil {
 		return
 	}
 	if chs.Ivlen != 0 {
@@ -283,10 +283,13 @@ func ssMultiAcceptHandler(conn net.Conn, lis *listener) (c net.Conn) {
 	}
 	C.dec = dec
 	C.c = chs
-	conn = &RemainConn{Conn: C, remain: data}
-	conn = NewDstConn(conn, net.JoinHostPort(host, strconv.Itoa(port)))
+	conn = C
+	if len(data) != 0 {
+		conn = &RemainConn{Conn: C, remain: data}
+	}
+	conn = NewDstConn(conn, net.JoinHostPort(addr.Host(), addr.Port()))
 	c = conn
-	chs.LogD("choose", chs.Method, chs.Password, host, port)
+	chs.LogD("choose", chs.Method, chs.Password, addr.Host(), addr.Port())
 	return
 }
 
@@ -307,8 +310,8 @@ func ssAcceptHandler(conn net.Conn, lis *listener) (c net.Conn) {
 	}
 	dbuf := make([]byte, buffersize)
 	dec.Decrypt(dbuf, buf[lis.c.Ivlen:n])
-	host, port, data := ParseAddr(dbuf[:n-lis.c.Ivlen])
-	if len(host) == 0 {
+	addr, data, err := ParseAddr(dbuf[:n-lis.c.Ivlen])
+	if err != nil {
 		lis.c.Log("recv a unexpected header from %s.", conn.RemoteAddr().String())
 		return
 	}
@@ -328,8 +331,12 @@ func ssAcceptHandler(conn net.Conn, lis *listener) (c net.Conn) {
 	C := NewConn(conn, lis.c)
 	C.dec = dec
 	C.Xu1s()
-	conn = &RemainConn{Conn: C, remain: data}
-	conn = NewDstConn(conn, net.JoinHostPort(host, strconv.Itoa(port)))
+	conn = C
+	if len(data) != 0 {
+		copy(C.rbuf, data)
+		conn = &RemainConn{Conn: C, remain: C.rbuf[:len(data)]}
+	}
+	conn = NewDstConn(conn, net.JoinHostPort(addr.Host(), addr.Port()))
 	c = conn
 	return
 }
@@ -388,15 +395,15 @@ func socksAcceptor(conn net.Conn, lis *listener) (c net.Conn) {
 		}
 		return
 	}
-	host, port, _ := ParseAddr(buf[3:n])
-	if len(host) == 0 {
+	addr, _, err := ParseAddr(buf[3:n])
+	if err != nil {
 		return
 	}
 	_, err = conn.Write([]byte{5, 0, 0, 1, 0, 0, 0, 0, 0, 0})
 	if err != nil {
 		return
 	}
-	c = NewDstConn(conn, net.JoinHostPort(host, strconv.Itoa(port)))
+	c = NewDstConn(conn, net.JoinHostPort(addr.Host(), addr.Port()))
 	return
 }
 
