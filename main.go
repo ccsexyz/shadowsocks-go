@@ -16,6 +16,7 @@ func main() {
 		fmt.Println("usage: myss configfile")
 		return
 	}
+	log.SetFlags(log.Lshortfile | log.Ldate | log.Ltime | log.Lmicroseconds)
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		log.Fatal(err)

@@ -289,3 +289,8 @@ func limitAcceptHandler(conn net.Conn, lis *listener) (c net.Conn) {
 	}
 	return
 }
+
+type MuxConn struct {
+	conn net.Conn
+	net.Conn
+}

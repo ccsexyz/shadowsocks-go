@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ccsexyz/mux"
 	"github.com/ccsexyz/shadowsocks-go/redir"
 )
 
@@ -138,6 +139,9 @@ func ListenSS(service string, c *Config) (lis net.Listener, err error) {
 		handlers = append(handlers, obfsAcceptHandler)
 	}
 	handlers = append(handlers, ssAcceptHandler)
+	if c.Mux {
+		handlers = append(handlers, muxAcceptHandler)
+	}
 	li := NewListener(l, c, handlers)
 	if c.Obfs && c.pool != nil {
 		go func() {
@@ -190,6 +194,9 @@ func ListenMultiSS(service string, c *Config) (lis net.Listener, err error) {
 		handlers = append(handlers, obfsAcceptHandler)
 	}
 	handlers = append(handlers, ssMultiAcceptHandler)
+	if c.Mux {
+		handlers = append(handlers, muxAcceptHandler)
+	}
 	li := NewListener(l, c, handlers)
 	if c.Obfs && c.pool != nil {
 		go func() {
@@ -341,6 +348,67 @@ func ssAcceptHandler(conn net.Conn, lis *listener) (c net.Conn) {
 	return
 }
 
+func muxAcceptHandler(conn net.Conn, lis *listener) (c net.Conn) {
+	defer func() {
+		if conn != nil {
+			conn.Close()
+		}
+	}()
+	dstcon, err := GetDstConn(conn)
+	if err != nil {
+		return
+	}
+	if dstcon.GetDst() != muxaddr {
+		c = conn
+		conn = nil
+		return
+	}
+	mux, err := mux.NewMux(dstcon.Conn)
+	if err != nil {
+		return
+	}
+	conn = nil
+	for {
+		muxconn, err := mux.Accept()
+		if err != nil {
+			return
+		}
+		go lis.muxConnHandler(&MuxConn{conn: dstcon.Conn, Conn: muxconn})
+	}
+	return
+}
+
+func (lis *listener) muxConnHandler(conn net.Conn) {
+	buf := make([]byte, 512)
+	var err error
+	defer func() {
+		if err != nil && conn != nil {
+			conn.Close()
+		}
+	}()
+	_, err = io.ReadFull(conn, buf[:1])
+	if err != nil {
+		return
+	}
+	addrlen := int(buf[0])
+	_, err = io.ReadFull(conn, buf[:addrlen])
+	if err != nil {
+		return
+	}
+	var dst DstAddr
+	dst.host, dst.port, err = net.SplitHostPort(string(buf[:addrlen]))
+	if err != nil {
+		return
+	}
+	conn = NewDstConn(conn, &dst)
+	select {
+	case lis.connch <- conn:
+	case <-lis.die:
+		conn.Close()
+	}
+	conn = nil
+}
+
 func ListenSocks5(address string, c *Config) (lis net.Listener, err error) {
 	addr, err := net.ResolveTCPAddr("tcp", address)
 	if err != nil {
@@ -481,10 +549,50 @@ func DialMultiSS(target string, configs []*Config) (conn net.Conn, err error) {
 	return
 }
 
+func DialMux(target, service string, c *Config) (conn net.Conn, err error) {
+	c.muxlock.Lock()
+	if c.mux == nil {
+		var ssconn net.Conn
+		ssconn, err = DialSSWithRawHeader([]byte{typeMux}, service, c)
+		if err != nil {
+			return
+		}
+		c.mux, err = mux.NewMux(ssconn)
+		if err != nil {
+			c.mux = nil
+			return
+		}
+	}
+	mux := c.mux
+	c.muxlock.Unlock()
+	conn, err = c.mux.Dial()
+	if err != nil {
+		c.muxlock.Lock()
+		if mux == c.mux {
+			c.mux = nil
+		}
+		c.muxlock.Unlock()
+		return DialMux(target, service, c)
+	}
+	buf := make([]byte, len(target)+1)
+	buf[0] = byte(len(target))
+	copy(buf[1:], []byte(target))
+	buf = buf[:1+int(buf[0])]
+	_, err = conn.Write(buf)
+	if err != nil {
+		conn.Close()
+		conn = nil
+	}
+	return
+}
+
 func DialSS(target, service string, c *Config) (conn net.Conn, err error) {
 	if len(target) > 255 {
 		err = fmt.Errorf("target length is too long")
 		return
+	}
+	if c.Mux {
+		return DialMux(target, service, c)
 	}
 	host, port, err := net.SplitHostPort(target)
 	if err != nil {

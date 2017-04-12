@@ -6,6 +6,9 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
+	"sync"
+
+	"github.com/ccsexyz/mux"
 )
 
 type Config struct {
@@ -26,6 +29,7 @@ type Config struct {
 	Obfs         bool      `json:"obfs"`
 	ObfsHost     []string  `json:"obfshost"`
 	Delay        bool      `json:"delay"`
+	Mux          bool      `json:"mux"`
 	Limit        int       `json:"limit"`
 	LimitPerConn int       `json:"limitperconn"`
 	limiters     []*Limiter
@@ -37,6 +41,8 @@ type Config struct {
 	Any          interface{}
 	Die          chan bool
 	pool         *ConnPool
+	mux          *mux.Mux
+	muxlock      sync.Mutex
 }
 
 func ReadConfig(path string) (configs []*Config, err error) {

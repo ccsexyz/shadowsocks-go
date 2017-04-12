@@ -19,11 +19,15 @@ const (
 	typeIPv4            = 1
 	typeDm              = 3
 	typeIPv6            = 4
+	typeMux             = 0x6D
 	typeNop             = 0x90 // [nop 1 byte] [noplen 1 byte (< 128)] [zero data, noplen byte]
 	lenIPv4             = 4
 	lenIPv6             = 16
 	ivmapHighWaterLevel = 100000
 	ivmapLowWaterLevel  = 10000
+	muxaddr             = "mux:12580"
+	muxhost             = "mux"
+	muxport             = 12580
 	Udprelayaddr        = "UdpRelayOverTcp:65535"
 	defaultObfsHost     = "www.bing.com"
 )
@@ -100,7 +104,7 @@ outer:
 		for atyp == typeNop {
 			dec.Decrypt(buf, b[off:off+1])
 			noplen := int(buf[0])
-			if noplen >= 128 || n < off+noplen+1+4 {
+			if noplen >= 128 || n < off+noplen+1+1 {
 				continue outer
 			}
 			off++
@@ -120,6 +124,15 @@ outer:
 		switch atyp {
 		default:
 			continue
+		case typeMux:
+			if !nop {
+				continue
+			}
+			chs = config
+			dec.Decrypt(buf, b[off:])
+			data = buf[:len(b)-off]
+			addr = SockAddr([]byte{atyp})
+			return
 		case typeDm:
 			if off+1 >= n {
 				continue
@@ -184,14 +197,14 @@ outer:
 func ParseAddr(b []byte) (addr SockAddr, data []byte, err error) {
 	err = errInvalidHeader
 	n := len(b)
-	if n < 4 {
+	if n < 1 {
 		return
 	}
 	var nop bool
 	atyp := b[0]
 	for atyp == typeNop {
 		noplen := int(b[1])
-		if noplen >= 128 || n < noplen+2+4 {
+		if noplen >= 128 || n < noplen+2+1 {
 			return
 		}
 		for _, v := range b[2 : noplen+2] {
@@ -209,6 +222,12 @@ func ParseAddr(b []byte) (addr SockAddr, data []byte, err error) {
 	default:
 		err = fmt.Errorf("unsupported atyp value %v", atyp)
 		return
+	case typeMux:
+		if !nop {
+			return
+		}
+		header = b[:1]
+		data = b[1:]
 	case typeIPv4:
 		if nop || n < lenIPv4+2+1 {
 			return
@@ -334,6 +353,8 @@ func GetInnerConn(conn net.Conn) (c net.Conn, err error) {
 		c = i.Conn
 	case *LimitConn:
 		c = i.Conn
+	case *MuxConn:
+		c = i.conn
 	}
 	return
 }
@@ -400,6 +421,8 @@ func (b SockAddr) Host() string {
 		return net.IP(b[1 : lenIPv4+1]).String()
 	case typeIPv6:
 		return net.IP(b[1 : lenIPv6+1]).String()
+	case typeMux:
+		return muxhost
 	}
 }
 
@@ -412,6 +435,8 @@ func (b SockAddr) Port() string {
 		off = lenIPv4 + 1
 	case typeIPv6:
 		off = lenIPv6 + 1
+	case typeMux:
+		return strconv.Itoa(muxport)
 	}
 	return strconv.Itoa(int(binary.BigEndian.Uint16(b[off:])))
 }
