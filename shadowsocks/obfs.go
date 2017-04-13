@@ -3,6 +3,7 @@ package shadowsocks
 import (
 	"fmt"
 	"io"
+	"math/rand"
 	"net"
 	"strconv"
 	"sync"
@@ -370,7 +371,7 @@ func DialObfs(target string, c *Config) (conn net.Conn, err error) {
 	} else if len(c.ObfsHost) == 1 {
 		host = c.ObfsHost[0]
 	} else {
-		host = c.ObfsHost[int(src.Int63()%int64(len(c.ObfsHost)))]
+		host = c.ObfsHost[rand.Intn(len(c.ObfsHost))]
 	}
 	req := buildHTTPRequest(fmt.Sprintf("Host: %s\r\nX-Online-Host: %s\r\n", host, host))
 	obfsconn, ok := conn.(*ObfsConn)

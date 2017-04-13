@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"math/rand"
 	"net"
 	"sort"
 	"strconv"
@@ -23,7 +24,7 @@ type listener struct {
 	c         *Config
 	die       chan bool
 	connch    chan net.Conn
-	err       error
+	errch     chan error
 	handlers  []ListenHandler
 	IvMap     map[string]bool
 	IvMapLock sync.Mutex
@@ -37,6 +38,7 @@ func NewListener(lis *net.TCPListener, c *Config, handlers []ListenHandler) *lis
 		die:         make(chan bool),
 		connch:      make(chan net.Conn, 32),
 		IvMap:       make(map[string]bool),
+		errch:       make(chan error, 1),
 	}
 	go l.acceptor()
 	go l.ivMapCleaner()
@@ -48,7 +50,7 @@ func (lis *listener) acceptor() {
 	for {
 		conn, err := lis.TCPListener.Accept()
 		if err != nil {
-			lis.err = err
+			lis.errch <- err
 			return
 		}
 		if len(lis.handlers) == 0 {
@@ -112,7 +114,7 @@ func (lis *listener) Close() error {
 func (lis *listener) Accept() (conn net.Conn, err error) {
 	select {
 	case <-lis.die:
-		err = lis.err
+		err = <-lis.errch
 		if err == nil {
 			err = fmt.Errorf("cannot accept from closed listener")
 		}
@@ -641,7 +643,7 @@ func DialSSWithRawHeader(header []byte, service string, c *Config) (conn net.Con
 		copy(rconn.remain, header)
 		conn = rconn
 	} else {
-		noplen := int(src.Int63() % 128)
+		noplen := rand.Intn(128)
 		buf := make([]byte, 1024)
 		buf[0] = typeNop
 		buf[1] = byte(noplen)

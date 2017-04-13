@@ -12,7 +12,6 @@ import (
 var (
 	xuch  chan net.Conn
 	xudie chan bool
-	src   = rand.NewSource(time.Now().UnixNano())
 )
 
 func init() {
@@ -166,7 +165,7 @@ func xuroutine() {
 			a := 0
 			b := 0
 			for b < 3 || b > 14 {
-				b = int(src.Int63()%16 + 1)
+				b = rand.Intn(16) + 1
 				a += b
 			}
 			if _, ok := c.(*Conn); ok {
