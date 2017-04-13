@@ -555,11 +555,13 @@ func DialMux(target, service string, c *Config) (conn net.Conn, err error) {
 		var ssconn net.Conn
 		ssconn, err = DialSSWithRawHeader([]byte{typeMux}, service, c)
 		if err != nil {
+			c.muxlock.Unlock()
 			return
 		}
 		c.mux, err = mux.NewMux(ssconn)
 		if err != nil {
 			c.mux = nil
+			c.muxlock.Unlock()
 			return
 		}
 	}
