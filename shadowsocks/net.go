@@ -679,7 +679,7 @@ func (md *MuxDialer) Dial(service string, c *Config) (conn net.Conn, err error) 
 	md.lock.Lock()
 	muxs := make([]*mux.Mux, len(md.muxs))
 	copy(muxs, md.muxs)
-	lazy := md.lazy == 0
+	lazy := md.lazy <= 0
 	md.lock.Unlock()
 	n := len(muxs) + 1
 	die := make(chan bool)
