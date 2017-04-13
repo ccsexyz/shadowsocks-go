@@ -513,7 +513,7 @@ func DialMultiSS(target string, configs []*Config) (conn net.Conn, err error) {
 	die := make(chan bool)
 	num := len(configs)
 	errch := make(chan error, num)
-	conch := make(chan net.Conn, num)
+	conch := make(chan net.Conn)
 	for _, v := range configs {
 		go func(v *Config) {
 			var rconn net.Conn
@@ -552,31 +552,9 @@ func DialMultiSS(target string, configs []*Config) (conn net.Conn, err error) {
 }
 
 func DialMux(target, service string, c *Config) (conn net.Conn, err error) {
-	c.muxlock.Lock()
-	if c.mux == nil {
-		var ssconn net.Conn
-		ssconn, err = DialSSWithRawHeader([]byte{typeMux}, service, c)
-		if err != nil {
-			c.muxlock.Unlock()
-			return
-		}
-		c.mux, err = mux.NewMux(ssconn)
-		if err != nil {
-			c.mux = nil
-			c.muxlock.Unlock()
-			return
-		}
-	}
-	mux := c.mux
-	c.muxlock.Unlock()
-	conn, err = c.mux.Dial()
+	conn, err = c.muxDialer.Dial(service, c)
 	if err != nil {
-		c.muxlock.Lock()
-		if mux == c.mux {
-			c.mux = nil
-		}
-		c.muxlock.Unlock()
-		return DialMux(target, service, c)
+		return
 	}
 	buf := make([]byte, len(target)+1)
 	buf[0] = byte(len(target))
@@ -688,5 +666,103 @@ func DialUDPOverTCP(target, service string, c *Config) (conn net.Conn, err error
 		return
 	}
 	conn = NewConn2(conn)
+	return
+}
+
+type MuxDialer struct {
+	lock sync.Mutex
+	muxs []*mux.Mux
+	lazy int
+}
+
+func (md *MuxDialer) Dial(service string, c *Config) (conn net.Conn, err error) {
+	md.lock.Lock()
+	muxs := make([]*mux.Mux, len(md.muxs))
+	copy(muxs, md.muxs)
+	lazy := md.lazy == 0
+	md.lock.Unlock()
+	n := len(muxs) + 1
+	die := make(chan bool)
+	errch := make(chan error, n)
+	connch := make(chan net.Conn)
+	for _, v := range muxs {
+		go func(v *mux.Mux) {
+			mconn, err := v.Dial()
+			if err != nil {
+				md.lock.Lock()
+				nmuxs := len(md.muxs)
+				last := md.muxs[n-1]
+				md.muxs = md.muxs[:nmuxs-1]
+				if last != v {
+					for it := 0; it < nmuxs-1; it++ {
+						if md.muxs[it] == v {
+							md.muxs[it] = last
+							break
+						}
+					}
+				}
+				md.lock.Unlock()
+				select {
+				case <-die:
+				case errch <- err:
+				}
+				return
+			}
+			select {
+			case connch <- mconn:
+				md.lock.Lock()
+				if lazy {
+					md.lazy = 2 * len(md.muxs)
+				} else {
+					md.lazy--
+				}
+				md.lock.Unlock()
+			case <-die:
+				mconn.Close()
+			}
+		}(v)
+	}
+	if lazy {
+		go func() {
+			ssconn, err := DialSSWithRawHeader([]byte{typeMux}, service, c)
+			if err == nil {
+				var smux *mux.Mux
+				smux, err = mux.NewMux(ssconn)
+				if err == nil {
+					var mconn net.Conn
+					mconn, err = smux.Dial()
+					if err == nil {
+						select {
+						case <-die:
+						case connch <- mconn:
+							md.lock.Lock()
+							md.muxs = append(md.muxs, smux)
+							md.lock.Unlock()
+							return
+						}
+						mconn.Close()
+					}
+					smux.Close()
+				}
+				ssconn.Close()
+			}
+			select {
+			case <-die:
+			case errch <- err:
+			}
+		}()
+	}
+out:
+	for i := 0; i < n; i++ {
+		select {
+		case err = <-errch:
+		case conn = <-connch:
+			close(die)
+			break out
+		}
+	}
+	if conn != nil {
+		err = nil
+	}
 	return
 }

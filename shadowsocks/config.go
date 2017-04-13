@@ -6,9 +6,6 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
-	"sync"
-
-	"github.com/ccsexyz/mux"
 )
 
 type Config struct {
@@ -41,8 +38,7 @@ type Config struct {
 	Any          interface{}
 	Die          chan bool
 	pool         *ConnPool
-	mux          *mux.Mux
-	muxlock      sync.Mutex
+	muxDialer    *MuxDialer
 }
 
 func ReadConfig(path string) (configs []*Config, err error) {
@@ -119,6 +115,9 @@ func CheckBasicConfig(c *Config) {
 	}
 	if c.Limit != 0 {
 		c.limiters = append(c.limiters, NewLimiter(c.Limit))
+	}
+	if c.Mux {
+		c.muxDialer = &MuxDialer{}
 	}
 }
 
