@@ -20,9 +20,11 @@ const (
 	typeDm              = 3
 	typeIPv6            = 4
 	typeMux             = 0x6D
+	typeTs              = 0x74 // timestamp
 	typeNop             = 0x90 // [nop 1 byte] [noplen 1 byte (< 128)] [zero data, noplen byte]
 	lenIPv4             = 4
 	lenIPv6             = 16
+	lenTs               = 8
 	ivmapHighWaterLevel = 100000
 	ivmapLowWaterLevel  = 10000
 	muxaddr             = "mux:12580"
@@ -101,24 +103,43 @@ outer:
 		off := config.Ivlen + 1
 		nop := false
 		atyp := buf[0]
-		for atyp == typeNop {
-			dec.Decrypt(buf, b[off:off+1])
-			noplen := int(buf[0])
-			if noplen >= 128 || n < off+noplen+1+1 {
-				continue outer
-			}
-			off++
-			dec.Decrypt(buf, b[off:off+noplen])
-			for _, v := range buf[:noplen] {
-				if v != 0 {
+	lo:
+		for {
+			switch atyp {
+			default:
+				break lo
+			case typeNop:
+				dec.Decrypt(buf, b[off:off+1])
+				noplen := int(buf[0])
+				if noplen >= 128 || n < off+noplen+1+1 {
 					continue outer
 				}
+				off++
+				dec.Decrypt(buf, b[off:off+noplen])
+				for _, v := range buf[:noplen] {
+					if v != 0 {
+						continue outer
+					}
+				}
+				off += noplen
+				nop = true
+				dec.Decrypt(buf, b[off:off+1])
+				atyp = buf[0]
+				off++
+			case typeTs:
+				if n < off+lenTs+1 {
+					continue outer
+				}
+				dec.Decrypt(buf, b[off:off+lenTs])
+				ts := binary.BigEndian.Uint64(buf[:lenTs])
+				if !checkTimestamp(int64(ts)) {
+					continue outer
+				}
+				off += lenTs
+				dec.Decrypt(buf, b[off:off+1])
+				atyp = buf[0]
+				off++
 			}
-			off += noplen
-			nop = true
-			dec.Decrypt(buf, b[off:off+1])
-			atyp = buf[0]
-			off++
 		}
 		var port int
 		switch atyp {
@@ -194,6 +215,14 @@ outer:
 	return
 }
 
+func checkTimestamp(ts int64) (ok bool) {
+	nts := time.Now().Unix()
+	if nts >= ts {
+		return (nts - ts) <= 64
+	}
+	return (ts - nts) <= 64
+}
+
 func ParseAddr(b []byte) (addr SockAddr, data []byte, err error) {
 	err = errInvalidHeader
 	n := len(b)
@@ -202,20 +231,37 @@ func ParseAddr(b []byte) (addr SockAddr, data []byte, err error) {
 	}
 	var nop bool
 	atyp := b[0]
-	for atyp == typeNop {
-		noplen := int(b[1])
-		if noplen >= 128 || n < noplen+2+1 {
-			return
-		}
-		for _, v := range b[2 : noplen+2] {
-			if v != 0 {
+l:
+	for {
+		switch atyp {
+		default:
+			break l
+		case typeNop:
+			noplen := int(b[1])
+			if noplen >= 128 || n < noplen+2+1 {
 				return
 			}
+			for _, v := range b[2 : noplen+2] {
+				if v != 0 {
+					return
+				}
+			}
+			b = b[noplen+2:]
+			n = len(b)
+			atyp = b[0]
+			nop = true
+		case typeTs:
+			if n < lenTs+1+1 {
+				return
+			}
+			ts := binary.BigEndian.Uint64(b[1 : 1+lenTs])
+			if !checkTimestamp(int64(ts)) {
+				return
+			}
+			b = b[lenTs+1:]
+			n = len(b)
+			atyp = b[0]
 		}
-		b = b[noplen+2:]
-		n = len(b)
-		atyp = b[0]
-		nop = true
 	}
 	var header []byte
 	switch atyp {
