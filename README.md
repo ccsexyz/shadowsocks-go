@@ -76,10 +76,12 @@ json 对象中的可选配置:
 * backends: 用于 *proxy 中,设置一组用于转发的 ss 服务端的配置信息  
 * obfs: 设置是否启用 HTTP 伪装,服务端开启此选项后仍然兼容不适用 HTTP 伪装的客户端    
 * obfshost: 设置一组 HOST,用于伪装中的 HOST 字段  
+* obfsalive: 设置为 true 时将启用 HTTP-keepalive,复用已经建立的空闲连接  
 * logfile: 设置日志文件的输出路径  
 * verbose: 输出详细日志  
 * debug: 输出调试日志  
 * delay: 设置为 true 时在发送数据时将会延迟一段时间(目前是10ms)来尝试将更多的数据合并发送,可以轻微的改变流量特征  
+* mux: 设置是否启用多路复用功能,设置为 true 时可由一个 TCP 连接承载多个 ss 代理连接  
 
 type 字段的可选值:  
 * local: ss 客户端
@@ -122,4 +124,5 @@ ____
 * ~~实现 UDP 隧道(用于转发 DNS 请求)~~  
 * ~~实现 TCP redirect~~  
 * ~~实现 HTTP 伪装~~  
-* 实现 mux  
+* ~~实现 mux~~  
+* 兼容 shadowsocks simple-obfs  

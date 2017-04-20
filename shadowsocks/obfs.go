@@ -16,16 +16,29 @@ const (
 
 type DelayConn struct {
 	net.Conn
-	wbuf  [buffersize]byte
-	off   int
-	lock  sync.Mutex
-	timer *time.Timer
+	wbuf    [buffersize]byte
+	off     int
+	lock    sync.Mutex
+	destroy bool
+	timer   *time.Timer
+}
+
+func (c *DelayConn) Close() (err error) {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+	c.destroy = true
+	err = c.Conn.Close()
+	return
 }
 
 func (c *DelayConn) Write(b []byte) (n int, err error) {
 	l := len(b)
 	c.lock.Lock()
 	defer c.lock.Unlock()
+	if c.destroy {
+		err = fmt.Errorf("use of closed connection")
+		return
+	}
 	if l+c.off >= buffersize {
 		if c.off != 0 {
 			buf := make([]byte, l+c.off)
@@ -53,6 +66,9 @@ func (c *DelayConn) Write(b []byte) (n int, err error) {
 			defer c.lock.Unlock()
 			c.timer = nil
 			if c.off == 0 {
+				return
+			}
+			if c.destroy {
 				return
 			}
 			_, err := c.Conn.Write(c.wbuf[:c.off])
@@ -84,42 +100,35 @@ type ObfsConn struct {
 	eos      bool // end of stream
 	lock     sync.Mutex
 	rlock    sync.Mutex
-	reading  bool
+	wlock    sync.Mutex
 	destroy  bool
 }
 
 func (c *ObfsConn) Close() (err error) {
 	c.lock.Lock()
+	defer c.lock.Unlock()
 	if c.destroy {
-		c.lock.Unlock()
 		return
 	}
 	c.destroy = true
-	c.lock.Unlock()
 	if c.pool == nil {
 		err = c.RemainConn.Close()
 		return
 	}
+	c.wlock.Lock()
+	defer c.wlock.Unlock()
 	_, err = c.write(nil)
 	if err != nil {
 		err = c.RemainConn.Close()
 		return
 	}
+	c.SetReadDeadline(time.Now())
+	c.rlock.Lock()
+	c.SetReadDeadline(time.Time{})
+	defer c.rlock.Unlock()
 	buf := make([]byte, buffersize)
-	for {
-		c.lock.Lock()
-		if c.eos {
-			c.lock.Unlock()
-			break
-		}
-		if c.reading {
-			c.lock.Unlock()
-			c.rlock.Lock()
-			c.rlock.Unlock()
-			continue
-		}
+	for !c.eos {
 		_, err = c.readInLock(buf)
-		c.lock.Unlock()
 		if err != nil {
 			if c.eos {
 				break
@@ -160,7 +169,14 @@ func (c *ObfsConn) Write(b []byte) (n int, err error) {
 	if len(b) == 0 {
 		return c.RemainConn.Write(b)
 	}
-	return c.write(b)
+	c.wlock.Lock()
+	defer c.wlock.Unlock()
+	if c.destroy {
+		err = fmt.Errorf("write to closed connection")
+		return
+	}
+	n, err = c.write(b)
+	return
 }
 
 func (c *ObfsConn) readObfsHeader(b []byte) (n int, err error) {
@@ -292,26 +308,12 @@ func (c *ObfsConn) readInLock(b []byte) (n int, err error) {
 }
 
 func (c *ObfsConn) Read(b []byte) (n int, err error) {
-	c.lock.Lock()
+	c.rlock.Lock()
+	defer c.rlock.Unlock()
 	if c.destroy {
-		c.lock.Unlock()
 		err = fmt.Errorf("read from closed connection")
 		return
 	}
-	if c.reading {
-		c.lock.Unlock()
-		err = fmt.Errorf("concurrent read")
-		return
-	}
-	c.reading = true
-	c.lock.Unlock()
-	defer func() {
-		c.lock.Lock()
-		defer c.lock.Unlock()
-		c.reading = false
-	}()
-	c.rlock.Lock()
-	defer c.rlock.Unlock()
 	n, err = c.readInLock(b)
 	return
 }
@@ -358,8 +360,10 @@ func DialObfs(target string, c *Config) (conn net.Conn, err error) {
 			conn.Close()
 		}
 	}()
-	conn, err = c.pool.GetNonblock()
-	if err != nil {
+	if c.pool != nil {
+		conn, err = c.pool.GetNonblock()
+	}
+	if err != nil || c.pool == nil {
 		conn, err = net.Dial("tcp", target)
 	}
 	if err != nil {

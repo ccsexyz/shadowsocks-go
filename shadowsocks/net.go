@@ -157,12 +157,13 @@ func ListenSS(service string, c *Config) (lis net.Listener, err error) {
 				obfsconn.req = true
 				obfsconn.chunkLen = 0
 				go func(obfsconn *ObfsConn) {
-					conn := ssAcceptHandler(conn, li)
+					conn := ssAcceptHandler(obfsconn, li)
 					if conn == nil {
 						return
 					}
 					select {
 					case <-li.die:
+						obfsconn.RemainConn.Close()
 						conn.Close()
 					case li.connch <- conn:
 					}
@@ -212,12 +213,13 @@ func ListenMultiSS(service string, c *Config) (lis net.Listener, err error) {
 				obfsconn.req = true
 				obfsconn.chunkLen = 0
 				go func(obfsconn *ObfsConn) {
-					conn := ssMultiAcceptHandler(conn, li)
+					conn := ssMultiAcceptHandler(obfsconn, li)
 					if conn == nil {
 						return
 					}
 					select {
 					case <-li.die:
+						obfsconn.RemainConn.Close()
 						conn.Close()
 					case li.connch <- conn:
 					}
@@ -260,15 +262,15 @@ func ssMultiAcceptHandler(conn net.Conn, lis *listener) (c net.Conn) {
 			conn.Close()
 		}
 	}()
-	timer := time.AfterFunc(time.Second*4, func() {
-		conn.Close()
-	})
+	// timer := time.AfterFunc(time.Second*4, func() {
+	// 	conn.Close()
+	// })
 	buf := C.wbuf
 	n, err := conn.Read(buf)
-	if timer != nil {
-		timer.Stop()
-		timer = nil
-	}
+	// if timer != nil {
+	// 	timer.Stop()
+	// 	timer = nil
+	// }
 	if err != nil {
 		return
 	}

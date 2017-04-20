@@ -25,6 +25,7 @@ type Config struct {
 	LogFile      string    `json:"logfile"`
 	Obfs         bool      `json:"obfs"`
 	ObfsHost     []string  `json:"obfshost"`
+	ObfsAlive    bool      `json:"obfsalive"`
 	Delay        bool      `json:"delay"`
 	Mux          bool      `json:"mux"`
 	Limit        int       `json:"limit"`
@@ -131,7 +132,7 @@ func CheckConfig(c *Config) {
 	}
 	CheckLogFile(c)
 	CheckBasicConfig(c)
-	if c.pool == nil && c.Obfs && (c.Type == "server" || c.Type == "multiserver" || c.Type == "local") {
+	if c.pool == nil && c.Obfs && c.ObfsAlive && (c.Type == "server" || c.Type == "multiserver" || c.Type == "local") {
 		c.pool = NewConnPool()
 	}
 	if c.Backend != nil {
@@ -147,6 +148,9 @@ func CheckConfig(c *Config) {
 		v.Type = c.Type
 		if c.Obfs {
 			v.Obfs = true
+			if c.ObfsAlive {
+				v.ObfsAlive = true
+			}
 			v.ObfsHost = append(v.ObfsHost, c.ObfsHost...)
 		}
 		if c.Debug {
@@ -166,7 +170,7 @@ func CheckConfig(c *Config) {
 				v.logfile = c.logfile
 			}
 		}
-		if v.Obfs {
+		if v.Obfs && v.ObfsAlive {
 			if v.Type != "server" && v.Type != "multiserver" {
 				v.pool = NewConnPool()
 			} else {
