@@ -685,7 +685,7 @@ func (md *MuxDialer) Dial(service string, c *Config) (conn net.Conn, err error) 
 	copy(muxs, md.muxs)
 	lazy := md.lazy <= 0
 	md.lock.Unlock()
-	n := len(muxs) + 1
+	n := len(muxs)
 	die := make(chan bool)
 	errch := make(chan error, n)
 	connch := make(chan net.Conn)
@@ -693,16 +693,14 @@ func (md *MuxDialer) Dial(service string, c *Config) (conn net.Conn, err error) 
 		go func(v *mux.Mux) {
 			mconn, err := v.Dial()
 			if err != nil {
+				v.Close()
 				md.lock.Lock()
 				nmuxs := len(md.muxs)
-				last := md.muxs[n-1]
-				md.muxs = md.muxs[:nmuxs-1]
-				if last != v {
-					for it := 0; it < nmuxs-1; it++ {
-						if md.muxs[it] == v {
-							md.muxs[it] = last
-							break
-						}
+				for i, m := range md.muxs {
+					if m == v {
+						md.muxs[i] = md.muxs[nmuxs-1]
+						md.muxs = md.muxs[:nmuxs-1]
+						break
 					}
 				}
 				md.lock.Unlock()
@@ -727,6 +725,7 @@ func (md *MuxDialer) Dial(service string, c *Config) (conn net.Conn, err error) 
 		}(v)
 	}
 	if lazy {
+		n++
 		go func() {
 			ssconn, err := DialSSWithRawHeader([]byte{typeMux}, service, c)
 			if err == nil {
@@ -761,12 +760,19 @@ out:
 		select {
 		case err = <-errch:
 		case conn = <-connch:
+			err = nil
 			close(die)
 			break out
 		}
 	}
-	if conn != nil {
-		err = nil
+	if err != nil || conn == nil {
+		md.lock.Lock()
+		nmuxs := len(md.muxs)
+		md.lazy = 0
+		md.lock.Unlock()
+		if nmuxs == 0 {
+			conn, err = md.Dial(service, c)
+		}
 	}
 	return
 }
