@@ -461,6 +461,7 @@ func httpProxyAcceptor(conn net.Conn, lis *listener) (c net.Conn) {
 		if err != nil {
 			return
 		}
+		conn = DecayRemainConn(conn)
 		c = NewDstConn(conn, &DstAddr{host: host, port: port})
 		return
 	}
@@ -502,7 +503,7 @@ func socksAcceptor(conn net.Conn, lis *listener) (c net.Conn) {
 		}
 	}()
 	buf := make([]byte, 512)
-	n, err := io.ReadAtLeast(conn, buf, 2)
+	n, err := io.ReadFull(conn, buf[:2])
 	if err != nil {
 		return
 	}

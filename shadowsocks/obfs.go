@@ -328,6 +328,14 @@ type RemainConn struct {
 	wremain []byte
 }
 
+func DecayRemainConn(conn net.Conn) net.Conn {
+	rconn, ok := conn.(*RemainConn)
+	if ok && len(rconn.remain) == 0 && len(rconn.wremain) == 0 {
+		return rconn.Conn
+	}
+	return conn
+}
+
 func (c *RemainConn) Read(b []byte) (n int, err error) {
 	if len(c.remain) == 0 {
 		return c.Conn.Read(b)
