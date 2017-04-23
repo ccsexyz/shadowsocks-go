@@ -441,6 +441,18 @@ func GetLimitConn(conn net.Conn) (l *LimitConn, err error) {
 	return
 }
 
+func GetRemainConn(conn net.Conn) (r *RemainConn, err error) {
+	r, ok := conn.(*RemainConn)
+	if !ok {
+		conn, err = GetInnerConn(conn)
+		if err != nil {
+			return
+		}
+		r, err = GetRemainConn(conn)
+	}
+	return
+}
+
 // CheckConn Check the Conn whether is still alive
 func CheckConn(conn net.Conn) bool {
 	if conn != nil {

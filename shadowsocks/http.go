@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"math/rand"
 	"strconv"
-	"strings"
 )
 
 type httpRelyParser struct {
@@ -114,11 +113,26 @@ func (parser *httpRelyParser) read(b byte) (ok bool, err error) {
 	return
 }
 
-func (parser *httpRelyParser) print() {
-	fmt.Println(parser.httpVersionString, parser.replyStatusCode, parser.replyStatusString)
+func (parser *httpRelyParser) marshal() string {
+	var buffer bytes.Buffer
+	buffer.WriteString(parser.httpVersionString)
+	buffer.WriteString(" ")
+	buffer.WriteString(strconv.Itoa(parser.replyStatusCode))
+	buffer.WriteString(" ")
+	buffer.WriteString(parser.replyStatusString)
+	buffer.WriteString("\r\n")
 	for k, v := range parser.headers {
-		fmt.Println(k+":", v)
+		buffer.WriteString(k)
+		buffer.WriteString(": ")
+		buffer.WriteString(v)
+		buffer.WriteString("\r\n")
 	}
+	buffer.WriteString("\r\n")
+	return buffer.String()
+}
+
+func (parser *httpRelyParser) print() {
+	fmt.Print(parser.marshal())
 }
 
 // copy from stackoverflow
@@ -274,7 +288,7 @@ func (parser *httpRequestParser) read(b byte) (ok bool, err error) {
 	case parsingHeadersValue:
 		if b == '\n' {
 			parser.parserStatus = parsingHeadersKey
-			parser.headers[strings.ToLower(parser.parsingKey)] = parser.parsingValue
+			parser.headers[parser.parsingKey] = parser.parsingValue
 			parser.parsingKey = ""
 			parser.parsingValue = ""
 		} else if b != '\r' {
@@ -286,11 +300,26 @@ func (parser *httpRequestParser) read(b byte) (ok bool, err error) {
 	return
 }
 
-func (parser *httpRequestParser) print() {
-	fmt.Println(parser.requestMethod, parser.requestURI, parser.httpVersionString)
+func (parser *httpRequestParser) marshal() string {
+	var buffer bytes.Buffer
+	buffer.WriteString(parser.requestMethod)
+	buffer.WriteString(" ")
+	buffer.WriteString(parser.requestURI)
+	buffer.WriteString(" ")
+	buffer.WriteString(parser.httpVersionString)
+	buffer.WriteString("\r\n")
 	for k, v := range parser.headers {
-		fmt.Println(k+":", v)
+		buffer.WriteString(k)
+		buffer.WriteString(": ")
+		buffer.WriteString(v)
+		buffer.WriteString("\r\n")
 	}
+	buffer.WriteString("\r\n")
+	return buffer.String()
+}
+
+func (parser *httpRequestParser) print() {
+	fmt.Print(parser.marshal())
 }
 
 func newHTTPRequestParser() *httpRequestParser {

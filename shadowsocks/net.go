@@ -8,6 +8,7 @@ import (
 	"net"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -426,6 +427,74 @@ func ListenSocks5(address string, c *Config) (lis net.Listener, err error) {
 	return
 }
 
+func httpProxyAcceptor(conn net.Conn, lis *listener) (c net.Conn) {
+	defer func() {
+		if conn != nil && c == nil {
+			conn.Close()
+		}
+	}()
+	parser := newHTTPRequestParser()
+	for {
+		buf := make([]byte, 512)
+		n, err := conn.Read(buf)
+		if err != nil {
+			return
+		}
+		it := 0
+		ok := false
+		for ; it < n && !ok && err == nil; it++ {
+			ok, err = parser.read(buf[it])
+		}
+		if err != nil {
+			return
+		}
+		if ok {
+			break
+		}
+	}
+	if parser.requestMethod == "CONNECT" {
+		host, port, err := net.SplitHostPort(parser.requestURI)
+		if err != nil {
+			return
+		}
+		_, err = io.WriteString(conn, "HTTP/1.1 200 Connection Established\r\n\r\n")
+		if err != nil {
+			return
+		}
+		c = NewDstConn(conn, &DstAddr{host: host, port: port})
+		return
+	}
+	parser.requestURI = strings.Replace(parser.requestURI, "http://", "", 1)
+	it := strings.Index(parser.requestURI, "/")
+	if it < 0 {
+		return
+	}
+	parser.requestURI = parser.requestURI[it:]
+	dst, ok := parser.headers["Host"]
+	if !ok {
+		return
+	}
+	it = strings.Index(dst, ":")
+	if it < 0 {
+		dst = dst + ":80"
+	}
+	host, port, err := net.SplitHostPort(dst)
+	if err != nil {
+		return
+	}
+	if v, ok := parser.headers["Proxy-Connection"]; ok {
+		parser.headers["Connection"] = v
+		delete(parser.headers, "Proxy-Connection")
+	}
+	rconn, ok := conn.(*RemainConn)
+	if !ok {
+		rconn = &RemainConn{Conn: conn}
+	}
+	rconn.remain = append(rconn.remain, []byte(parser.marshal())...)
+	c = NewDstConn(rconn, &DstAddr{host: host, port: port})
+	return
+}
+
 func socksAcceptor(conn net.Conn, lis *listener) (c net.Conn) {
 	defer func() {
 		if conn != nil && c == nil {
@@ -433,8 +502,12 @@ func socksAcceptor(conn net.Conn, lis *listener) (c net.Conn) {
 		}
 	}()
 	buf := make([]byte, 512)
-	_, err := io.ReadFull(conn, buf[:2])
-	if err != nil || buf[0] != 5 {
+	n, err := io.ReadAtLeast(conn, buf, 2)
+	if err != nil {
+		return
+	}
+	if buf[0] != 5 {
+		c = httpProxyAcceptor(&RemainConn{remain: buf[:n], Conn: conn}, lis)
 		return
 	}
 	nmethods := buf[1]
@@ -445,7 +518,7 @@ func socksAcceptor(conn net.Conn, lis *listener) (c net.Conn) {
 	if err != nil {
 		return
 	}
-	n, err := conn.Read(buf)
+	n, err = conn.Read(buf)
 	if err != nil {
 		return
 	}
