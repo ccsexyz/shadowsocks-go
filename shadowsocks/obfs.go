@@ -23,12 +23,16 @@ type DelayConn struct {
 	timer   *time.Timer
 }
 
-func (c *DelayConn) Close() (err error) {
-	c.lock.Lock()
-	defer c.lock.Unlock()
+func (c *DelayConn) close() (err error) {
 	c.destroy = true
 	err = c.Conn.Close()
 	return
+}
+
+func (c *DelayConn) Close() (err error) {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+	return c.close()
 }
 
 func (c *DelayConn) Write(b []byte) (n int, err error) {
@@ -39,7 +43,7 @@ func (c *DelayConn) Write(b []byte) (n int, err error) {
 		err = fmt.Errorf("use of closed connection")
 		return
 	}
-	if l+c.off >= buffersize {
+	if l+c.off >= 1024 {
 		if c.off != 0 {
 			buf := make([]byte, l+c.off)
 			copy(buf, c.wbuf[:c.off])
@@ -74,7 +78,7 @@ func (c *DelayConn) Write(b []byte) (n int, err error) {
 			_, err := c.Conn.Write(c.wbuf[:c.off])
 			c.off = 0
 			if err != nil {
-				c.Close()
+				c.close()
 			}
 		})
 	}
