@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	delayConnTick = time.Millisecond * 10
+	delayConnTick = time.Millisecond
 )
 
 type DelayConn struct {
@@ -35,6 +35,25 @@ func (c *DelayConn) Close() (err error) {
 	return c.close()
 }
 
+func (c *DelayConn) writeLater() {
+	if c.timer != nil {
+		return
+	}
+	c.timer = time.AfterFunc(delayConnTick*time.Duration(rand.Intn(9)+1), func() {
+		c.lock.Lock()
+		defer c.lock.Unlock()
+		c.timer = nil
+		if c.off == 0 || c.destroy {
+			return
+		}
+		_, err := c.Conn.Write(c.wbuf[:c.off])
+		c.off = 0
+		if err != nil {
+			c.close()
+		}
+	})
+}
+
 func (c *DelayConn) Write(b []byte) (n int, err error) {
 	l := len(b)
 	c.lock.Lock()
@@ -50,37 +69,16 @@ func (c *DelayConn) Write(b []byte) (n int, err error) {
 			copy(buf[c.off:], b)
 			b = buf
 		}
-		_, err = c.Conn.Write(b)
-		c.off = 0
-		if err == nil {
-			n = l
-		}
-		if c.timer != nil {
-			c.timer.Stop()
-			c.timer = nil
-		}
-		return
+		c.off = rand.Intn(224) + 32
+		copy(c.wbuf[:], b[len(b)-c.off:])
+		_, err = c.Conn.Write(b[:len(b)-c.off])
+	} else {
+		copy(c.wbuf[c.off:], b)
+		c.off += l
 	}
-	copy(c.wbuf[c.off:], b)
-	c.off += l
-	n = l
-	if c.timer == nil {
-		c.timer = time.AfterFunc(delayConnTick, func() {
-			c.lock.Lock()
-			defer c.lock.Unlock()
-			c.timer = nil
-			if c.off == 0 {
-				return
-			}
-			if c.destroy {
-				return
-			}
-			_, err := c.Conn.Write(c.wbuf[:c.off])
-			c.off = 0
-			if err != nil {
-				c.close()
-			}
-		})
+	if err == nil {
+		n = l
+		c.writeLater()
 	}
 	return
 }
