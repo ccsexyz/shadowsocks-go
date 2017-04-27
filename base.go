@@ -32,13 +32,14 @@ func RunTCPServer(address string, c *ss.Config,
 }
 
 type udpSession struct {
-	conn   net.Conn
-	live   bool
-	mutex  sync.Mutex
-	from   *net.UDPAddr
-	die    chan bool
-	clean  func()
-	header []byte
+	conn    net.Conn
+	live    bool
+	destroy bool
+	mutex   sync.Mutex
+	from    *net.UDPAddr
+	die     chan bool
+	clean   func()
+	header  []byte
 }
 
 func (sess *udpSession) Close() {
@@ -46,11 +47,11 @@ func (sess *udpSession) Close() {
 	case <-sess.die:
 	default:
 		sess.mutex.Lock()
-		if !sess.live {
+		if sess.destroy {
 			sess.mutex.Unlock()
 			return
 		}
-		sess.live = false
+		sess.destroy = true
 		sess.mutex.Unlock()
 		sess.conn.Close()
 		close(sess.die)
@@ -94,7 +95,7 @@ func RunUDPServer(conn net.PacketConn, c *ss.Config, check func([]byte) bool, ha
 	sessions := make(map[string]*udpSession)
 	var lock sync.Mutex
 
-	go sessionsCleaner(sessions, &lock, die, time.Minute)
+	go sessionsCleaner(sessions, &lock, die, time.Second*15)
 	go func() {
 		if c.Die != nil {
 			<-c.Die

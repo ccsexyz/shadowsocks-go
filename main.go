@@ -3,15 +3,21 @@ package main
 import (
 	"flag"
 	"log"
+	// "net/http"
 	"os"
 	"sync"
 	"time"
+
+	// _ "net/http/pprof"
 
 	ss "github.com/ccsexyz/shadowsocks-go/shadowsocks"
 	"github.com/fsnotify/fsnotify"
 )
 
 func main() {
+	// go func() {
+	// 	log.Println(http.ListenAndServe(":6060", nil))
+	// }()
 	log.SetFlags(log.Lshortfile | log.Ldate | log.Ltime | log.Lmicroseconds)
 	if len(os.Args) != 2 || os.Args[1] == "-h" {
 		// fmt.Println("usage: myss configfile")
