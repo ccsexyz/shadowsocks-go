@@ -235,21 +235,24 @@ func ListenMultiSS(service string, c *Config) (lis net.Listener, err error) {
 		for {
 			i++
 			select {
+			case <-ticker.C:
 			case <-lis.die:
 				return
-			case <-ticker.C:
 			}
+			backends := make([]*Config, len(lis.c.Backends))
 			lis.IvMapLock.Lock()
-			sort.SliceStable(lis.c.Backends, func(i, j int) bool {
-				ihits := *(lis.c.Backends[i].Any.(*int))
-				jhits := *(lis.c.Backends[j].Any.(*int))
+			copy(backends, lis.c.Backends)
+			sort.SliceStable(backends, func(i, j int) bool {
+				ihits := *(backends[i].Any.(*int))
+				jhits := *(backends[j].Any.(*int))
 				return jhits < ihits
 			})
 			if i%60 == 0 {
-				for _, v := range lis.c.Backends {
+				for _, v := range backends {
 					*(v.Any.(*int)) /= 2
 				}
 			}
+			lis.c.Backends = backends
 			lis.IvMapLock.Unlock()
 		}
 	}(lis.(*listener))
@@ -748,26 +751,54 @@ func DialUDPOverTCP(target, service string, c *Config) (conn Conn, err error) {
 }
 
 type MuxDialer struct {
-	lock sync.Mutex
-	muxs []*mux.Mux
-	lazy int
+	lock    sync.Mutex
+	muxs    []*muxDialerInfo
+	timeout time.Duration
+}
+
+type muxDialerInfo struct {
+	mux *mux.Mux
+	ts  time.Time
 }
 
 func (md *MuxDialer) Dial(service string, c *Config) (conn Conn, err error) {
 	md.lock.Lock()
-	muxs := make([]*mux.Mux, len(md.muxs))
+	muxs := make([]*muxDialerInfo, len(md.muxs))
 	copy(muxs, md.muxs)
-	lazy := md.lazy <= 0
+	timeout := md.timeout * 1414 / 1000
 	md.lock.Unlock()
 	n := len(muxs)
 	die := make(chan bool)
 	errch := make(chan error, n)
+	expirech := make(chan error, n)
 	connch := make(chan Conn)
+	timeoutch := time.After(timeout)
+	start := time.Now()
 	for _, v := range muxs {
-		go func(v *mux.Mux) {
-			mconn, err := v.Dial()
+		go func(v *muxDialerInfo) {
+			if start.After(v.ts) {
+				if v.mux.NumOfConns() == 0 {
+					v.mux.Close()
+					md.lock.Lock()
+					nmuxs := len(md.muxs)
+					for i, m := range md.muxs {
+						if m == v {
+							md.muxs[i] = md.muxs[nmuxs-1]
+							md.muxs = md.muxs[:nmuxs-1]
+							break
+						}
+					}
+					md.lock.Unlock()
+				}
+				select {
+				case <-die:
+				case expirech <- fmt.Errorf("connection %v->%v is expired", v.mux.LocalAddr(), v.mux.RemoteAddr()):
+				}
+				return
+			}
+			mconn, err := v.mux.Dial()
 			if err != nil {
-				v.Close()
+				v.mux.Close()
 				md.lock.Lock()
 				nmuxs := len(md.muxs)
 				for i, m := range md.muxs {
@@ -786,66 +817,84 @@ func (md *MuxDialer) Dial(service string, c *Config) (conn Conn, err error) {
 			}
 			select {
 			case connch <- mconn:
-				md.lock.Lock()
-				if lazy {
-					md.lazy = 2 * len(md.muxs)
-				} else {
-					md.lazy--
-				}
-				md.lock.Unlock()
 			case <-die:
 				mconn.Close()
 			}
 		}(v)
 	}
-	if lazy {
-		n++
-		go func() {
-			ssconn, err := DialSSWithRawHeader([]byte{typeMux}, service, c)
+	f := func() {
+		ssconn, err := DialSSWithRawHeader([]byte{typeMux}, service, c)
+		if err == nil {
+			var smux *mux.Mux
+			smux, err = mux.NewMux(ssconn)
 			if err == nil {
-				var smux *mux.Mux
-				smux, err = mux.NewMux(ssconn)
+				var mconn Conn
+				mconn, err = smux.Dial()
 				if err == nil {
-					var mconn *mux.MuxConn
-					mconn, err = smux.Dial()
-					if err == nil {
-						select {
-						case <-die:
-						case connch <- mconn:
-							md.lock.Lock()
-							md.muxs = append(md.muxs, smux)
-							md.lock.Unlock()
-							return
-						}
-						mconn.Close()
+					select {
+					case <-die:
+					case connch <- mconn:
+						md.lock.Lock()
+						md.muxs = append(md.muxs, &muxDialerInfo{mux: smux, ts: time.Now().Add(time.Second * 6)})
+						md.lock.Unlock()
+						return
 					}
-					smux.Close()
+					mconn.Close()
 				}
-				ssconn.Close()
+				smux.Close()
 			}
-			select {
-			case <-die:
-			case errch <- err:
-			}
-		}()
+			ssconn.Close()
+		}
+		select {
+		case <-die:
+		case errch <- err:
+		}
 	}
+	fstarted := false
+	it := 0
 out:
-	for i := 0; i < n; i++ {
+	for {
 		select {
 		case err = <-errch:
+			it++
+			if it >= n {
+				md.lock.Lock()
+				nmuxs := len(md.muxs)
+				md.lock.Unlock()
+				if nmuxs == 0 && !fstarted {
+					n++
+					fstarted = true
+					go f()
+				} else {
+					break out
+				}
+			}
+		case err = <-expirech:
+			if fstarted {
+				n--
+			} else {
+				fstarted = true
+				go f()
+			}
+		case <-timeoutch:
+			if fstarted {
+				continue out
+			}
+			n++
+			fstarted = true
+			go f()
 		case conn = <-connch:
 			err = nil
 			close(die)
+			delay := time.Now().Sub(start)
+			md.lock.Lock()
+			if md.timeout == 0 {
+				md.timeout = delay
+			} else if delay != 0 {
+				md.timeout = (md.timeout*16 + delay) / 17
+			}
+			md.lock.Unlock()
 			break out
-		}
-	}
-	if err != nil || conn == nil {
-		md.lock.Lock()
-		nmuxs := len(md.muxs)
-		md.lazy = 0
-		md.lock.Unlock()
-		if nmuxs == 0 {
-			conn, err = md.Dial(service, c)
 		}
 	}
 	return
