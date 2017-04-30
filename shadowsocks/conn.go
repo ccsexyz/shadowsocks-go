@@ -81,8 +81,6 @@ type SsConn struct {
 	Conn
 	enc  Encrypter
 	dec  Decrypter
-	rbuf []byte
-	wbuf []byte
 	c    *Config
 	xu1s bool
 }
@@ -107,8 +105,6 @@ func NewSsConn(conn Conn, c *Config) *SsConn {
 	return &SsConn{
 		Conn: conn,
 		c:    c,
-		rbuf: make([]byte, buffersize),
-		wbuf: make([]byte, buffersize),
 	}
 }
 
@@ -122,22 +118,19 @@ func (c *SsConn) Xu0s() {
 
 func (c *SsConn) Read(b []byte) (n int, err error) {
 	if c.dec == nil {
-		_, err = io.ReadFull(c.Conn, c.rbuf[:c.c.Ivlen])
+		iv := make([]byte, c.c.Ivlen)
+		_, err = io.ReadFull(c.Conn, iv)
 		if err != nil {
 			return
 		}
-		c.dec, err = NewDecrypter(c.c.Method, c.c.Password, c.rbuf[:c.c.Ivlen])
+		c.dec, err = NewDecrypter(c.c.Method, c.c.Password, iv)
 		if err != nil {
 			return
 		}
 	}
-	rbuf := c.rbuf
-	if len(c.rbuf) > len(b) {
-		rbuf = rbuf[:len(b)]
-	}
-	n, err = c.Conn.Read(rbuf)
+	n, err = c.Conn.Read(b)
 	if n > 0 {
-		c.dec.Decrypt(b[:n], rbuf[:n])
+		c.dec.Decrypt(b[:n], b[:n])
 	}
 	return
 }

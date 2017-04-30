@@ -269,7 +269,7 @@ func ssMultiAcceptHandler(conn Conn, lis *listener) (c Conn) {
 	// timer := time.AfterFunc(time.Second*4, func() {
 	// 	conn.Close()
 	// })
-	buf := C.wbuf
+	buf := make([]byte, buffersize)
 	n, err := conn.Read(buf)
 	// if timer != nil {
 	// 	timer.Stop()
@@ -278,7 +278,8 @@ func ssMultiAcceptHandler(conn Conn, lis *listener) (c Conn) {
 	if err != nil {
 		return
 	}
-	addr, data, dec, chs, err := ParseAddrWithMultipleBackends(buf[:n], C.rbuf, lis.c.Backends)
+	rbuf := make([]byte, buffersize)
+	addr, data, dec, chs, err := ParseAddrWithMultipleBackends(buf[:n], rbuf, lis.c.Backends)
 	if err != nil {
 		return
 	}
@@ -348,8 +349,7 @@ func ssAcceptHandler(conn Conn, lis *listener) (c Conn) {
 	C.Xu1s()
 	conn = C
 	if len(data) != 0 {
-		copy(C.rbuf, data)
-		conn = &RemainConn{Conn: C, remain: C.rbuf[:len(data)]}
+		conn = &RemainConn{Conn: C, remain: data}
 	}
 	conn = NewDstConn(conn, addr)
 	c = conn
