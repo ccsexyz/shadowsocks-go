@@ -17,7 +17,7 @@ func RunTCPRemoteServer(c *ss.Config) {
 
 func tcpRemoteHandler(conn net.Conn, c *ss.Config) {
 	defer conn.Close()
-	C, err := ss.GetConn(conn)
+	C, err := ss.GetSsConn(conn)
 	if err != nil {
 		c.LogD(err)
 		return
@@ -71,6 +71,6 @@ func udpRelayOverTCP(conn net.Conn) {
 		return
 	}
 	defer rconn.Close()
-	conn = ss.NewConn2(conn)
+	conn = ss.NewConn2(ss.GetConn(conn))
 	ss.Pipe(conn, rconn)
 }

@@ -7,7 +7,27 @@ import (
 	"math/rand"
 	"net"
 	"time"
+
+	"github.com/ccsexyz/utils"
 )
+
+type Conn utils.Conn
+
+type conn struct {
+	net.Conn
+}
+
+func Newconn(c net.Conn) *conn {
+	return &conn{Conn: c}
+}
+
+func (c *conn) WriteBuffers(b [][]byte) (n int, err error) {
+	buffers := net.Buffers(b)
+	var n2 int64
+	n2, err = buffers.WriteTo(c)
+	n = int(n2)
+	return
+}
 
 var (
 	xuch  chan net.Conn
@@ -57,8 +77,8 @@ func debugAcceptHandler(conn net.Conn, lis *listener) (c net.Conn) {
 	return
 }
 
-type Conn struct {
-	net.Conn
+type SsConn struct {
+	Conn
 	enc  Encrypter
 	dec  Decrypter
 	rbuf []byte
@@ -67,11 +87,11 @@ type Conn struct {
 	xu1s bool
 }
 
-func (c *Conn) GetConfig() *Config {
+func (c *SsConn) GetConfig() *Config {
 	return c.c
 }
 
-func (c *Conn) Close() error {
+func (c *SsConn) Close() error {
 	if c.xu1s {
 		c.xu1s = false
 		select {
@@ -83,8 +103,8 @@ func (c *Conn) Close() error {
 	return c.Conn.Close()
 }
 
-func NewConn(conn net.Conn, c *Config) *Conn {
-	return &Conn{
+func NewSsConn(conn Conn, c *Config) *SsConn {
+	return &SsConn{
 		Conn: conn,
 		c:    c,
 		rbuf: make([]byte, buffersize),
@@ -92,15 +112,15 @@ func NewConn(conn net.Conn, c *Config) *Conn {
 	}
 }
 
-func (c *Conn) Xu1s() {
+func (c *SsConn) Xu1s() {
 	c.xu1s = true
 }
 
-func (c *Conn) Xu0s() {
+func (c *SsConn) Xu0s() {
 	c.xu1s = false
 }
 
-func (c *Conn) Read(b []byte) (n int, err error) {
+func (c *SsConn) Read(b []byte) (n int, err error) {
 	if c.dec == nil {
 		_, err = io.ReadFull(c.Conn, c.rbuf[:c.c.Ivlen])
 		if err != nil {
@@ -122,27 +142,50 @@ func (c *Conn) Read(b []byte) (n int, err error) {
 	return
 }
 
-func (c *Conn) Write(b []byte) (n int, err error) {
+func (c *SsConn) initEncrypter() (err error) {
+	if c.enc == nil {
+		c.enc, err = NewEncrypter(c.c.Method, c.c.Password)
+	}
+	return
+}
+
+func (c *SsConn) Write(b []byte) (n int, err error) {
+	bufs := make([][]byte, 0, 2)
 	if c.enc == nil {
 		c.enc, err = NewEncrypter(c.c.Method, c.c.Password)
 		if err != nil {
 			return
 		}
-		iv := c.enc.GetIV()
-		copy(c.wbuf, iv)
-		n += len(iv)
+		bufs = append(bufs, c.enc.GetIV())
 	}
-	var r []byte
-	if len(b) > len(c.wbuf[n:]) {
-		r = b[len(c.wbuf[n:]):]
-		b = b[:len(c.wbuf[n:])]
+	buf := make([]byte, len(b))
+	c.enc.Encrypt(buf, b)
+	bufs = append(bufs, buf)
+	_, err = c.Conn.WriteBuffers(bufs)
+	if err == nil {
+		n = len(b)
 	}
-	c.enc.Encrypt(c.wbuf[n:], b)
-	n, err = c.Conn.Write(c.wbuf[:n+len(b)])
-	if err == nil && r != nil {
-		var nbytes int
-		nbytes, err = c.Write(r)
-		n += nbytes
+	return
+}
+
+func (c *SsConn) WriteBuffers(b [][]byte) (n int, err error) {
+	bufs := make([][]byte, 0, len(b)+1)
+	if c.enc == nil {
+		c.enc, err = NewEncrypter(c.c.Method, c.c.Password)
+		if err != nil {
+			return
+		}
+		bufs = append(bufs, c.enc.GetIV())
+	}
+	for it := 0; it < len(b); it++ {
+		buf := make([]byte, len(b[it]))
+		c.enc.Encrypt(buf, b[it])
+		bufs = append(bufs, buf)
+		n += len(b[it])
+	}
+	_, err = c.Conn.WriteBuffers(bufs)
+	if err != nil {
+		n = 0
 	}
 	return
 }
@@ -168,8 +211,8 @@ func xuroutine() {
 				b = rand.Intn(16) + 1
 				a += b
 			}
-			if _, ok := c.(*Conn); ok {
-				c.(*Conn).c.Log("you have xu ", a, "seconds")
+			if _, ok := c.(*SsConn); ok {
+				c.(*SsConn).c.Log("xu ", a, "seconds")
 			}
 			mn[s] = a
 			mc[s] = c
@@ -181,8 +224,8 @@ func xuroutine() {
 					c, ok := mc[k]
 					if ok {
 						delete(mc, k)
-						if _, ok := c.(*Conn); ok {
-							c.(*Conn).xu1s = false
+						if _, ok := c.(*SsConn); ok {
+							c.(*SsConn).xu1s = false
 						}
 						c.Close()
 					}
@@ -196,11 +239,11 @@ func xuroutine() {
 
 // FIXME
 type Conn2 struct {
-	net.Conn
+	Conn
 }
 
 // FIXME
-func NewConn2(conn net.Conn) net.Conn {
+func NewConn2(conn Conn) Conn {
 	return &Conn2{
 		Conn: conn,
 	}
@@ -230,20 +273,34 @@ func (c *Conn2) Write(b []byte) (n int, err error) {
 		err = fmt.Errorf("cannot write %d bytes", n)
 		return
 	}
-	var buf [2048]byte
+	buf := make([]byte, 2)
 	binary.BigEndian.PutUint16(buf[:], uint16(n))
-	copy(buf[2:], b)
-	_, err = c.Conn.Write(buf[:n+2])
+	_, err = c.Conn.WriteBuffers([][]byte{buf, b})
+	if err != nil {
+		n = 0
+	}
+	return
+}
+
+func (c *Conn2) WriteBuffers(b [][]byte) (n int, err error) {
+	for _, v := range b {
+		var nbytes int
+		nbytes, err = c.Write(v)
+		if err != nil {
+			return
+		}
+		n += nbytes
+	}
 	return
 }
 
 type DstConn struct {
-	net.Conn
+	Conn
 	dst Addr
 }
 
 func NewDstConn(conn net.Conn, dst Addr) *DstConn {
-	return &DstConn{Conn: conn, dst: dst}
+	return &DstConn{Conn: GetConn(conn), dst: dst}
 }
 
 func (c *DstConn) GetDst() string {
@@ -251,7 +308,7 @@ func (c *DstConn) GetDst() string {
 }
 
 type LimitConn struct {
-	net.Conn
+	Conn
 	Rlimiters []*Limiter
 	Wlimiters []*Limiter
 }
@@ -276,20 +333,30 @@ func (c *LimitConn) Write(b []byte) (n int, err error) {
 	return
 }
 
-func limitAcceptHandler(conn net.Conn, lis *listener) (c net.Conn) {
+func (c *LimitConn) WriteBuffers(b [][]byte) (n int, err error) {
+	n, err = c.Conn.WriteBuffers(b)
+	if err == nil {
+		for _, v := range c.Wlimiters {
+			v.Update(n)
+		}
+	}
+	return
+}
+
+func limitAcceptHandler(conn Conn, lis *listener) (c Conn) {
 	limiters := make([]*Limiter, len(lis.c.limiters))
 	copy(limiters, lis.c.limiters)
 	if lis.c.LimitPerConn != 0 {
 		limiters = append(limiters, NewLimiter(lis.c.LimitPerConn))
 	}
 	c = &LimitConn{
-		Conn:      conn,
+		Conn:      GetConn(conn),
 		Rlimiters: limiters,
 	}
 	return
 }
 
 type MuxConn struct {
-	conn net.Conn
-	net.Conn
+	conn Conn
+	Conn
 }

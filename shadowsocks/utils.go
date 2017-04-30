@@ -385,7 +385,7 @@ func GetInnerConn(conn net.Conn) (c net.Conn, err error) {
 		}
 	}()
 	switch i := conn.(type) {
-	case *Conn:
+	case *SsConn:
 		c = i.Conn
 	case *Conn2:
 		c = i.Conn
@@ -405,14 +405,14 @@ func GetInnerConn(conn net.Conn) (c net.Conn, err error) {
 	return
 }
 
-func GetConn(conn net.Conn) (c *Conn, err error) {
-	c, ok := conn.(*Conn)
+func GetSsConn(conn net.Conn) (c *SsConn, err error) {
+	c, ok := conn.(*SsConn)
 	if !ok {
 		conn, err = GetInnerConn(conn)
 		if err != nil {
 			return
 		}
-		c, err = GetConn(conn)
+		c, err = GetSsConn(conn)
 	}
 	return
 }
@@ -449,6 +449,15 @@ func GetRemainConn(conn net.Conn) (r *RemainConn, err error) {
 			return
 		}
 		r, err = GetRemainConn(conn)
+	}
+	return
+}
+
+func GetConn(conn net.Conn) (c Conn) {
+	var ok bool
+	c, ok = conn.(Conn)
+	if !ok {
+		c = Newconn(conn)
 	}
 	return
 }
@@ -546,4 +555,12 @@ func SliceCopy(b []byte) []byte {
 	c := make([]byte, len(b))
 	copy(c, b)
 	return c
+}
+
+func Dial(network, address string) (Conn, error) {
+	conn, err := net.Dial(network, address)
+	if err != nil {
+		return nil, err
+	}
+	return Newconn(conn), err
 }

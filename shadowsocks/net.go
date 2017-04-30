@@ -16,7 +16,7 @@ import (
 	"github.com/ccsexyz/shadowsocks-go/redir"
 )
 
-type ListenHandler func(net.Conn, *listener) net.Conn
+type ListenHandler func(Conn, *listener) Conn
 
 type Dialer func() (net.Conn, error)
 
@@ -58,11 +58,11 @@ func (lis *listener) acceptor() {
 			conn.Close()
 			continue
 		}
-		go lis.handleNewConn(conn)
+		go lis.handleNewConn(Newconn(conn))
 	}
 }
 
-func (lis *listener) handleNewConn(conn net.Conn) {
+func (lis *listener) handleNewConn(conn Conn) {
 	for _, handler := range lis.handlers {
 		conn = handler(conn, lis)
 		if conn == nil {
@@ -256,8 +256,8 @@ func ListenMultiSS(service string, c *Config) (lis net.Listener, err error) {
 	return
 }
 
-func ssMultiAcceptHandler(conn net.Conn, lis *listener) (c net.Conn) {
-	C := NewConn(conn, nil)
+func ssMultiAcceptHandler(conn Conn, lis *listener) (c Conn) {
+	C := NewSsConn(conn, nil)
 	defer func() {
 		if conn != nil && c == nil {
 			conn.Close()
@@ -305,7 +305,7 @@ func ssMultiAcceptHandler(conn net.Conn, lis *listener) (c net.Conn) {
 	return
 }
 
-func ssAcceptHandler(conn net.Conn, lis *listener) (c net.Conn) {
+func ssAcceptHandler(conn Conn, lis *listener) (c Conn) {
 	defer func() {
 		if conn != nil && c == nil {
 			conn.Close()
@@ -340,7 +340,7 @@ func ssAcceptHandler(conn net.Conn, lis *listener) (c net.Conn) {
 			return
 		}
 	}
-	C := NewConn(conn, lis.c)
+	C := NewSsConn(conn, lis.c)
 	C.dec = dec
 	C.Xu1s()
 	conn = C
@@ -353,7 +353,7 @@ func ssAcceptHandler(conn net.Conn, lis *listener) (c net.Conn) {
 	return
 }
 
-func muxAcceptHandler(conn net.Conn, lis *listener) (c net.Conn) {
+func muxAcceptHandler(conn Conn, lis *listener) (c Conn) {
 	defer func() {
 		if conn != nil {
 			conn.Close()
@@ -374,7 +374,7 @@ func muxAcceptHandler(conn net.Conn, lis *listener) (c net.Conn) {
 	}
 	conn = nil
 	for {
-		muxconn, err := mux.Accept()
+		muxconn, err := mux.AcceptMux()
 		if err != nil {
 			return
 		}
@@ -383,7 +383,7 @@ func muxAcceptHandler(conn net.Conn, lis *listener) (c net.Conn) {
 	return
 }
 
-func (lis *listener) muxConnHandler(conn net.Conn) {
+func (lis *listener) muxConnHandler(conn Conn) {
 	buf := make([]byte, 512)
 	var err error
 	defer func() {
@@ -427,7 +427,7 @@ func ListenSocks5(address string, c *Config) (lis net.Listener, err error) {
 	return
 }
 
-func httpProxyAcceptor(conn net.Conn, lis *listener) (c net.Conn) {
+func httpProxyAcceptor(conn Conn, lis *listener) (c Conn) {
 	defer func() {
 		if conn != nil && c == nil {
 			conn.Close()
@@ -496,7 +496,7 @@ func httpProxyAcceptor(conn net.Conn, lis *listener) (c net.Conn) {
 	return
 }
 
-func socksAcceptor(conn net.Conn, lis *listener) (c net.Conn) {
+func socksAcceptor(conn Conn, lis *listener) (c Conn) {
 	defer func() {
 		if conn != nil && c == nil {
 			conn.Close()
@@ -567,7 +567,7 @@ func ListenRedir(address string, c *Config) (lis net.Listener, err error) {
 	return
 }
 
-func redirAcceptor(conn net.Conn, lis *listener) (c net.Conn) {
+func redirAcceptor(conn Conn, lis *listener) (c Conn) {
 	defer func() {
 		if conn != nil && c == nil {
 			conn.Close()
@@ -627,7 +627,7 @@ func DialMultiSS(target string, configs []*Config) (conn net.Conn, err error) {
 	return
 }
 
-func DialMux(target, service string, c *Config) (conn net.Conn, err error) {
+func DialMux(target, service string, c *Config) (conn Conn, err error) {
 	conn, err = c.muxDialer.Dial(service, c)
 	if err != nil {
 		return
@@ -644,7 +644,7 @@ func DialMux(target, service string, c *Config) (conn net.Conn, err error) {
 	return
 }
 
-func DialSS(target, service string, c *Config) (conn net.Conn, err error) {
+func DialSS(target, service string, c *Config) (conn Conn, err error) {
 	if len(target) > 255 {
 		err = fmt.Errorf("target length is too long")
 		return
@@ -665,11 +665,11 @@ func DialSS(target, service string, c *Config) (conn net.Conn, err error) {
 	return DialSSWithRawHeader(buf[:hdrlen], service, c)
 }
 
-func DialSSWithRawHeader(header []byte, service string, c *Config) (conn net.Conn, err error) {
+func DialSSWithRawHeader(header []byte, service string, c *Config) (conn Conn, err error) {
 	if c.Obfs {
 		conn, err = DialObfs(service, c)
 	} else {
-		conn, err = net.Dial("tcp", service)
+		conn, err = Dial("tcp", service)
 	}
 	if err != nil {
 		return
@@ -688,7 +688,7 @@ func DialSSWithRawHeader(header []byte, service string, c *Config) (conn net.Con
 	if c.Delay {
 		conn = NewDelayConn(conn)
 	}
-	conn = NewConn(conn, c)
+	conn = NewSsConn(conn, c)
 	if c.Nonop {
 		rconn := &RemainConn{
 			Conn:   conn,
@@ -729,7 +729,7 @@ func NewSSDialer(c *Config) func(string) (net.Conn, error) {
 	}
 }
 
-func DialUDPOverTCP(target, service string, c *Config) (conn net.Conn, err error) {
+func DialUDPOverTCP(target, service string, c *Config) (conn Conn, err error) {
 	conn, err = DialSS(Udprelayaddr, service, c)
 	if err != nil {
 		return
@@ -753,7 +753,7 @@ type MuxDialer struct {
 	lazy int
 }
 
-func (md *MuxDialer) Dial(service string, c *Config) (conn net.Conn, err error) {
+func (md *MuxDialer) Dial(service string, c *Config) (conn Conn, err error) {
 	md.lock.Lock()
 	muxs := make([]*mux.Mux, len(md.muxs))
 	copy(muxs, md.muxs)
@@ -762,7 +762,7 @@ func (md *MuxDialer) Dial(service string, c *Config) (conn net.Conn, err error) 
 	n := len(muxs)
 	die := make(chan bool)
 	errch := make(chan error, n)
-	connch := make(chan net.Conn)
+	connch := make(chan Conn)
 	for _, v := range muxs {
 		go func(v *mux.Mux) {
 			mconn, err := v.Dial()
@@ -806,7 +806,7 @@ func (md *MuxDialer) Dial(service string, c *Config) (conn net.Conn, err error) 
 				var smux *mux.Mux
 				smux, err = mux.NewMux(ssconn)
 				if err == nil {
-					var mconn net.Conn
+					var mconn *mux.MuxConn
 					mconn, err = smux.Dial()
 					if err == nil {
 						select {

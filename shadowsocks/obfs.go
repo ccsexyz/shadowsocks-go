@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
-	"net"
 	"strconv"
 	"sync"
 	"time"
@@ -15,7 +14,7 @@ const (
 )
 
 type DelayConn struct {
-	net.Conn
+	Conn
 	wbuf    [buffersize]byte
 	off     int
 	lock    sync.Mutex
@@ -63,15 +62,14 @@ func (c *DelayConn) Write(b []byte) (n int, err error) {
 		return
 	}
 	if l+c.off >= 1024 {
+		bufs := make([][]byte, 0, 2)
 		if c.off != 0 {
-			buf := make([]byte, l+c.off)
-			copy(buf, c.wbuf[:c.off])
-			copy(buf[c.off:], b)
-			b = buf
+			bufs = append(bufs, c.wbuf[:c.off])
 		}
-		c.off = rand.Intn(224) + 32
+		c.off = rand.Intn(len(b))
 		copy(c.wbuf[:], b[len(b)-c.off:])
-		_, err = c.Conn.Write(b[:len(b)-c.off])
+		bufs = append(bufs, b[:len(b)-c.off])
+		_, err = c.Conn.WriteBuffers(bufs)
 	} else {
 		copy(c.wbuf[c.off:], b)
 		c.off += l
@@ -83,13 +81,51 @@ func (c *DelayConn) Write(b []byte) (n int, err error) {
 	return
 }
 
-func NewDelayConn(conn net.Conn) *DelayConn {
+func (c *DelayConn) WriteBuffers(b [][]byte) (n int, err error) {
+	var l int
+	for _, v := range b {
+		l += len(v)
+	}
+	if l == 0 {
+		return
+	}
+	c.lock.Lock()
+	defer c.lock.Unlock()
+	if c.destroy {
+		err = fmt.Errorf("use of closed connection")
+		return
+	}
+	if l+c.off >= 1024 {
+		bufs := make([][]byte, 0, len(b)+1)
+		if c.off != 0 {
+			bufs = append(bufs, c.wbuf[:c.off])
+		}
+		last := b[len(b)-1]
+		c.off = rand.Intn(len(last))
+		copy(c.wbuf[:], last[len(last)-c.off:])
+		b[len(b)-1] = last[:len(last)-c.off]
+		bufs = append(bufs, b...)
+		_, err = c.Conn.WriteBuffers(bufs)
+	} else {
+		for _, v := range b {
+			length := copy(c.wbuf[c.off:], v)
+			c.off += length
+		}
+	}
+	if err == nil {
+		n = l
+		c.writeLater()
+	}
+	return
+}
+
+func NewDelayConn(conn Conn) *DelayConn {
 	return &DelayConn{
 		Conn: conn,
 	}
 }
 
-func delayAcceptHandler(conn net.Conn, _ *listener) net.Conn {
+func delayAcceptHandler(conn Conn, _ *listener) Conn {
 	return NewDelayConn(conn)
 }
 
@@ -113,7 +149,7 @@ func (c *ObfsConn) Close() (err error) {
 		return
 	}
 	c.destroy = true
-	if c.pool == nil {
+	if c.pool == nil || c.req || c.resp {
 		err = c.RemainConn.Close()
 		return
 	}
@@ -178,6 +214,29 @@ func (c *ObfsConn) Write(b []byte) (n int, err error) {
 		return
 	}
 	n, err = c.write(b)
+	return
+}
+
+func (c *ObfsConn) WriteBuffers(b [][]byte) (n int, err error) {
+	c.wlock.Lock()
+	defer c.wlock.Unlock()
+	if c.destroy {
+		err = fmt.Errorf("write to closed connection")
+		return
+	}
+	for _, v := range b {
+		n += len(v)
+	}
+	wbuf := make([]byte, 16)
+	length := copy(wbuf, []byte(fmt.Sprintf("%x\r\n", n)))
+	bufs := make([][]byte, len(b)+2)
+	bufs[0] = wbuf[:length]
+	copy(bufs[1:], b)
+	bufs[1+len(b)] = []byte{'\r', '\n'}
+	_, err = c.RemainConn.WriteBuffers(bufs)
+	if err != nil {
+		n = 0
+	}
 	return
 }
 
@@ -320,17 +379,17 @@ func (c *ObfsConn) Read(b []byte) (n int, err error) {
 	return
 }
 
-func NewObfsConn(conn net.Conn) *ObfsConn {
+func NewObfsConn(conn Conn) *ObfsConn {
 	return &ObfsConn{RemainConn: RemainConn{Conn: conn}}
 }
 
 type RemainConn struct {
-	net.Conn
+	Conn
 	remain  []byte
 	wremain []byte
 }
 
-func DecayRemainConn(conn net.Conn) net.Conn {
+func DecayRemainConn(conn Conn) Conn {
 	rconn, ok := conn.(*RemainConn)
 	if ok && len(rconn.remain) == 0 && len(rconn.wremain) == 0 {
 		return rconn.Conn
@@ -353,7 +412,7 @@ func (c *RemainConn) Read(b []byte) (n int, err error) {
 
 func (c *RemainConn) Write(b []byte) (n int, err error) {
 	if len(c.wremain) != 0 {
-		_, err = c.Conn.Write(append(c.wremain, b...))
+		_, err = c.Conn.WriteBuffers([][]byte{c.wremain, b})
 		if err != nil {
 			return
 		}
@@ -364,7 +423,25 @@ func (c *RemainConn) Write(b []byte) (n int, err error) {
 	return c.Conn.Write(b)
 }
 
-func DialObfs(target string, c *Config) (conn net.Conn, err error) {
+func (c *RemainConn) WriteBuffers(b [][]byte) (n int, err error) {
+	if len(c.wremain) != 0 {
+		bufs := make([][]byte, 0, len(b)+1)
+		bufs = append(bufs, c.wremain)
+		bufs = append(bufs, b...)
+		_, err = c.Conn.WriteBuffers(bufs)
+		if err != nil {
+			return
+		}
+		c.wremain = nil
+		for _, v := range b {
+			n += len(v)
+		}
+		return
+	}
+	return c.Conn.WriteBuffers(b)
+}
+
+func DialObfs(target string, c *Config) (conn Conn, err error) {
 	defer func() {
 		if err != nil && conn != nil {
 			conn.Close()
@@ -374,7 +451,7 @@ func DialObfs(target string, c *Config) (conn net.Conn, err error) {
 		conn, err = c.pool.GetNonblock()
 	}
 	if err != nil || c.pool == nil {
-		conn, err = net.Dial("tcp", target)
+		conn, err = Dial("tcp", target)
 	}
 	if err != nil {
 		return
@@ -399,7 +476,7 @@ func DialObfs(target string, c *Config) (conn net.Conn, err error) {
 	return
 }
 
-func obfsAcceptHandler(conn net.Conn, lis *listener) (c net.Conn) {
+func obfsAcceptHandler(conn Conn, lis *listener) (c Conn) {
 	defer func() {
 		if conn != nil && c == nil {
 			conn.Close()
@@ -411,7 +488,7 @@ func obfsAcceptHandler(conn net.Conn, lis *listener) (c net.Conn) {
 		return
 	}
 	if n > 4 && string(buf[:4]) != "POST" {
-		c = &RemainConn{Conn: conn, remain: buf[:n]}
+		c = &RemainConn{Conn: GetConn(conn), remain: buf[:n]}
 		return
 	}
 	resp := buildHTTPResponse("")

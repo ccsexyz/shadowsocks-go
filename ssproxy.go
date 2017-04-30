@@ -12,7 +12,7 @@ func RunSSProxyServer(c *ss.Config) {
 
 func ssproxyHandler(conn net.Conn, c *ss.Config) {
 	defer conn.Close()
-	C, err := ss.GetConn(conn)
+	C, err := ss.GetSsConn(conn)
 	if err != nil {
 		return
 	}

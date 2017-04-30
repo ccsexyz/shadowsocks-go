@@ -2,13 +2,12 @@ package shadowsocks
 
 import (
 	"fmt"
-	"net"
 	"sync"
 )
 
 type ConnPool struct {
 	cond    sync.Cond
-	conns   []net.Conn
+	conns   []Conn
 	destroy bool
 }
 
@@ -16,7 +15,7 @@ func NewConnPool() *ConnPool {
 	return &ConnPool{cond: sync.Cond{L: &sync.Mutex{}}}
 }
 
-func (p *ConnPool) GetNonblock() (conn net.Conn, err error) {
+func (p *ConnPool) GetNonblock() (conn Conn, err error) {
 	p.cond.L.Lock()
 	defer p.cond.L.Unlock()
 	if p.destroy {
@@ -39,7 +38,7 @@ func (p *ConnPool) GetNonblock() (conn net.Conn, err error) {
 	return
 }
 
-func (p *ConnPool) Get() (conn net.Conn, err error) {
+func (p *ConnPool) Get() (conn Conn, err error) {
 	p.cond.L.Lock()
 	if p.destroy {
 		err = fmt.Errorf("cannot get connection from a closed pool")
@@ -72,7 +71,7 @@ func (p *ConnPool) Get() (conn net.Conn, err error) {
 	return
 }
 
-func (p *ConnPool) Put(conn net.Conn) (err error) {
+func (p *ConnPool) Put(conn Conn) (err error) {
 	p.cond.L.Lock()
 	defer p.cond.L.Unlock()
 	if p.destroy {
