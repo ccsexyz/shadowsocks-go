@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net"
 	"sync"
+
+	"github.com/ccsexyz/utils"
 )
 
 // Note: UDPConn will drop any packet that is longer than 1500
@@ -34,8 +36,8 @@ func (c *UDPConn) ReadFrom(b []byte) (n int, addr net.Addr, err error) {
 		if n <= c.c.Ivlen || n >= 1500 {
 			continue
 		}
-		var dec Decrypter
-		dec, err = NewDecrypter(c.c.Method, c.c.Password, b2[:c.c.Ivlen])
+		var dec utils.Decrypter
+		dec, err = utils.NewDecrypter(c.c.Method, c.c.Password, b2[:c.c.Ivlen])
 		if err != nil {
 			return
 		}
@@ -52,7 +54,7 @@ func (c *UDPConn) Read(b []byte) (n int, err error) {
 }
 
 func (c *UDPConn) WriteTo(b []byte, addr net.Addr) (n int, err error) {
-	enc, err := NewEncrypter(c.c.Method, c.c.Password)
+	enc, err := utils.NewEncrypter(c.c.Method, c.c.Password)
 	if err != nil {
 		return
 	}
@@ -106,7 +108,7 @@ func (c *MultiUDPConn) ReadFrom(b []byte) (n int, addr net.Addr, err error) {
 		c.lock.Lock()
 		v, ok := c.sessions[addr.String()]
 		c.lock.Unlock()
-		var dec Decrypter
+		var dec utils.Decrypter
 		if !ok {
 			buf := make([]byte, n)
 			sock, data, _, chs, err := ParseAddrWithMultipleBackends(b2[:n], buf, c.c.Backends)
@@ -121,7 +123,7 @@ func (c *MultiUDPConn) ReadFrom(b []byte) (n int, addr net.Addr, err error) {
 			n = copy(b, []byte(sock))
 			n += copy(b[n:], data)
 		} else {
-			dec, err = NewDecrypter(v.Method, v.Password, b2[:v.Ivlen])
+			dec, err = utils.NewDecrypter(v.Method, v.Password, b2[:v.Ivlen])
 			if err != nil {
 				return
 			}
@@ -144,7 +146,7 @@ func (c *MultiUDPConn) WriteTo(b []byte, addr net.Addr) (n int, err error) {
 	if !ok {
 		return
 	}
-	enc, err := NewEncrypter(v.Method, v.Password)
+	enc, err := utils.NewEncrypter(v.Method, v.Password)
 	if err != nil {
 		return
 	}

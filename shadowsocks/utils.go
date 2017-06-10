@@ -10,16 +10,19 @@ import (
 	"sync"
 	"time"
 	"unsafe"
+
+	"github.com/ccsexyz/utils"
 )
 
 const (
 	defaultMethod       = "aes-256-cfb"
-	defaultPassword     = "you should have a password"
+	defaultPassword     = "secret"
 	buffersize          = 4096
 	typeIPv4            = 1
 	typeDm              = 3
 	typeIPv6            = 4
 	typeMux             = 0x6D
+	typeSmux            = 0x7D
 	typeTs              = 0x74 // timestamp
 	typeNop             = 0x90 // [nop 1 byte] [noplen 1 byte (< 128)] [zero data, noplen byte]
 	lenIPv4             = 4
@@ -30,9 +33,14 @@ const (
 	muxaddr             = "mux:12580"
 	muxhost             = "mux"
 	muxport             = 12580
+	smuxaddr            = "smux:10086"
+	smuxhost            = "smux"
+	smuxport            = 10086
 	Udprelayaddr        = "UdpRelayOverTcp:65535"
 	defaultObfsHost     = "www.bing.com"
 )
+
+type cb func()
 
 var (
 	errInvalidHeader = fmt.Errorf("invalid header")
@@ -72,7 +80,7 @@ func GetHeader(host string, port int) (buf []byte, err error) {
 	return
 }
 
-func ParseAddrWithMultipleBackends(b, buf []byte, configs []*Config) (addr SockAddr, data []byte, dec Decrypter, chs *Config, err error) {
+func ParseAddrWithMultipleBackends(b, buf []byte, configs []*Config) (addr SockAddr, data []byte, dec utils.Decrypter, chs *Config, err error) {
 	defer func() {
 		if chs != nil {
 			err = nil
@@ -95,7 +103,7 @@ outer:
 		if n < config.Ivlen+4 {
 			continue
 		}
-		dec, err = NewDecrypter(config.Method, config.Password, b[:config.Ivlen])
+		dec, err = utils.NewDecrypter(config.Method, config.Password, b[:config.Ivlen])
 		if err != nil {
 			continue
 		}
@@ -145,7 +153,7 @@ outer:
 		switch atyp {
 		default:
 			continue
-		case typeMux:
+		case typeMux, typeSmux:
 			if !nop {
 				continue
 			}
@@ -205,7 +213,7 @@ outer:
 	}
 	if len(candidates) != 0 {
 		chs = candidates[0]
-		dec, err = NewDecrypter(chs.Method, chs.Password, b[:chs.Ivlen])
+		dec, err = utils.NewDecrypter(chs.Method, chs.Password, b[:chs.Ivlen])
 		if err != nil {
 			return
 		}
@@ -268,7 +276,7 @@ l:
 	default:
 		err = fmt.Errorf("unsupported atyp value %v", atyp)
 		return
-	case typeMux:
+	case typeMux, typeSmux:
 		if !nop {
 			return
 		}
@@ -490,6 +498,8 @@ func (b SockAddr) Host() string {
 		return net.IP(b[1 : lenIPv6+1]).String()
 	case typeMux:
 		return muxhost
+	case typeSmux:
+		return smuxhost
 	}
 }
 
@@ -504,6 +514,8 @@ func (b SockAddr) Port() string {
 		off = lenIPv6 + 1
 	case typeMux:
 		return strconv.Itoa(muxport)
+	case typeSmux:
+		return strconv.Itoa(smuxport)
 	}
 	return strconv.Itoa(int(binary.BigEndian.Uint16(b[off:])))
 }
@@ -563,4 +575,8 @@ func Dial(network, address string) (Conn, error) {
 		return nil, err
 	}
 	return Newconn(conn), err
+}
+
+type Dialer interface {
+	Dial(string, *Config) (Conn, error)
 }

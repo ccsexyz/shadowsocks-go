@@ -79,8 +79,8 @@ func debugAcceptHandler(conn net.Conn, lis *listener) (c net.Conn) {
 
 type SsConn struct {
 	Conn
-	enc  Encrypter
-	dec  Decrypter
+	enc  utils.Encrypter
+	dec  utils.Decrypter
 	c    *Config
 	xu1s bool
 }
@@ -123,7 +123,7 @@ func (c *SsConn) Read(b []byte) (n int, err error) {
 		if err != nil {
 			return
 		}
-		c.dec, err = NewDecrypter(c.c.Method, c.c.Password, iv)
+		c.dec, err = utils.NewDecrypter(c.c.Method, c.c.Password, iv)
 		if err != nil {
 			return
 		}
@@ -137,7 +137,7 @@ func (c *SsConn) Read(b []byte) (n int, err error) {
 
 func (c *SsConn) initEncrypter() (err error) {
 	if c.enc == nil {
-		c.enc, err = NewEncrypter(c.c.Method, c.c.Password)
+		c.enc, err = utils.NewEncrypter(c.c.Method, c.c.Password)
 	}
 	return
 }
@@ -145,7 +145,7 @@ func (c *SsConn) initEncrypter() (err error) {
 func (c *SsConn) Write(b []byte) (n int, err error) {
 	bufs := make([][]byte, 0, 2)
 	if c.enc == nil {
-		c.enc, err = NewEncrypter(c.c.Method, c.c.Password)
+		c.enc, err = utils.NewEncrypter(c.c.Method, c.c.Password)
 		if err != nil {
 			return
 		}
@@ -164,7 +164,7 @@ func (c *SsConn) Write(b []byte) (n int, err error) {
 func (c *SsConn) WriteBuffers(b [][]byte) (n int, err error) {
 	bufs := make([][]byte, 0, len(b)+1)
 	if c.enc == nil {
-		c.enc, err = NewEncrypter(c.c.Method, c.c.Password)
+		c.enc, err = utils.NewEncrypter(c.c.Method, c.c.Password)
 		if err != nil {
 			return
 		}

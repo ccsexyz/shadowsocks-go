@@ -6,6 +6,8 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
+
+	"github.com/ccsexyz/utils"
 )
 
 type Config struct {
@@ -28,6 +30,8 @@ type Config struct {
 	ObfsAlive    bool      `json:"obfsalive"`
 	Delay        bool      `json:"delay"`
 	Mux          bool      `json:"mux"`
+	Smux         bool      `json:"smux"`
+	SmuxConn     int       `json:"smuxconn"`
 	Limit        int       `json:"limit"`
 	LimitPerConn int       `json:"limitperconn"`
 	limiters     []*Limiter
@@ -40,6 +44,8 @@ type Config struct {
 	Die          chan bool
 	pool         *ConnPool
 	muxDialer    *MuxDialer
+	smuxDialer   *SmuxDialer
+	closers      []cb
 }
 
 func ReadConfig(path string) (configs []*Config, err error) {
@@ -73,6 +79,9 @@ func (c *Config) Close() error {
 	if c.pool != nil {
 		c.pool.Close()
 	}
+	for _, f := range c.closers {
+		f()
+	}
 	return nil
 }
 
@@ -98,7 +107,7 @@ func CheckBasicConfig(c *Config) {
 		c.Method = defaultMethod
 	}
 	if c.Ivlen == 0 {
-		c.Ivlen = GetIvLen(c.Method)
+		c.Ivlen = utils.GetIvLen(c.Method)
 	}
 	if len(c.Nickname) == 0 {
 		if len(c.Localaddr) == 0 {
@@ -117,8 +126,15 @@ func CheckBasicConfig(c *Config) {
 	if c.Limit != 0 {
 		c.limiters = append(c.limiters, NewLimiter(c.Limit))
 	}
-	if c.Mux {
-		c.muxDialer = &MuxDialer{}
+	if c.Type == "local" {
+		if c.Mux {
+			c.muxDialer = &MuxDialer{}
+		} else if c.Smux {
+			c.smuxDialer = &SmuxDialer{}
+			if c.SmuxConn <= 0 {
+				c.SmuxConn = 16
+			}
+		}
 	}
 }
 
@@ -145,7 +161,13 @@ func CheckConfig(c *Config) {
 		c.UDPOverTCP = false
 	}
 	for _, v := range c.Backends {
-		v.Type = c.Type
+		if len(v.Type) == 0 {
+			if len(v.Remoteaddr) != 0 {
+				v.Type = "local"
+			} else {
+				v.Type = "server"
+			}
+		}
 		if c.Obfs {
 			v.Obfs = true
 			if c.ObfsAlive {
@@ -171,7 +193,7 @@ func CheckConfig(c *Config) {
 			}
 		}
 		if v.Obfs && v.ObfsAlive {
-			if v.Type != "server" && v.Type != "multiserver" {
+			if v.Type != "server" {
 				v.pool = NewConnPool()
 			} else {
 				v.pool = c.pool
@@ -203,4 +225,8 @@ func (c *Config) Log(v ...interface{}) {
 	if c.Logger != nil {
 		c.Logger.Output(2, fmt.Sprintln(v...))
 	}
+}
+
+func (c *Config) CallOnClosed(f cb) {
+	c.closers = append(c.closers, f)
 }

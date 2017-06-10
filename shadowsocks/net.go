@@ -14,11 +14,11 @@ import (
 
 	"github.com/ccsexyz/mux"
 	"github.com/ccsexyz/shadowsocks-go/redir"
+	"github.com/ccsexyz/utils"
+	"github.com/xtaci/smux"
 )
 
 type ListenHandler func(Conn, *listener) Conn
-
-type Dialer func() (net.Conn, error)
 
 type listener struct {
 	net.TCPListener
@@ -145,6 +145,9 @@ func ListenSS(service string, c *Config) (lis net.Listener, err error) {
 	if c.Mux {
 		handlers = append(handlers, muxAcceptHandler)
 	}
+	if c.Smux {
+		handlers = append(handlers, smuxAcceptHandler)
+	}
 	li := NewListener(l, c, handlers)
 	if c.Obfs && c.pool != nil {
 		go func() {
@@ -200,6 +203,9 @@ func ListenMultiSS(service string, c *Config) (lis net.Listener, err error) {
 	handlers = append(handlers, ssMultiAcceptHandler)
 	if c.Mux {
 		handlers = append(handlers, muxAcceptHandler)
+	}
+	if c.Smux {
+		handlers = append(handlers, smuxAcceptHandler)
 	}
 	li := NewListener(l, c, handlers)
 	if c.Obfs && c.pool != nil {
@@ -320,7 +326,7 @@ func ssAcceptHandler(conn Conn, lis *listener) (c Conn) {
 	if err != nil || n < lis.c.Ivlen+2 {
 		return
 	}
-	dec, err := NewDecrypter(lis.c.Method, lis.c.Password, buf[:lis.c.Ivlen])
+	dec, err := utils.NewDecrypter(lis.c.Method, lis.c.Password, buf[:lis.c.Ivlen])
 	if err != nil {
 		return
 	}
@@ -376,12 +382,44 @@ func muxAcceptHandler(conn Conn, lis *listener) (c Conn) {
 		return
 	}
 	conn = nil
+	defer mux.Close()
 	for {
 		muxconn, err := mux.AcceptMux()
 		if err != nil {
 			return
 		}
 		go lis.muxConnHandler(&MuxConn{conn: dstcon.Conn, Conn: muxconn})
+	}
+	return
+}
+
+func smuxAcceptHandler(conn Conn, lis *listener) (c Conn) {
+	defer func() {
+		if conn != nil {
+			conn.Close()
+		}
+	}()
+	dstcon, err := GetDstConn(conn)
+	if err != nil {
+		return
+	}
+	if dstcon.GetDst() != smuxaddr {
+		c = conn
+		conn = nil
+		return
+	}
+	session, err := newSmuxServer(conn)
+	if err != nil {
+		return
+	}
+	conn = nil
+	defer session.Close()
+	for {
+		smuxconn, err := session.AcceptStream()
+		if err != nil {
+			return
+		}
+		go lis.muxConnHandler(&MuxConn{conn: dstcon.Conn, Conn: smuxconn})
 	}
 	return
 }
@@ -647,6 +685,23 @@ func DialMux(target, service string, c *Config) (conn Conn, err error) {
 	return
 }
 
+func DialSmux(target, service string, c *Config) (conn Conn, err error) {
+	conn, err = c.smuxDialer.Dial(service, c)
+	if err != nil {
+		return
+	}
+	buf := make([]byte, len(target)+1)
+	buf[0] = byte(len(target))
+	copy(buf[1:], []byte(target))
+	buf = buf[:1+int(buf[0])]
+	_, err = conn.Write(buf)
+	if err != nil {
+		conn.Close()
+		conn = nil
+	}
+	return
+}
+
 func DialSS(target, service string, c *Config) (conn Conn, err error) {
 	if len(target) > 255 {
 		err = fmt.Errorf("target length is too long")
@@ -654,6 +709,8 @@ func DialSS(target, service string, c *Config) (conn Conn, err error) {
 	}
 	if c.Mux {
 		return DialMux(target, service, c)
+	} else if c.Smux {
+		return DialSmux(target, service, c)
 	}
 	host, port, err := net.SplitHostPort(target)
 	if err != nil {
@@ -897,5 +954,197 @@ out:
 			break out
 		}
 	}
+	return
+}
+
+type smuxSession struct {
+	*smux.Session
+}
+
+func (session *smuxSession) OpenStream() (stream *smuxStream, err error) {
+	s, err := session.Session.OpenStream()
+	if err != nil {
+		return
+	}
+	stream = &smuxStream{Stream: s}
+	return
+}
+
+func (session *smuxSession) AcceptStream() (stream *smuxStream, err error) {
+	s, err := session.Session.AcceptStream()
+	if err != nil {
+		return
+	}
+	stream = &smuxStream{Stream: s}
+	return
+}
+
+func newSmuxServer(conn net.Conn) (session *smuxSession, err error) {
+	sess, err := smux.Server(conn, nil)
+	if err != nil {
+		return
+	}
+	session = &smuxSession{Session: sess}
+	return
+}
+
+type smuxStream struct {
+	*smux.Stream
+}
+
+func (s *smuxStream) WriteBuffers(bufs [][]byte) (n int, err error) {
+	for _, buf := range bufs {
+		var nbytes int
+		nbytes, err = s.Write(buf)
+		n += nbytes
+		if err != nil {
+			return
+		}
+	}
+	return
+}
+
+type smuxStreamAddr struct {
+	net.Addr
+	id uint32
+}
+
+func (addr *smuxStreamAddr) String() string {
+	return fmt.Sprintf("%s:%v", addr.Addr.String(), addr.id)
+}
+
+func (s *smuxStream) LocalAddr() net.Addr {
+	return &smuxStreamAddr{
+		Addr: s.Stream.LocalAddr(),
+		id:   s.ID(),
+	}
+}
+
+func (s *smuxStream) RemoteAddr() net.Addr {
+	return &smuxStreamAddr{
+		Addr: s.Stream.RemoteAddr(),
+		id:   s.ID(),
+	}
+}
+
+type smuxClient struct {
+	sess   *smux.Session
+	rc     int
+	lock   sync.Mutex
+	expire bool
+	maxrc  int
+}
+
+func (s *smuxClient) MarkExpired() {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+	s.expire = true
+}
+
+func (s *smuxClient) Close() {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+	s.expire = true
+	if s.sess != nil {
+		s.sess.Close()
+	}
+}
+
+func (s *smuxClient) Done() {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+	s.rc--
+	if s.expire && s.rc <= 0 && s.sess != nil {
+		s.sess.Close()
+	}
+}
+
+func (s *smuxClient) Dial() (conn *smuxClientStream, err error) {
+	s.lock.Lock()
+	isfull := s.rc >= s.maxrc
+	if !isfull {
+		s.rc++
+	}
+	s.lock.Unlock()
+	if isfull {
+		err = fmt.Errorf("should create a new connection")
+		return
+	}
+	stream, err := s.sess.OpenStream()
+	if err != nil {
+		s.lock.Lock()
+		s.rc--
+		s.lock.Unlock()
+		return
+	}
+	conn = &smuxClientStream{
+		smuxStream: &smuxStream{Stream: stream},
+		c:          s,
+	}
+	return
+}
+
+type smuxClientStream struct {
+	*smuxStream
+	c    *smuxClient
+	lock sync.Mutex
+}
+
+func (s *smuxClientStream) Close() (err error) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+	err = s.smuxStream.Close()
+	if s.c != nil {
+		s.c.Done()
+		s.c = nil
+	}
+	return
+}
+
+func newSmuxClient(conn net.Conn, maxrc int) (c *smuxClient, err error) {
+	var sess *smux.Session
+	sess, err = smux.Client(conn, nil)
+	if err != nil {
+		return
+	}
+	c = &smuxClient{}
+	c.maxrc = maxrc
+	c.sess = sess
+	return
+}
+
+type SmuxDialer struct {
+	client *smuxClient
+	lock   sync.Mutex
+}
+
+func (sd *SmuxDialer) Dial(service string, c *Config) (conn Conn, err error) {
+	sd.lock.Lock()
+	client := sd.client
+	sd.lock.Unlock()
+	if client != nil {
+		conn, err = client.Dial()
+		if err == nil {
+			return
+		}
+		defer client.Done()
+	}
+	ssconn, err := DialSSWithRawHeader([]byte{typeSmux}, service, c)
+	if err != nil {
+		return
+	}
+	cli, err := newSmuxClient(ssconn, c.SmuxConn)
+	if err != nil {
+		return
+	}
+	sd.lock.Lock()
+	if client == sd.client {
+		sd.client = cli
+	} else {
+		defer cli.Close()
+	}
+	client = sd.client
+	sd.lock.Unlock()
+	conn, err = client.Dial()
 	return
 }
