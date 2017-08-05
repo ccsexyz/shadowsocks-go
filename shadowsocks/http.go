@@ -27,6 +27,25 @@ const (
 	parsingHeadersValue      = 4
 )
 
+var (
+	httpMethods = map[string]bool{
+		"GET":     true,
+		"POST":    true,
+		"OPTIONS": true,
+		"HEAD":    true,
+		"PUT":     true,
+		"DELETE":  true,
+		"CONNECT": true,
+		"TRACE":   true,
+		"PATCH":   true,
+	}
+)
+
+func IsValidHTTPMethod(m string) bool {
+	_, ok := httpMethods[m]
+	return ok
+}
+
 func newHTTPReplyParser() *httpRelyParser {
 	var parser httpRelyParser
 	parser.headers = make(map[string]string)
@@ -49,7 +68,7 @@ func (parser *httpRelyParser) read(b byte) (ok bool, err error) {
 	ok = false
 	if (b > 126 || b < 32) && b != '\r' && b != '\n' {
 		err = fmt.Errorf("Invalid character %u", b)
-		return 
+		return
 	}
 	switch parser.parserStatus {
 	case parsingHTTPVersionString:
@@ -57,6 +76,10 @@ func (parser *httpRelyParser) read(b byte) (ok bool, err error) {
 			parser.parserStatus = parsingStatusCode
 		} else {
 			parser.httpVersionString += string(b)
+			if len(parser.httpVersionString) == 4 && parser.httpVersionString != "HTTP" {
+				err = fmt.Errorf("Invalid http response")
+				return
+			}
 		}
 		break
 	case parsingStatusCode:
@@ -136,7 +159,7 @@ func (parser *httpRelyParser) marshal() string {
 }
 
 func (parser *httpRelyParser) getFirstLine() string {
-	var buffer bytes.Buffer 
+	var buffer bytes.Buffer
 	buffer.WriteString(parser.httpVersionString)
 	buffer.WriteString(" ")
 	buffer.WriteString(strconv.Itoa(parser.replyStatusCode))
@@ -255,14 +278,22 @@ func (parser *httpRequestParser) read(b byte) (ok bool, err error) {
 	ok = false
 	if (b > 126 || b < 32) && b != '\r' && b != '\n' {
 		err = fmt.Errorf("Invalid character %u", b)
-		return 
+		return
 	}
 	parser.originHeader = append(parser.originHeader, b)
 	switch parser.parserStatus {
 	case parsingMethod:
 		if b == ' ' {
+			if !IsValidHTTPMethod(parser.requestMethod) {
+				err = fmt.Errorf("Invalid method")
+				return
+			}
 			parser.parserStatus = parsingURI
 		} else {
+			if len(parser.requestMethod) > 8 {
+				err = fmt.Errorf("Method is too long")
+				return
+			}
 			parser.requestMethod += string(b)
 		}
 		break
@@ -337,7 +368,7 @@ func (parser *httpRequestParser) marshal() string {
 }
 
 func (parser *httpRequestParser) getFirstLine() string {
-	var buffer bytes.Buffer 
+	var buffer bytes.Buffer
 	buffer.WriteString(parser.requestMethod)
 	buffer.WriteString(" ")
 	buffer.WriteString(parser.requestURI)
