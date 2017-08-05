@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	// "net/http"
 	// _ "net/http/pprof"
 
 	ss "github.com/ccsexyz/shadowsocks-go/shadowsocks"
@@ -15,7 +16,7 @@ import (
 
 func main() {
 	// go func() {
-	// log.Println(http.ListenAndServe(":6060", nil))
+	// 	log.Println(http.ListenAndServe(":6060", nil))
 	// }()
 	log.SetFlags(log.Lshortfile | log.Ldate | log.Ltime | log.Lmicroseconds)
 	if len(os.Args) != 2 || os.Args[1] == "-h" {

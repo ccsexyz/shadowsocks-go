@@ -411,8 +411,6 @@ func GetInnerConn(conn net.Conn) (c net.Conn, err error) {
 		c = i.Conn
 	case *MuxConn:
 		c = i.conn
-	case *BufIOConn:
-		c = i.Conn
 	}
 	return
 }
@@ -590,7 +588,6 @@ func Dial(network, address string) (Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	conn = NewBufIOConn(conn)
 	return Newsconn(conn), err
 }
 

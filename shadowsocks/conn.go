@@ -14,33 +14,25 @@ import (
 
 type Conn utils.Conn
 
-type BufIOConn struct {
+type sconn struct {
 	net.Conn
 	r *bufio.Reader
 }
 
-func NewBufIOConn(c net.Conn) *BufIOConn {
-	return &BufIOConn{Conn: c, r: bufio.NewReader(c)}
-}
-
-func (c *BufIOConn) Read(b []byte) (n int, err error) {
-	return c.r.Read(b)
-}
-
-type sconn struct {
-	net.Conn
-}
-
 func Newsconn(c net.Conn) *sconn {
-	return &sconn{Conn: c}
+	return &sconn{Conn: c, r: bufio.NewReader(c)}
 }
 
 func (c *sconn) WriteBuffers(b [][]byte) (n int, err error) {
 	buffers := net.Buffers(b)
 	var n2 int64
-	n2, err = buffers.WriteTo(c)
+	n2, err = buffers.WriteTo(c.Conn)
 	n = int(n2)
 	return
+}
+
+func (c *sconn) Read(b []byte) (n int, err error) {
+	return c.r.Read(b)
 }
 
 var (
