@@ -34,7 +34,7 @@ type Config struct {
 	SmuxConn     int       `json:"smuxconn"`
 	Limit        int       `json:"limit"`
 	LimitPerConn int       `json:"limitperconn"`
-	LogHTTP 	 bool 	   `json:"loghttp"`
+	LogHTTP      bool      `json:"loghttp"`
 	limiters     []*Limiter
 	Vlogger      *log.Logger
 	Dlogger      *log.Logger
@@ -135,7 +135,7 @@ func CheckBasicConfig(c *Config) {
 			if c.SmuxConn <= 0 {
 				c.SmuxConn = 16
 			}
-			c.CallOnClosed(func(){
+			c.CallOnClosed(func() {
 				if c != nil && c.smuxDialer != nil && c.smuxDialer.client != nil {
 					c.smuxDialer.client.MarkExpired()
 				}
@@ -189,6 +189,9 @@ func CheckConfig(c *Config) {
 		}
 		if c.Delay {
 			v.Delay = true
+		}
+		if c.LogHTTP {
+			v.LogHTTP = true
 		}
 		if c.LogFile == v.LogFile {
 			v.logfile = c.logfile

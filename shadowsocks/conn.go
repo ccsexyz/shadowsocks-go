@@ -1,6 +1,7 @@
 package shadowsocks
 
 import (
+	"bufio"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -12,6 +13,19 @@ import (
 )
 
 type Conn utils.Conn
+
+type BufIOConn struct {
+	net.Conn
+	r *bufio.Reader
+}
+
+func NewBufIOConn(c net.Conn) *BufIOConn {
+	return &BufIOConn{Conn: c, r: bufio.NewReader(c)}
+}
+
+func (c *BufIOConn) Read(b []byte) (n int, err error) {
+	return c.r.Read(b)
+}
 
 type sconn struct {
 	net.Conn
@@ -355,18 +369,18 @@ type MuxConn struct {
 }
 
 type HttpLogConn struct {
-	net.Conn 
+	net.Conn
 	pr *httpRequestParser
 	pw *httpRelyParser
-	c *Config
+	c  *Config
 }
 
 func NewHttpLogConn(conn net.Conn, c *Config) *HttpLogConn {
 	return &HttpLogConn{
 		Conn: conn,
-		pr: newHTTPRequestParser(),
-		pw: newHTTPReplyParser(),
-		c: c,
+		pr:   newHTTPRequestParser(),
+		pw:   newHTTPReplyParser(),
+		c:    c,
 	}
 }
 
@@ -378,11 +392,11 @@ func (conn *HttpLogConn) Read(b []byte) (n int, err error) {
 			conn.c.Log(conn.LocalAddr(), "->", conn.RemoteAddr(), conn.pr.marshal())
 		}
 		if ok || e != nil {
-			conn.pr = nil 
+			conn.pr = nil
 			break
 		}
 	}
-	return 
+	return
 }
 
 func (conn *HttpLogConn) Write(b []byte) (n int, err error) {
@@ -392,7 +406,7 @@ func (conn *HttpLogConn) Write(b []byte) (n int, err error) {
 			conn.c.Log(conn.LocalAddr(), "->", conn.RemoteAddr(), conn.pw.marshal())
 		}
 		if ok || e != nil {
-			conn.pw = nil 
+			conn.pw = nil
 			break
 		}
 	}

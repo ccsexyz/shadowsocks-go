@@ -54,6 +54,7 @@ func (lis *listener) acceptor() {
 			lis.errch <- err
 			return
 		}
+		conn = NewBufIOConn(conn)
 		if len(lis.handlers) == 0 {
 			conn.Close()
 			continue
