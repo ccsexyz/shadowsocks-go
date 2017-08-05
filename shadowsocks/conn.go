@@ -13,15 +13,15 @@ import (
 
 type Conn utils.Conn
 
-type conn struct {
+type sconn struct {
 	net.Conn
 }
 
-func Newconn(c net.Conn) *conn {
-	return &conn{Conn: c}
+func Newsconn(c net.Conn) *sconn {
+	return &sconn{Conn: c}
 }
 
-func (c *conn) WriteBuffers(b [][]byte) (n int, err error) {
+func (c *sconn) WriteBuffers(b [][]byte) (n int, err error) {
 	buffers := net.Buffers(b)
 	var n2 int64
 	n2, err = buffers.WriteTo(c)
@@ -352,4 +352,49 @@ func limitAcceptHandler(conn Conn, lis *listener) (c Conn) {
 type MuxConn struct {
 	conn Conn
 	Conn
+}
+
+type HttpLogConn struct {
+	net.Conn 
+	pr *httpRequestParser
+	pw *httpRelyParser
+	c *Config
+}
+
+func NewHttpLogConn(conn net.Conn, c *Config) *HttpLogConn {
+	return &HttpLogConn{
+		Conn: conn,
+		pr: newHTTPRequestParser(),
+		pw: newHTTPReplyParser(),
+		c: c,
+	}
+}
+
+func (conn *HttpLogConn) Read(b []byte) (n int, err error) {
+	n, err = conn.Conn.Read(b)
+	for it := 0; it < n && conn.pr != nil; it++ {
+		ok, e := conn.pr.read(b[it])
+		if ok {
+			conn.c.Log(conn.LocalAddr(), "->", conn.RemoteAddr(), conn.pr.marshal())
+		}
+		if ok || e != nil {
+			conn.pr = nil 
+			break
+		}
+	}
+	return 
+}
+
+func (conn *HttpLogConn) Write(b []byte) (n int, err error) {
+	for it, n := 0, len(b); it < n && conn.pw != nil; it++ {
+		ok, e := conn.pw.read(b[it])
+		if ok {
+			conn.c.Log(conn.LocalAddr(), "->", conn.RemoteAddr(), conn.pw.marshal())
+		}
+		if ok || e != nil {
+			conn.pw = nil 
+			break
+		}
+	}
+	return conn.Conn.Write(b)
 }

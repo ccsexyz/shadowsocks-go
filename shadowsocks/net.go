@@ -58,7 +58,7 @@ func (lis *listener) acceptor() {
 			conn.Close()
 			continue
 		}
-		go lis.handleNewConn(Newconn(conn))
+		go lis.handleNewConn(Newsconn(conn))
 	}
 }
 
@@ -287,6 +287,7 @@ func ssMultiAcceptHandler(conn Conn, lis *listener) (c Conn) {
 	rbuf := make([]byte, buffersize)
 	addr, data, dec, chs, err := ParseAddrWithMultipleBackends(buf[:n], rbuf, lis.c.Backends)
 	if err != nil {
+		lis.c.Log("recv a unexpected header from", conn.RemoteAddr().String())
 		return
 	}
 	if chs.Ivlen != 0 {
@@ -334,7 +335,7 @@ func ssAcceptHandler(conn Conn, lis *listener) (c Conn) {
 	dec.Decrypt(dbuf, buf[lis.c.Ivlen:n])
 	addr, data, err := ParseAddr(dbuf[:n-lis.c.Ivlen])
 	if err != nil {
-		lis.c.Log("recv a unexpected header from %s.", conn.RemoteAddr().String())
+		lis.c.Log("recv a unexpected header from", conn.RemoteAddr().String())
 		return
 	}
 	if lis.c.Ivlen != 0 {
@@ -346,7 +347,7 @@ func ssAcceptHandler(conn Conn, lis *listener) (c Conn) {
 		}
 		lis.IvMapLock.Unlock()
 		if ok {
-			lis.c.Log("receive duplicate iv from %s, this means that you maight be attacked!", conn.RemoteAddr().String())
+			lis.c.Log("receive duplicate iv from", conn.RemoteAddr().String(), ", this means that you maight be attacked!")
 			return
 		}
 	}
@@ -614,8 +615,14 @@ func redirAcceptor(conn Conn, lis *listener) (c Conn) {
 			conn.Close()
 		}
 	}()
-	target, err := redir.GetOrigDst(conn)
+	tconn, err := GetTCPConn(conn)
+	if err != nil {
+		lis.c.Log(err)
+		return
+	}
+	target, err := redir.GetOrigDst(tconn)
 	if err != nil || len(target) == 0 {
+		lis.c.Log(err)
 		return
 	}
 	host, port, err := net.SplitHostPort(target)
@@ -1127,7 +1134,7 @@ func (sd *SmuxDialer) Dial(service string, c *Config) (conn Conn, err error) {
 		if err == nil {
 			return
 		}
-		defer client.Done()
+		defer client.MarkExpired()
 	}
 	ssconn, err := DialSSWithRawHeader([]byte{typeSmux}, service, c)
 	if err != nil {

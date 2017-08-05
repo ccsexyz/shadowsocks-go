@@ -389,10 +389,12 @@ func (l *Limiter) GetTotalBytes() int64 {
 func GetInnerConn(conn net.Conn) (c net.Conn, err error) {
 	defer func() {
 		if c == nil {
-			err = fmt.Errorf("unexpected conn")
+			err = fmt.Errorf("unexpected conn with type %T", conn)
 		}
 	}()
 	switch i := conn.(type) {
+	case *sconn:
+		c = i.Conn
 	case *SsConn:
 		c = i.Conn
 	case *Conn2:
@@ -411,6 +413,18 @@ func GetInnerConn(conn net.Conn) (c net.Conn, err error) {
 		c = i.conn
 	}
 	return
+}
+
+func GetTCPConn(conn net.Conn) (c *net.TCPConn, err error) {
+	c, ok := conn.(*net.TCPConn)
+	if !ok {
+		conn, err = GetInnerConn(conn)
+		if err != nil {
+			return 
+		}
+		c, err = GetTCPConn(conn)
+	}
+	return 
 }
 
 func GetSsConn(conn net.Conn) (c *SsConn, err error) {
@@ -465,7 +479,7 @@ func GetConn(conn net.Conn) (c Conn) {
 	var ok bool
 	c, ok = conn.(Conn)
 	if !ok {
-		c = Newconn(conn)
+		c = Newsconn(conn)
 	}
 	return
 }
@@ -574,7 +588,7 @@ func Dial(network, address string) (Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	return Newconn(conn), err
+	return Newsconn(conn), err
 }
 
 type Dialer interface {

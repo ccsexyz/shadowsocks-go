@@ -23,6 +23,9 @@ func socksProxyHandler(conn net.Conn, c *ss.Config) {
 		return
 	}
 	defer rconn.Close()
+	if c.LogHTTP {
+		conn = ss.NewHttpLogConn(conn, c)
+	}
 	c.Log("proxy", target, "to", rconn.RemoteAddr().String(), "from", conn.RemoteAddr().String())
 	ss.Pipe(conn, rconn)
 }

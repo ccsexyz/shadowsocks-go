@@ -10,6 +10,10 @@ func RunTCPLocalServer(c *ss.Config) {
 	RunTCPServer(c.Localaddr, c, ss.ListenSocks5, tcpLocalHandler)
 }
 
+// type HttpRequestLogConn struct {
+// 	net.Conn
+// }
+
 func tcpLocalHandler(conn net.Conn, c *ss.Config) {
 	defer conn.Close()
 	dst, err := ss.GetDstConn(conn)
@@ -35,6 +39,9 @@ func tcpLocalHandler(conn net.Conn, c *ss.Config) {
 	// 		}
 	// 	}()
 	// }
+	if c.LogHTTP {
+		conn = ss.NewHttpLogConn(conn, c)
+	}
 	ss.Pipe(conn, rconn)
 }
 

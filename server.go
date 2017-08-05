@@ -50,6 +50,9 @@ func tcpRemoteHandler(conn net.Conn, c *ss.Config) {
 	defer rconn.Close()
 	C.Xu0s()
 	c.Log("connect to", target, "from", conn.RemoteAddr().String())
+	if c.LogHTTP {
+		conn = ss.NewHttpLogConn(conn, c)
+	}
 	ss.Pipe(conn, rconn)
 }
 

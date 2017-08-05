@@ -19,5 +19,8 @@ func tcpTunHandler(conn net.Conn, c *ss.Config) {
 	}
 	defer rconn.Close()
 	c.Log("create tunnel from", conn.RemoteAddr().String(), "to", c.Remoteaddr, "through", rconn.RemoteAddr())
+	if c.LogHTTP {
+		conn = ss.NewHttpLogConn(conn, c)
+	}
 	ss.Pipe(conn, rconn)
 }

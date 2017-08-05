@@ -47,6 +47,10 @@ func (parser *httpRelyParser) reset() {
 
 func (parser *httpRelyParser) read(b byte) (ok bool, err error) {
 	ok = false
+	if (b > 126 || b < 32) && b != '\r' && b != '\n' {
+		err = fmt.Errorf("Invalid character %u", b)
+		return 
+	}
 	switch parser.parserStatus {
 	case parsingHTTPVersionString:
 		if b == ' ' {
@@ -128,6 +132,16 @@ func (parser *httpRelyParser) marshal() string {
 		buffer.WriteString("\r\n")
 	}
 	buffer.WriteString("\r\n")
+	return buffer.String()
+}
+
+func (parser *httpRelyParser) getFirstLine() string {
+	var buffer bytes.Buffer 
+	buffer.WriteString(parser.httpVersionString)
+	buffer.WriteString(" ")
+	buffer.WriteString(strconv.Itoa(parser.replyStatusCode))
+	buffer.WriteString(" ")
+	buffer.WriteString(parser.replyStatusString)
 	return buffer.String()
 }
 
@@ -239,6 +253,10 @@ func (parser *httpRequestParser) reset() {
 
 func (parser *httpRequestParser) read(b byte) (ok bool, err error) {
 	ok = false
+	if (b > 126 || b < 32) && b != '\r' && b != '\n' {
+		err = fmt.Errorf("Invalid character %u", b)
+		return 
+	}
 	parser.originHeader = append(parser.originHeader, b)
 	switch parser.parserStatus {
 	case parsingMethod:
@@ -315,6 +333,16 @@ func (parser *httpRequestParser) marshal() string {
 		buffer.WriteString("\r\n")
 	}
 	buffer.WriteString("\r\n")
+	return buffer.String()
+}
+
+func (parser *httpRequestParser) getFirstLine() string {
+	var buffer bytes.Buffer 
+	buffer.WriteString(parser.requestMethod)
+	buffer.WriteString(" ")
+	buffer.WriteString(parser.requestURI)
+	buffer.WriteString(" ")
+	buffer.WriteString(parser.httpVersionString)
 	return buffer.String()
 }
 
