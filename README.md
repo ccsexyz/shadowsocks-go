@@ -7,9 +7,8 @@ Features
 
 * 实现了完整的 shadowsocks 协议(没有支持 AEAD 的计划,因为原始的 ss 协议已经足够安全可靠)  
 * 解决 ss 服务器可能被探测攻击的问题  
-* 解决 ss 流量特征与承载流量高度一致的问题  
 * 与官方的 ss 实现相互兼容,注意在使用客户端连接官方的 ss 服务器时必须设置 nonop 选项为 true  
-* 支持 aes-128/192/256-ctr aes-128/192/256-cfb chacha20 chacha20-ietf rc4-md5 加密  
+* 支持 aes-128/192/256-ctr aes-128/192/256-cfb chacha20 chacha20-ietf rc4-md5 salsa20 加密  
 * 支持代理中继功能,可以从多个 ss 服务端中选取一个响应最快的服务端建立连接  
 * 支持 TCP 隧道(如 ssh over shadowsocks)  
 * 支持 UDP over UDP/TCP  
@@ -18,7 +17,8 @@ Features
 * 支持单个端口设置不同的加密方式及密码  
 * 配置文件更改后自动重载配置文件,并且不影响已经建立的连接  
 * 实现了简单的 HTTP 伪装,伪装的目的是欺骗运营商而不是绕过某些设备,应当谨慎使用    
-* 本地客户端支持 HTTP 代理请求  
+* 本地客户端支持 HTTP 代理请求(不需要配置，默认启用，与 socks5 协议共存)  
+* 支持 HTTP 请求记录，能够记录经过代理程序的 HTTP 请求的请求头(不包含 body 部分)
 
 Build
 -----
@@ -81,14 +81,14 @@ json 对象中的可选配置:
 * logfile: 设置日志文件的输出路径  
 * verbose: 输出详细日志  
 * debug: 输出调试日志  
-* delay: 设置为 true 时在发送数据时将会延迟一段时间(目前是10ms)来尝试将更多的数据合并发送,可以轻微的改变流量特征  
 * mux: 设置是否启用多路复用功能,设置为 true 时可由一个 TCP 连接承载多个 ss 代理连接  
+* loghttp: 设置为 true 时将记录经过代理的 HTTP 请求的请求头部分  
 
 type 字段的可选值:  
 * local: ss 客户端
 * server: ss 服务端  
 * ssproxy: ss 代理,前端是一个 ss 服务器  
-* socksproxy: ss 代理,前端是一个 socks5 服务器  
+* socksproxy: ss 代理,前端是一个 socks5/http 服务器  
 * tcptun: TCP 隧道服务器   
 * udptun: UDP 隧道服务器    
 * redir: TCP redirect 本地客户端,使用方法参考 ss-libev 项目中的 ss-redir  
@@ -128,4 +128,3 @@ ____
 * ~~实现 mux~~  
 * 兼容 shadowsocks simple-obfs  
 * ~~支持 HTTP 代理~~  
-* 兹磁 socks4 代理  
