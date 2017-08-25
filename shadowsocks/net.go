@@ -306,6 +306,12 @@ func ssMultiAcceptHandler(conn Conn, lis *listener) (c Conn) {
 	}
 	C.dec = dec
 	C.c = chs
+	if lis.c.PartEncHTTPS {
+		C.partenc = addr.Port() == "443"
+		if C.partenc {
+			C.decnum = n - chs.Ivlen - len(data)
+		}
+	}
 	conn = C
 	if len(data) != 0 {
 		conn = &RemainConn{Conn: C, remain: data}
@@ -335,7 +341,7 @@ func ssAcceptHandler(conn Conn, lis *listener) (c Conn) {
 	dec.Decrypt(dbuf, buf[lis.c.Ivlen:n])
 	addr, data, err := ParseAddr(dbuf[:n-lis.c.Ivlen])
 	if err != nil {
-		lis.c.Log("recv a unexpected header from", conn.RemoteAddr().String())
+		lis.c.Log("recv a unexpected header from", conn.RemoteAddr().String(), " : ", err)
 		return
 	}
 	if lis.c.Ivlen != 0 {
@@ -352,6 +358,12 @@ func ssAcceptHandler(conn Conn, lis *listener) (c Conn) {
 		}
 	}
 	C := NewSsConn(conn, lis.c)
+	if lis.c.PartEncHTTPS {
+		C.partenc = addr.Port() == "443"
+		if C.partenc {
+			C.decnum = n - lis.c.Ivlen - len(data)
+		}
+	}
 	C.dec = dec
 	C.Xu1s()
 	conn = C
@@ -756,6 +768,9 @@ func DialSSWithRawHeader(header []byte, service string, c *Config) (conn Conn, e
 		conn = NewDelayConn(conn)
 	}
 	conn = NewSsConn(conn, c)
+	if c.PartEncHTTPS && len(header) > 2 && binary.BigEndian.Uint16(header[len(header)-2:]) == 443 {
+		conn.(*SsConn).partenc = true
+	}
 	if c.Nonop {
 		rconn := &RemainConn{
 			Conn:   conn,

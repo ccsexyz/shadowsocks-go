@@ -17,7 +17,7 @@ import (
 const (
 	defaultMethod       = "aes-256-cfb"
 	defaultPassword     = "secret"
-	buffersize          = 4096
+	buffersize          = 40960
 	typeIPv4            = 1
 	typeDm              = 3
 	typeIPv6            = 4
@@ -38,6 +38,7 @@ const (
 	smuxport            = 10086
 	Udprelayaddr        = "UdpRelayOverTcp:65535"
 	defaultObfsHost     = "www.bing.com"
+	partEncNum          = 4096
 )
 
 type cb func()

@@ -85,10 +85,15 @@ func debugAcceptHandler(conn net.Conn, lis *listener) (c net.Conn) {
 
 type SsConn struct {
 	Conn
-	enc  utils.Encrypter
-	dec  utils.Decrypter
-	c    *Config
-	xu1s bool
+	enc     utils.Encrypter
+	dec     utils.Decrypter
+	c       *Config
+	xu1s    bool
+	reqenc  bool
+	encnum  int
+	reqdec  bool
+	decnum  int
+	partenc bool
 }
 
 func (c *SsConn) GetConfig() *Config {
@@ -109,8 +114,10 @@ func (c *SsConn) Close() error {
 
 func NewSsConn(conn Conn, c *Config) *SsConn {
 	return &SsConn{
-		Conn: conn,
-		c:    c,
+		Conn:   conn,
+		c:      c,
+		reqdec: true,
+		reqenc: true,
 	}
 }
 
@@ -123,6 +130,10 @@ func (c *SsConn) Xu0s() {
 }
 
 func (c *SsConn) Read(b []byte) (n int, err error) {
+	if c.partenc && !c.reqdec {
+		c.dec = nil
+		return c.Conn.Read(b)
+	}
 	if c.dec == nil {
 		iv := make([]byte, c.c.Ivlen)
 		_, err = io.ReadFull(c.Conn, iv)
@@ -135,7 +146,19 @@ func (c *SsConn) Read(b []byte) (n int, err error) {
 		}
 	}
 	n, err = c.Conn.Read(b)
-	if n > 0 {
+	if n <= 0 {
+		return
+	}
+	if !c.partenc {
+		c.dec.Decrypt(b[:n], b[:n])
+		return
+	}
+	if c.decnum+n >= partEncNum {
+		m := partEncNum - c.decnum
+		c.dec.Decrypt(b[:m], b[:m])
+		c.reqdec = false
+	} else {
+		c.decnum += n
 		c.dec.Decrypt(b[:n], b[:n])
 	}
 	return
@@ -149,6 +172,10 @@ func (c *SsConn) initEncrypter() (err error) {
 }
 
 func (c *SsConn) Write(b []byte) (n int, err error) {
+	if c.partenc && !c.reqenc {
+		c.enc = nil
+		return c.Conn.Write(b)
+	}
 	bufs := make([][]byte, 0, 2)
 	if c.enc == nil {
 		c.enc, err = utils.NewEncrypter(c.c.Method, c.c.Password)
@@ -157,9 +184,21 @@ func (c *SsConn) Write(b []byte) (n int, err error) {
 		}
 		bufs = append(bufs, c.enc.GetIV())
 	}
-	buf := make([]byte, len(b))
-	c.enc.Encrypt(buf, b)
-	bufs = append(bufs, buf)
+	if !c.partenc {
+		c.enc.Encrypt(b, b)
+	} else {
+		if c.reqenc {
+			if c.encnum+len(b) >= partEncNum {
+				m := partEncNum - c.encnum
+				c.enc.Encrypt(b[:m], b[:m])
+				c.reqenc = false
+			} else {
+				c.encnum += len(b)
+				c.enc.Encrypt(b, b)
+			}
+		}
+	}
+	bufs = append(bufs, b)
 	_, err = c.Conn.WriteBuffers(bufs)
 	if err == nil {
 		n = len(b)
@@ -168,6 +207,10 @@ func (c *SsConn) Write(b []byte) (n int, err error) {
 }
 
 func (c *SsConn) WriteBuffers(b [][]byte) (n int, err error) {
+	if c.partenc && !c.reqenc {
+		c.enc = nil
+		return c.Conn.WriteBuffers(b)
+	}
 	bufs := make([][]byte, 0, len(b)+1)
 	if c.enc == nil {
 		c.enc, err = utils.NewEncrypter(c.c.Method, c.c.Password)
@@ -177,8 +220,21 @@ func (c *SsConn) WriteBuffers(b [][]byte) (n int, err error) {
 		bufs = append(bufs, c.enc.GetIV())
 	}
 	for it := 0; it < len(b); it++ {
-		buf := make([]byte, len(b[it]))
-		c.enc.Encrypt(buf, b[it])
+		buf := b[it]
+		if !c.partenc {
+			c.enc.Encrypt(buf, buf)
+		} else {
+			if c.reqenc {
+				if c.encnum+len(buf) >= partEncNum {
+					m := partEncNum - c.encnum
+					c.enc.Encrypt(buf[:m], buf[:m])
+					c.reqenc = false
+				} else {
+					c.encnum += len(buf)
+					c.enc.Encrypt(buf, buf)
+				}
+			}
+		}
 		bufs = append(bufs, buf)
 		n += len(b[it])
 	}

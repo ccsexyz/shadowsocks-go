@@ -35,6 +35,7 @@ type Config struct {
 	Limit        int       `json:"limit"`
 	LimitPerConn int       `json:"limitperconn"`
 	LogHTTP      bool      `json:"loghttp"`
+	PartEncHTTPS bool      `json:"partenchttps"`
 	limiters     []*Limiter
 	Vlogger      *log.Logger
 	Dlogger      *log.Logger
@@ -192,6 +193,9 @@ func CheckConfig(c *Config) {
 		}
 		if c.LogHTTP {
 			v.LogHTTP = true
+		}
+		if c.PartEncHTTPS {
+			v.PartEncHTTPS = true
 		}
 		if c.LogFile == v.LogFile {
 			v.logfile = c.logfile
