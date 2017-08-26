@@ -285,7 +285,7 @@ func ssMultiAcceptHandler(conn Conn, lis *listener) (c Conn) {
 		return
 	}
 	rbuf := make([]byte, buffersize)
-	addr, data, dec, chs, err := ParseAddrWithMultipleBackends(buf[:n], rbuf, lis.c.Backends)
+	addr, data, dec, chs, partenclen, err := ParseAddrWithMultipleBackendsAndPartEncLen(buf[:n], rbuf, lis.c.Backends)
 	if err != nil {
 		lis.c.Log("recv a unexpected header from", conn.RemoteAddr().String())
 		return
@@ -306,11 +306,10 @@ func ssMultiAcceptHandler(conn Conn, lis *listener) (c Conn) {
 	}
 	C.dec = dec
 	C.c = chs
-	if lis.c.PartEncHTTPS {
-		C.partenc = addr.Port() == "443"
-		if C.partenc {
-			C.decnum = n - chs.Ivlen - len(data)
-		}
+	if partenclen > 0 {
+		C.partenc = true
+		C.partencnum = partenclen
+		C.decnum = n - chs.Ivlen - len(data)
 	}
 	conn = C
 	if len(data) != 0 {
@@ -339,7 +338,7 @@ func ssAcceptHandler(conn Conn, lis *listener) (c Conn) {
 	}
 	dbuf := make([]byte, buffersize)
 	dec.Decrypt(dbuf, buf[lis.c.Ivlen:n])
-	addr, data, err := ParseAddr(dbuf[:n-lis.c.Ivlen])
+	addr, data, partenclen, err := ParseAddrAndPartEncLen(dbuf[:n-lis.c.Ivlen])
 	if err != nil {
 		lis.c.Log("recv a unexpected header from", conn.RemoteAddr().String(), " : ", err)
 		return
@@ -358,11 +357,10 @@ func ssAcceptHandler(conn Conn, lis *listener) (c Conn) {
 		}
 	}
 	C := NewSsConn(conn, lis.c)
-	if lis.c.PartEncHTTPS {
-		C.partenc = addr.Port() == "443"
-		if C.partenc {
-			C.decnum = n - lis.c.Ivlen - len(data)
-		}
+	if partenclen > 0 {
+		C.partenc = true
+		C.partencnum = partenclen
+		C.decnum = n - lis.c.Ivlen - len(data)
 	}
 	C.dec = dec
 	C.Xu1s()
@@ -767,9 +765,12 @@ func DialSSWithRawHeader(header []byte, service string, c *Config) (conn Conn, e
 	if c.Delay {
 		conn = NewDelayConn(conn)
 	}
-	conn = NewSsConn(conn, c)
+	C := NewSsConn(conn, c)
+	conn = C
 	if c.PartEncHTTPS && len(header) > 2 && binary.BigEndian.Uint16(header[len(header)-2:]) == 443 {
-		conn.(*SsConn).partenc = true
+		C.partenc = true
+		C.partencnum = 4096
+		header = append([]byte{typePartEnc, 0x4}, header...)
 	}
 	if c.Nonop {
 		rconn := &RemainConn{

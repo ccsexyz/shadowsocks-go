@@ -85,15 +85,16 @@ func debugAcceptHandler(conn net.Conn, lis *listener) (c net.Conn) {
 
 type SsConn struct {
 	Conn
-	enc     utils.Encrypter
-	dec     utils.Decrypter
-	c       *Config
-	xu1s    bool
-	reqenc  bool
-	encnum  int
-	reqdec  bool
-	decnum  int
-	partenc bool
+	enc        utils.Encrypter
+	dec        utils.Decrypter
+	c          *Config
+	xu1s       bool
+	reqenc     bool
+	encnum     int
+	reqdec     bool
+	decnum     int
+	partenc    bool
+	partencnum int
 }
 
 func (c *SsConn) GetConfig() *Config {
@@ -153,8 +154,8 @@ func (c *SsConn) Read(b []byte) (n int, err error) {
 		c.dec.Decrypt(b[:n], b[:n])
 		return
 	}
-	if c.decnum+n >= partEncNum {
-		m := partEncNum - c.decnum
+	if c.decnum+n >= c.partencnum {
+		m := c.partencnum - c.decnum
 		c.dec.Decrypt(b[:m], b[:m])
 		c.reqdec = false
 	} else {
@@ -188,8 +189,8 @@ func (c *SsConn) Write(b []byte) (n int, err error) {
 		c.enc.Encrypt(b, b)
 	} else {
 		if c.reqenc {
-			if c.encnum+len(b) >= partEncNum {
-				m := partEncNum - c.encnum
+			if c.encnum+len(b) >= c.partencnum {
+				m := c.partencnum - c.encnum
 				c.enc.Encrypt(b[:m], b[:m])
 				c.reqenc = false
 			} else {
@@ -225,8 +226,8 @@ func (c *SsConn) WriteBuffers(b [][]byte) (n int, err error) {
 			c.enc.Encrypt(buf, buf)
 		} else {
 			if c.reqenc {
-				if c.encnum+len(buf) >= partEncNum {
-					m := partEncNum - c.encnum
+				if c.encnum+len(buf) >= c.partencnum {
+					m := c.partencnum - c.encnum
 					c.enc.Encrypt(buf[:m], buf[:m])
 					c.reqenc = false
 				} else {

@@ -25,6 +25,7 @@ const (
 	typeSmux            = 0x7D
 	typeTs              = 0x74 // timestamp
 	typeNop             = 0x90 // [nop 1 byte] [noplen 1 byte (< 128)] [zero data, noplen byte]
+	typePartEnc         = 0x37 // [partEnc 1 byte] [partLen 1 byte] [partLen * 1024 bytes data]
 	lenIPv4             = 4
 	lenIPv6             = 16
 	lenTs               = 8
@@ -38,7 +39,6 @@ const (
 	smuxport            = 10086
 	Udprelayaddr        = "UdpRelayOverTcp:65535"
 	defaultObfsHost     = "www.bing.com"
-	partEncNum          = 4096
 )
 
 type cb func()
@@ -82,6 +82,11 @@ func GetHeader(host string, port int) (buf []byte, err error) {
 }
 
 func ParseAddrWithMultipleBackends(b, buf []byte, configs []*Config) (addr SockAddr, data []byte, dec utils.Decrypter, chs *Config, err error) {
+	addr, data, dec, chs, _, err = ParseAddrWithMultipleBackendsAndPartEncLen(b, buf, configs)
+	return
+}
+
+func ParseAddrWithMultipleBackendsAndPartEncLen(b, buf []byte, configs []*Config) (addr SockAddr, data []byte, dec utils.Decrypter, chs *Config, partEncLen int, err error) {
 	defer func() {
 		if chs != nil {
 			err = nil
@@ -148,6 +153,14 @@ outer:
 				dec.Decrypt(buf, b[off:off+1])
 				atyp = buf[0]
 				off++
+			case typePartEnc:
+				if n < off+2 {
+					continue outer
+				}
+				dec.Decrypt(buf, b[off:off+2])
+				partEncLen = int(buf[0]) * 1024
+				atyp = buf[1]
+				off += 2
 			}
 		}
 		var port int
@@ -219,7 +232,7 @@ outer:
 			return
 		}
 		dec.Decrypt(buf, b[chs.Ivlen:])
-		addr, data, err = ParseAddr(buf)
+		addr, data, partEncLen, err = ParseAddrAndPartEncLen(buf)
 	}
 	return
 }
@@ -233,6 +246,11 @@ func checkTimestamp(ts int64) (ok bool) {
 }
 
 func ParseAddr(b []byte) (addr SockAddr, data []byte, err error) {
+	addr, data, _, err = ParseAddrAndPartEncLen(b)
+	return
+}
+
+func ParseAddrAndPartEncLen(b []byte) (addr SockAddr, data []byte, partEncLen int, err error) {
 	err = errInvalidHeader
 	n := len(b)
 	if n < 1 {
@@ -268,6 +286,14 @@ l:
 				return
 			}
 			b = b[lenTs+1:]
+			n = len(b)
+			atyp = b[0]
+		case typePartEnc:
+			if n < 3 {
+				return
+			}
+			partEncLen = int(b[1]) * 1024
+			b = b[2:]
 			n = len(b)
 			atyp = b[0]
 		}
