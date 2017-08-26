@@ -27,3 +27,5 @@ _testmain.go
 *.json
 
 shadowsocks-go
+shadowsocks_*
+shadowsocks-*

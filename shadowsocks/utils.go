@@ -160,6 +160,7 @@ outer:
 				dec.Decrypt(buf, b[off:off+2])
 				partEncLen = int(buf[0]) * 1024
 				atyp = buf[1]
+				buf[0] = buf[1]
 				off += 2
 			}
 		}
