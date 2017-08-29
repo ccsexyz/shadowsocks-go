@@ -7,41 +7,51 @@ import (
 	"sync"
 	"time"
 
-	// "net/http"
-	// _ "net/http/pprof"
+	"net/http"
+	_ "net/http/pprof"
 
 	ss "github.com/ccsexyz/shadowsocks-go/shadowsocks"
 	"github.com/fsnotify/fsnotify"
 )
 
 func main() {
-	// go func() {
-	// 	log.Println(http.ListenAndServe(":6060", nil))
-	// }()
 	log.SetFlags(log.Lshortfile | log.Ldate | log.Ltime | log.Lmicroseconds)
-	if len(os.Args) != 2 || os.Args[1] == "-h" {
-		// fmt.Println("usage: myss configfile")
-		var c ss.Config
-		var target string
-		flag.StringVar(&c.Type, "type", "", "server type(eg: server, local)")
-		flag.StringVar(&c.Remoteaddr, "s", "", "remote server address")
-		flag.StringVar(&c.Localaddr, "l", "", "local listen address")
-		flag.StringVar(&target, "t", "", "target address(for tcptun and udptun)")
-		flag.StringVar(&c.Method, "m", "aes-256-cfb", "crypt method")
-		flag.StringVar(&c.Password, "p", "you need a password", "password")
-		flag.BoolVar(&c.Nonop, "nonop", false, "enable this to be compatiable with official ss servers(client only)")
-		flag.BoolVar(&c.UDPRelay, "udprelay", false, "relay udp packets")
-		flag.BoolVar(&c.UDPOverTCP, "udpovertcp", false, "relay udp packets through tcp connection")
-		flag.BoolVar(&c.Mux, "mux", false, "use mux to reduce the number of connections")
-		flag.StringVar(&c.Nickname, "name", "", "nickname for logging")
-		flag.StringVar(&c.LogFile, "log", "", "set the path of logfile")
-		flag.BoolVar(&c.Verbose, "verbose", false, "show verbose log")
-		flag.BoolVar(&c.Debug, "debug", false, "show debug log")
-		flag.Parse()
-		if len(os.Args) == 1 {
-			flag.Usage()
-			return
-		}
+
+	var c ss.Config
+	var target string
+	var configfile string
+	var pprofaddr string
+
+	flag.StringVar(&c.Type, "type", "", "server type(eg: server, local)")
+	flag.StringVar(&c.Remoteaddr, "s", "", "remote server address")
+	flag.StringVar(&c.Localaddr, "l", "", "local listen address")
+	flag.StringVar(&target, "t", "", "target address(for tcptun and udptun)")
+	flag.StringVar(&configfile, "c", "", "the configuration file path")
+	flag.StringVar(&c.Method, "m", "aes-256-cfb", "crypt method")
+	flag.StringVar(&c.Password, "p", "you need a password", "password")
+	flag.BoolVar(&c.Nonop, "nonop", false, "enable this to be compatiable with official ss servers(client only)")
+	flag.BoolVar(&c.UDPRelay, "udprelay", false, "relay udp packets")
+	flag.BoolVar(&c.UDPOverTCP, "udpovertcp", false, "relay udp packets through tcp connection")
+	flag.BoolVar(&c.Mux, "mux", false, "use mux to reduce the number of connections")
+	flag.StringVar(&c.Nickname, "name", "", "nickname for logging")
+	flag.StringVar(&c.LogFile, "log", "", "set the path of logfile")
+	flag.BoolVar(&c.Verbose, "verbose", false, "show verbose log")
+	flag.BoolVar(&c.Debug, "debug", false, "show debug log")
+	flag.StringVar(&pprofaddr, "pprof", "", "the pprof listen address")
+	flag.Parse()
+
+	if len(os.Args) == 1 {
+		flag.Usage()
+		return
+	}
+
+	if len(pprofaddr) != 0 {
+		go func() {
+			log.Println(http.ListenAndServe(pprofaddr, nil))
+		}()
+	}
+
+	if len(configfile) == 0 {
 		if len(target) != 0 {
 			c.Backend = &ss.Config{Method: c.Method, Password: c.Password, Remoteaddr: c.Remoteaddr}
 			c.Remoteaddr = target
@@ -50,6 +60,7 @@ func main() {
 		runServer(&c)
 		return
 	}
+
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		log.Fatal(err)
