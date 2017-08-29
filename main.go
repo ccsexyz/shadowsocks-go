@@ -152,9 +152,17 @@ func runServer(c *ss.Config) {
 		}
 		RunMultiTCPRemoteServer(c)
 	case "ssproxy":
+		if c.UDPRelay {
+			c.Log("run udp remote proxy server at", c.Localaddr)
+			go RunUDPRemoteServer(c)
+		}
 		c.Log("run ss proxy at", c.Localaddr, "with method", c.Method)
 		RunSSProxyServer(c)
 	case "socksproxy":
+		if c.UDPRelay {
+			c.Log("run udp local proxy server at", c.Localaddr, "with method", c.Method)
+			go RunUDPLocalServer(c)
+		}
 		c.Log("run socks proxy at", c.Localaddr, "with method", c.Method)
 		RunSocksProxyServer(c)
 	case "tcptun":

@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"math/rand"
 	"net"
 
 	ss "github.com/ccsexyz/shadowsocks-go/shadowsocks"
@@ -40,6 +41,10 @@ func RunUDPRemoteServer(c *ss.Config) {
 	var pconn net.PacketConn
 	pconn = ss.NewUDPConn(conn, c)
 	handle := func(sess *udpSession, b []byte) {
+		if len(c.Backends) != 0 && c.Type == "ssproxy" {
+			sess.conn.Write(b)
+			return
+		}
 		_, data, err := ss.ParseAddr(b)
 		if err != nil {
 			return
@@ -50,6 +55,15 @@ func RunUDPRemoteServer(c *ss.Config) {
 		addr, data, err := ss.ParseAddr(b)
 		if err != nil {
 			err = fmt.Errorf("unexpected header")
+			return
+		}
+		if len(c.Backends) != 0 && c.Type == "ssproxy" {
+			v := c.Backends[rand.Int()%len(c.Backends)]
+			rconn, err = ss.DialUDP(v)
+			if err != nil {
+				return
+			}
+			rconn.Write(b)
 			return
 		}
 		target := net.JoinHostPort(addr.Host(), addr.Port())
@@ -127,7 +141,13 @@ func RunUDPLocalServer(c *ss.Config) {
 				err = fmt.Errorf("unexcepted header")
 				return
 			}
-			rconn, err = ss.DialUDPOverTCP(net.JoinHostPort(addr.Host(), addr.Port()), c.Remoteaddr, c)
+			var v *ss.Config
+			if len(c.Backends) != 0 && c.Type == "socksproxy" {
+				v = c.Backends[rand.Int()%len(c.Backends)]
+			} else {
+				v = c
+			}
+			rconn, err = ss.DialUDPOverTCP(net.JoinHostPort(addr.Host(), addr.Port()), v.Remoteaddr, v)
 			if err != nil {
 				return
 			}
@@ -142,11 +162,16 @@ func RunUDPLocalServer(c *ss.Config) {
 			sess.conn.Write(b[3:])
 		}
 		create = func(b []byte, from net.Addr) (rconn net.Conn, clean func(), header []byte, err error) {
-			rconn, err = net.Dial("udp", c.Remoteaddr)
+			var v *ss.Config
+			if len(c.Backends) != 0 && c.Type == "socksproxy" {
+				v = c.Backends[rand.Int()%len(c.Backends)]
+			} else {
+				v = c
+			}
+			rconn, err = ss.DialUDP(v)
 			if err != nil {
 				return
 			}
-			rconn = ss.NewUDPConn(rconn.(*net.UDPConn), c)
 			rconn.Write(b[3:])
 			header = []byte{0, 0, 0}
 			return

@@ -1170,3 +1170,12 @@ func (sd *SmuxDialer) Dial(service string, c *Config) (conn Conn, err error) {
 	conn, err = client.Dial()
 	return
 }
+
+func DialUDP(c *Config) (conn Conn, err error) {
+	rconn, err := net.Dial("udp", c.Remoteaddr)
+	if err != nil {
+		return
+	}
+	conn = NewUDPConn(rconn.(*net.UDPConn), c)
+	return
+}

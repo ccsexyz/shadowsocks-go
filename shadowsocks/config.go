@@ -161,12 +161,6 @@ func CheckConfig(c *Config) {
 	if c.Backend != nil {
 		c.Backends = append(c.Backends, c.Backend)
 	}
-	if c.UDPRelay && c.Type != "server" && c.Type != "local" && c.Type != "udptun" && c.Type != "multiserver" {
-		c.UDPRelay = false
-	}
-	if c.UDPOverTCP && c.Type != "server" && c.Type != "local" && c.Type != "udptun" && c.Type != "multiserver" {
-		c.UDPOverTCP = false
-	}
 	for _, v := range c.Backends {
 		if len(v.Type) == 0 {
 			if len(v.Remoteaddr) != 0 {

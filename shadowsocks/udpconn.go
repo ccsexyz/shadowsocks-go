@@ -75,6 +75,18 @@ func (c *UDPConn) Write(b []byte) (n int, err error) {
 	return c.WriteTo(b, nil)
 }
 
+func (c *UDPConn) WriteBuffers(bufs [][]byte) (n int, err error) {
+	var nbytes int
+	for _, buf := range bufs {
+		nbytes, err = c.Write(buf)
+		n += nbytes
+		if err != nil {
+			return
+		}
+	}
+	return
+}
+
 type MultiUDPConn struct {
 	*net.UDPConn
 	c        *Config
