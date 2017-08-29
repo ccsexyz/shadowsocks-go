@@ -272,19 +272,16 @@ func ssMultiAcceptHandler(conn Conn, lis *listener) (c Conn) {
 			conn.Close()
 		}
 	}()
-	// timer := time.AfterFunc(time.Second*4, func() {
-	// 	conn.Close()
-	// })
-	buf := make([]byte, buffersize)
+
+	buf := bufPool.Get().([]byte)
+	defer bufPool.Put(buf)
 	n, err := conn.Read(buf)
-	// if timer != nil {
-	// 	timer.Stop()
-	// 	timer = nil
-	// }
 	if err != nil {
 		return
 	}
-	rbuf := make([]byte, buffersize)
+
+	rbuf := bufPool.Get().([]byte)
+	defer bufPool.Put(rbuf)
 	addr, data, dec, chs, partenclen, err := ParseAddrWithMultipleBackendsAndPartEncLen(buf[:n], rbuf, lis.c.Backends)
 	if err != nil {
 		lis.c.Log("recv a unexpected header from", conn.RemoteAddr().String())
@@ -300,7 +297,7 @@ func ssMultiAcceptHandler(conn Conn, lis *listener) (c Conn) {
 		}
 		lis.IvMapLock.Unlock()
 		if ok {
-			lis.c.Log("receive duplicate iv from %s, this means that you maight be attacked!", conn.RemoteAddr().String())
+			lis.c.Log("receive duplicate iv from", conn.RemoteAddr().String(), ", this means that you maight be attacked!")
 			return
 		}
 	}
@@ -327,7 +324,8 @@ func ssAcceptHandler(conn Conn, lis *listener) (c Conn) {
 			conn.Close()
 		}
 	}()
-	buf := make([]byte, buffersize)
+	buf := bufPool.Get().([]byte)
+	defer bufPool.Put(buf)
 	n, err := conn.Read(buf)
 	if err != nil || n < lis.c.Ivlen+2 {
 		return
@@ -336,7 +334,8 @@ func ssAcceptHandler(conn Conn, lis *listener) (c Conn) {
 	if err != nil {
 		return
 	}
-	dbuf := make([]byte, buffersize)
+	dbuf := bufPool.Get().([]byte)
+	defer bufPool.Put(dbuf)
 	dec.Decrypt(dbuf, buf[lis.c.Ivlen:n])
 	addr, data, partenclen, err := ParseAddrAndPartEncLen(dbuf[:n-lis.c.Ivlen])
 	if err != nil {

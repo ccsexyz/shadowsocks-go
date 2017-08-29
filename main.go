@@ -67,7 +67,7 @@ func main() {
 	}
 	defer watcher.Close()
 
-	configs, err := ss.ReadConfig(os.Args[1])
+	configs, err := ss.ReadConfig(configfile)
 	if err != nil {
 		log.Fatal(err)
 	}

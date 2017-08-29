@@ -17,7 +17,7 @@ import (
 const (
 	defaultMethod       = "aes-256-cfb"
 	defaultPassword     = "secret"
-	buffersize          = 40960
+	buffersize          = 4096
 	typeIPv4            = 1
 	typeDm              = 3
 	typeIPv6            = 4
@@ -40,6 +40,18 @@ const (
 	Udprelayaddr        = "UdpRelayOverTcp:65535"
 	defaultObfsHost     = "www.bing.com"
 )
+
+var (
+	bufPool *sync.Pool
+)
+
+func init() {
+	bufPool = &sync.Pool{
+		New: func() interface{} {
+			return make([]byte, buffersize)
+		},
+	}
+}
 
 type cb func()
 
@@ -90,6 +102,8 @@ func ParseAddrWithMultipleBackendsAndPartEncLen(b, buf []byte, configs []*Config
 	defer func() {
 		if chs != nil {
 			err = nil
+			data = DupBuffer(data)
+			addr = SockAddr(DupBuffer([]byte(addr)))
 		} else {
 			if err == nil {
 				err = errInvalidHeader
@@ -338,16 +352,29 @@ l:
 		header = b[:2+dmlen+2]
 		data = b[2+dmlen+2:]
 	}
-	addr = SockAddr(header)
+	addr = SockAddr(DupBuffer(header))
+	data = DupBuffer(data)
 	err = nil
 	return
 }
 
+func DupBuffer(b []byte) (b2 []byte) {
+	l := len(b)
+	if l != 0 {
+		b2 = make([]byte, l)
+		copy(b2, b)
+	}
+	return
+}
+
 func Pipe(c1, c2 net.Conn) {
+	defer c1.Close()
+	defer c2.Close()
 	c1die := make(chan bool)
 	c2die := make(chan bool)
 	f := func(dst, src net.Conn, die chan bool, buf []byte) {
 		defer close(die)
+		defer bufPool.Put(buf)
 		var n int
 		var err error
 		for err == nil {
@@ -357,8 +384,10 @@ func Pipe(c1, c2 net.Conn) {
 			}
 		}
 	}
-	go f(c1, c2, c1die, make([]byte, buffersize))
-	go f(c2, c1, c2die, make([]byte, buffersize))
+	buf1 := bufPool.Get().([]byte)
+	buf2 := bufPool.Get().([]byte)
+	go f(c1, c2, c1die, buf1)
+	go f(c2, c1, c2die, buf2)
 	select {
 	case <-c1die:
 	case <-c2die:

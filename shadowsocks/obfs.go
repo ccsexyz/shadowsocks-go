@@ -164,7 +164,8 @@ func (c *ObfsConn) Close() (err error) {
 	c.rlock.Lock()
 	c.SetReadDeadline(time.Time{})
 	defer c.rlock.Unlock()
-	buf := make([]byte, buffersize)
+	buf := bufPool.Get().([]byte)
+	defer bufPool.Put(buf)
 	for !c.eos {
 		_, err = c.readInLock(buf)
 		if err != nil {
@@ -241,7 +242,8 @@ func (c *ObfsConn) WriteBuffers(b [][]byte) (n int, err error) {
 }
 
 func (c *ObfsConn) readObfsHeader(b []byte) (n int, err error) {
-	buf := make([]byte, buffersize)
+	buf := bufPool.Get().([]byte)
+	defer bufPool.Put(buf)
 	n, err = c.RemainConn.Read(buf)
 	if err != nil {
 		return
@@ -482,18 +484,20 @@ func obfsAcceptHandler(conn Conn, lis *listener) (c Conn) {
 			conn.Close()
 		}
 	}()
-	buf := make([]byte, buffersize)
+	buf := bufPool.Get().([]byte)
+	defer bufPool.Put(buf)
 	n, err := conn.Read(buf)
 	if err != nil || n == 0 {
 		return
 	}
+	remain := DupBuffer(buf[:n])
 	if n > 4 && string(buf[:4]) != "POST" {
-		c = &RemainConn{Conn: GetConn(conn), remain: buf[:n]}
+		c = &RemainConn{Conn: GetConn(conn), remain: remain}
 		return
 	}
 	resp := buildHTTPResponse("")
 	obfsconn := NewObfsConn(conn)
-	obfsconn.remain = buf[:n]
+	obfsconn.remain = remain
 	obfsconn.wremain = []byte(resp)
 	obfsconn.req = true
 	obfsconn.pool = lis.c.pool

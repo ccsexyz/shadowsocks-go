@@ -27,9 +27,8 @@ func (c *UDPConn) ReadFrom(b []byte) (n int, addr net.Addr, err error) {
 		err = fmt.Errorf("the buffer length must be greater than 1500")
 		return
 	}
-	b2 := make([]byte, buffersize)
 	for {
-		n, addr, err = c.UDPConn.ReadFrom(b2)
+		n, addr, err = c.UDPConn.ReadFrom(b)
 		if err != nil {
 			return
 		}
@@ -37,11 +36,11 @@ func (c *UDPConn) ReadFrom(b []byte) (n int, addr net.Addr, err error) {
 			continue
 		}
 		var dec utils.Decrypter
-		dec, err = utils.NewDecrypter(c.c.Method, c.c.Password, b2[:c.c.Ivlen])
+		dec, err = utils.NewDecrypter(c.c.Method, c.c.Password, b[:c.c.Ivlen])
 		if err != nil {
 			return
 		}
-		rbuf := b2[c.c.Ivlen:n]
+		rbuf := b[c.c.Ivlen:n]
 		dec.Decrypt(b, rbuf)
 		n -= c.c.Ivlen
 		return
@@ -96,7 +95,8 @@ func (c *MultiUDPConn) ReadFrom(b []byte) (n int, addr net.Addr, err error) {
 		err = fmt.Errorf("the buffer length must be greater than 1500")
 		return
 	}
-	b2 := make([]byte, buffersize)
+	b2 := bufPool.Get().([]byte)
+	defer bufPool.Put(b2)
 	for {
 		n, addr, err = c.UDPConn.ReadFrom(b2)
 		if err != nil {
