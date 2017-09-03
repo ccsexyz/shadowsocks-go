@@ -18,6 +18,12 @@ const (
 	defaultMethod       = "aes-256-cfb"
 	defaultPassword     = "secret"
 	buffersize          = 4096
+	verSocks4Resp       = 0
+	verSocks4           = 4
+	verSocks5           = 5
+	cmdConnect          = 1
+	cmdUDP              = 3
+	cmdSocks4OK         = 0x5A
 	typeIPv4            = 1
 	typeDm              = 3
 	typeIPv6            = 4

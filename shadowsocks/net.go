@@ -284,7 +284,7 @@ func ssMultiAcceptHandler(conn Conn, lis *listener) (c Conn) {
 	defer bufPool.Put(rbuf)
 	addr, data, dec, chs, partenclen, err := ParseAddrWithMultipleBackendsAndPartEncLen(buf[:n], rbuf, lis.c.Backends)
 	if err != nil {
-		lis.c.Log("recv a unexpected header from", conn.RemoteAddr().String())
+		lis.c.Log("recv an unexpected header from", conn.RemoteAddr().String())
 		return
 	}
 	if chs.Ivlen != 0 {
@@ -339,7 +339,7 @@ func ssAcceptHandler(conn Conn, lis *listener) (c Conn) {
 	dec.Decrypt(dbuf, buf[lis.c.Ivlen:n])
 	addr, data, partenclen, err := ParseAddrAndPartEncLen(dbuf[:n-lis.c.Ivlen])
 	if err != nil {
-		lis.c.Log("recv a unexpected header from", conn.RemoteAddr().String(), " : ", err)
+		lis.c.Log("recv an unexpected header from", conn.RemoteAddr().String(), " : ", err)
 		return
 	}
 	if lis.c.Ivlen != 0 {
@@ -554,53 +554,88 @@ func socksAcceptor(conn Conn, lis *listener) (c Conn) {
 		}
 	}()
 	buf := make([]byte, 512)
-	n, err := io.ReadFull(conn, buf[:2])
-	if err != nil {
+	n, err := conn.Read(buf)
+	if err != nil || n < 2 {
 		return
 	}
-	if buf[0] != 5 {
+	ver := buf[0]
+	if ver != verSocks4 && ver != verSocks5 {
 		c = httpProxyAcceptor(&RemainConn{remain: buf[:n], Conn: conn}, lis)
 		return
 	}
-	nmethods := buf[1]
-	if nmethods != 0 {
-		io.ReadFull(conn, buf[:int(nmethods)])
-	}
-	_, err = conn.Write([]byte{5, 0})
-	if err != nil {
-		return
-	}
-	n, err = conn.Read(buf)
-	if err != nil {
-		return
-	}
 	cmd := buf[1]
-	if buf[0] != 5 || (cmd != 1 && cmd != 3) || (!lis.c.UDPRelay && cmd == 3) {
-		return
-	}
-	if lis.c.UDPRelay && cmd == 3 {
-		addr, err := net.ResolveUDPAddr("udp", lis.c.Localaddr)
+	if ver == verSocks4 && cmd == cmdConnect {
+		if n < 9 || buf[n-1] != 0 {
+			return
+		}
+		var dstaddr Addr
+		if buf[4] == 0 && buf[5] == 0 && buf[6] == 0 && buf[7] != 0 {
+			// socks4a
+			var firstNullIdx int
+			for firstNullIdx = 8; firstNullIdx < n-1 && buf[firstNullIdx] != 0; firstNullIdx++ {
+
+			}
+			if firstNullIdx == n-1 {
+				return
+			}
+			port := strconv.Itoa(int(binary.BigEndian.Uint16(buf[2:4])))
+			host := string(buf[firstNullIdx+1 : n-1])
+			dstaddr = &DstAddr{host: host, port: port}
+		} else {
+			addrbuf := make([]byte, lenIPv4+3)
+			addrbuf[0] = typeIPv4
+			copy(addrbuf[lenIPv4+1:], buf[2:4])
+			copy(addrbuf[1:lenIPv4+1], buf[4:4+lenIPv4])
+			dstaddr = SockAddr(addrbuf)
+		}
+		buf[0] = verSocks4Resp
+		buf[1] = cmdSocks4OK
+		_, err = conn.Write(buf[:8])
 		if err != nil {
 			return
 		}
-		copy(buf, []byte{5, 0, 0, 1})
-		copy(buf[4:], addr.IP.To4())
-		binary.BigEndian.PutUint16(buf[8:], uint16(addr.Port))
-		_, err = conn.Write(buf[:10])
-		for err == nil {
-			_, err = conn.Read(buf)
+		c = NewDstConn(conn, dstaddr)
+		return
+	}
+	if ver == verSocks5 {
+		_, err = conn.Write([]byte{5, 0})
+		if err != nil {
+			return
 		}
+		n, err = conn.Read(buf)
+		if err != nil {
+			return
+		}
+		ver = buf[0]
+		cmd = buf[1]
+		if ver != verSocks5 || (cmd != cmdConnect && cmd != cmdUDP) || (!lis.c.UDPRelay && cmd == cmdUDP) {
+			return
+		}
+		if lis.c.UDPRelay && cmd == cmdUDP {
+			addr, err := net.ResolveUDPAddr("udp", lis.c.Localaddr)
+			if err != nil {
+				return
+			}
+			copy(buf, []byte{5, 0, 0, 1})
+			copy(buf[4:], addr.IP.To4())
+			binary.BigEndian.PutUint16(buf[8:], uint16(addr.Port))
+			_, err = conn.Write(buf[:10])
+			for err == nil {
+				_, err = conn.Read(buf)
+			}
+			return
+		}
+		addr, _, err := ParseAddr(buf[3:n])
+		if err != nil {
+			return
+		}
+		_, err = conn.Write([]byte{5, 0, 0, 1, 0, 0, 0, 0, 0, 0})
+		if err != nil {
+			return
+		}
+		c = NewDstConn(conn, addr)
 		return
 	}
-	addr, _, err := ParseAddr(buf[3:n])
-	if err != nil {
-		return
-	}
-	_, err = conn.Write([]byte{5, 0, 0, 1, 0, 0, 0, 0, 0, 0})
-	if err != nil {
-		return
-	}
-	c = NewDstConn(conn, addr)
 	return
 }
 
@@ -773,10 +808,10 @@ func DialSSWithRawHeader(header []byte, service string, c *Config) (conn Conn, e
 	}
 	if c.Nonop {
 		rconn := &RemainConn{
-			Conn:   conn,
-			remain: make([]byte, len(header)),
+			Conn:    conn,
+			wremain: make([]byte, len(header)),
 		}
-		copy(rconn.remain, header)
+		copy(rconn.wremain, header)
 		conn = rconn
 	} else {
 		noplen := rand.Intn(128 - (lenTs + 1))
