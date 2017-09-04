@@ -29,7 +29,6 @@ const (
 	typeDm              = 3
 	typeIPv6            = 4
 	typeMux             = 0x6D
-	typeSmux            = 0x7D
 	typeTs              = 0x74 // timestamp
 	typeNop             = 0x90 // [nop 1 byte] [noplen 1 byte (< 128)] [zero data, noplen byte]
 	typePartEnc         = 0x37 // [partEnc 1 byte] [partLen 1 byte] [partLen * 1024 bytes data]
@@ -41,9 +40,6 @@ const (
 	muxaddr             = "mux:12580"
 	muxhost             = "mux"
 	muxport             = 12580
-	smuxaddr            = "smux:10086"
-	smuxhost            = "smux"
-	smuxport            = 10086
 	defaultObfsHost     = "www.bing.com"
 )
 
@@ -188,7 +184,7 @@ outer:
 		switch atyp {
 		default:
 			continue
-		case typeMux, typeSmux:
+		case typeMux:
 			if !nop {
 				continue
 			}
@@ -324,7 +320,7 @@ l:
 	default:
 		err = fmt.Errorf("unsupported atyp value %v", atyp)
 		return
-	case typeMux, typeSmux:
+	case typeMux:
 		if !nop {
 			return
 		}
@@ -591,8 +587,6 @@ func (b SockAddr) Host() string {
 		return net.IP(b[1 : lenIPv6+1]).String()
 	case typeMux:
 		return muxhost
-	case typeSmux:
-		return smuxhost
 	}
 }
 
@@ -607,8 +601,6 @@ func (b SockAddr) Port() string {
 		off = lenIPv6 + 1
 	case typeMux:
 		return strconv.Itoa(muxport)
-	case typeSmux:
-		return strconv.Itoa(smuxport)
 	}
 	return strconv.Itoa(int(binary.BigEndian.Uint16(b[off:])))
 }

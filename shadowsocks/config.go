@@ -28,8 +28,6 @@ type Config struct {
 	ObfsHost     []string  `json:"obfshost"`
 	ObfsAlive    bool      `json:"obfsalive"`
 	Mux          bool      `json:"mux"`
-	Smux         bool      `json:"smux"`
-	SmuxConn     int       `json:"smuxconn"`
 	Limit        int       `json:"limit"`
 	LimitPerConn int       `json:"limitperconn"`
 	LogHTTP      bool      `json:"loghttp"`
@@ -45,7 +43,6 @@ type Config struct {
 	Die          chan bool
 	pool         *ConnPool
 	muxDialer    *MuxDialer
-	smuxDialer   *SmuxDialer
 	closers      []cb
 }
 
@@ -130,16 +127,6 @@ func CheckBasicConfig(c *Config) {
 	if c.Type == "local" {
 		if c.Mux {
 			c.muxDialer = &MuxDialer{}
-		} else if c.Smux {
-			c.smuxDialer = &SmuxDialer{}
-			if c.SmuxConn <= 0 {
-				c.SmuxConn = 16
-			}
-			c.CallOnClosed(func() {
-				if c != nil && c.smuxDialer != nil && c.smuxDialer.client != nil {
-					c.smuxDialer.client.MarkExpired()
-				}
-			})
 		}
 	}
 	if c.Timeout == 0 {
