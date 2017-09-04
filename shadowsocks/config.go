@@ -36,6 +36,7 @@ type Config struct {
 	LimitPerConn int       `json:"limitperconn"`
 	LogHTTP      bool      `json:"loghttp"`
 	PartEncHTTPS bool      `json:"partenchttps"`
+	Timeout      int       `json:"timeout"`
 	limiters     []*Limiter
 	Vlogger      *log.Logger
 	Dlogger      *log.Logger
@@ -143,6 +144,9 @@ func CheckBasicConfig(c *Config) {
 			})
 		}
 	}
+	if c.Timeout == 0 {
+		c.Timeout = defaultTimeout
+	}
 }
 
 func CheckConfig(c *Config) {
@@ -190,6 +194,9 @@ func CheckConfig(c *Config) {
 		}
 		if c.PartEncHTTPS {
 			v.PartEncHTTPS = true
+		}
+		if v.Timeout == 0 {
+			v.Timeout = c.Timeout
 		}
 		if c.LogFile == v.LogFile {
 			v.logfile = c.logfile

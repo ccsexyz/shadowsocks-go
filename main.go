@@ -38,6 +38,7 @@ func main() {
 	flag.BoolVar(&c.Verbose, "verbose", false, "show verbose log")
 	flag.BoolVar(&c.Debug, "debug", false, "show debug log")
 	flag.StringVar(&pprofaddr, "pprof", "", "the pprof listen address")
+	flag.IntVar(&c.Timeout, "timeout", 0, "set the timeout of tcp connection")
 	flag.Parse()
 
 	if len(os.Args) == 1 {
@@ -126,7 +127,7 @@ func main() {
 func runServer(c *ss.Config) {
 	switch c.Type {
 	default:
-		log.Println("unsupported server type")
+		log.Println("unsupported server type:", c.Type)
 	case "local":
 		c.Log("run client at", c.Localaddr, "with method", c.Method)
 		if c.UDPRelay {

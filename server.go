@@ -38,7 +38,7 @@ func tcpRemoteHandler(conn net.Conn, c *ss.Config) {
 	if target == ss.Udprelayaddr {
 		C.Xu0s()
 		if c.UDPOverTCP {
-			udpRelayOverTCP(conn)
+			udpRelayOverTCP(conn, c)
 		}
 		return
 	}
@@ -53,10 +53,10 @@ func tcpRemoteHandler(conn net.Conn, c *ss.Config) {
 	if c.LogHTTP {
 		conn = ss.NewHttpLogConn(conn, c)
 	}
-	ss.Pipe(conn, rconn)
+	ss.Pipe(conn, rconn, c)
 }
 
-func udpRelayOverTCP(conn net.Conn) {
+func udpRelayOverTCP(conn net.Conn, c *ss.Config) {
 	buf := make([]byte, 256)
 	_, err := io.ReadFull(conn, buf[:1])
 	if err != nil {
@@ -75,5 +75,5 @@ func udpRelayOverTCP(conn net.Conn) {
 	}
 	defer rconn.Close()
 	conn = ss.NewConn2(ss.GetConn(conn))
-	ss.Pipe(conn, rconn)
+	ss.Pipe(conn, rconn, c)
 }

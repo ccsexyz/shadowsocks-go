@@ -46,5 +46,5 @@ func ssproxyHandler(conn net.Conn, c *ss.Config) {
 	if c.LogHTTP {
 		conn = ss.NewHttpLogConn(conn, c)
 	}
-	ss.Pipe(conn, rconn)
+	ss.Pipe(conn, rconn, c)
 }

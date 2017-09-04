@@ -17,6 +17,7 @@ import (
 const (
 	defaultMethod       = "aes-256-cfb"
 	defaultPassword     = "secret"
+	defaultTimeout      = 65
 	buffersize          = 4096
 	verSocks4Resp       = 0
 	verSocks4           = 4
@@ -373,11 +374,12 @@ func DupBuffer(b []byte) (b2 []byte) {
 	return
 }
 
-func Pipe(c1, c2 net.Conn) {
+func Pipe(c1, c2 net.Conn, c *Config) {
 	defer c1.Close()
 	defer c2.Close()
 	c1die := make(chan bool)
 	c2die := make(chan bool)
+	updated := true
 	f := func(dst, src net.Conn, die chan bool, buf []byte) {
 		defer close(die)
 		defer bufPool.Put(buf)
@@ -386,7 +388,9 @@ func Pipe(c1, c2 net.Conn) {
 		for err == nil {
 			n, err = src.Read(buf)
 			if n > 0 || err == nil {
+				updated = true
 				_, err = dst.Write(buf[:n])
+				updated = true
 			}
 		}
 	}
@@ -394,9 +398,26 @@ func Pipe(c1, c2 net.Conn) {
 	buf2 := bufPool.Get().([]byte)
 	go f(c1, c2, c1die, buf1)
 	go f(c2, c1, c2die, buf2)
-	select {
-	case <-c1die:
-	case <-c2die:
+	if c != nil && c.Timeout > 0 {
+		ticker := time.NewTicker(time.Duration(c.Timeout) * time.Second)
+		for {
+			select {
+			case <-ticker.C:
+				if updated {
+					updated = false
+					continue
+				}
+			case <-c1die:
+			case <-c2die:
+			}
+			return
+		}
+	} else {
+		select {
+		case <-c1die:
+		case <-c2die:
+		}
+		return
 	}
 }
 
