@@ -1,7 +1,6 @@
 package main
 
 import (
-	"io"
 	"net"
 
 	ss "github.com/ccsexyz/shadowsocks-go/shadowsocks"
@@ -35,13 +34,6 @@ func tcpRemoteHandler(conn net.Conn, c *ss.Config) {
 		c.LogD("target length is 0")
 		return
 	}
-	if target == ss.Udprelayaddr {
-		C.Xu0s()
-		if c.UDPOverTCP {
-			udpRelayOverTCP(conn, c)
-		}
-		return
-	}
 	rconn, err := net.Dial("tcp", target)
 	if err != nil {
 		c.Log(err)
@@ -53,27 +45,5 @@ func tcpRemoteHandler(conn net.Conn, c *ss.Config) {
 	if c.LogHTTP {
 		conn = ss.NewHttpLogConn(conn, c)
 	}
-	ss.Pipe(conn, rconn, c)
-}
-
-func udpRelayOverTCP(conn net.Conn, c *ss.Config) {
-	buf := make([]byte, 256)
-	_, err := io.ReadFull(conn, buf[:1])
-	if err != nil {
-		return
-	}
-	nbytes := int(buf[0])
-	_, err = io.ReadFull(conn, buf[:nbytes])
-	if err != nil {
-		return
-	}
-	target := string(buf[:nbytes])
-	buf = nil
-	rconn, err := net.Dial("udp", target)
-	if err != nil {
-		return
-	}
-	defer rconn.Close()
-	conn = ss.NewConn2(ss.GetConn(conn))
 	ss.Pipe(conn, rconn, c)
 }

@@ -130,52 +130,23 @@ func RunUDPLocalServer(c *ss.Config) {
 	}
 	var handle func(*udpSession, []byte)
 	var create func([]byte, net.Addr) (net.Conn, func(), []byte, error)
-	if c.UDPOverTCP {
-		handle = func(sess *udpSession, b []byte) {
-			_, data, _ := ss.ParseAddr(b[3:])
-			sess.conn.Write(data)
+	handle = func(sess *udpSession, b []byte) {
+		sess.conn.Write(b[3:])
+	}
+	create = func(b []byte, from net.Addr) (rconn net.Conn, clean func(), header []byte, err error) {
+		var v *ss.Config
+		if len(c.Backends) != 0 && c.Type == "socksproxy" {
+			v = c.Backends[rand.Int()%len(c.Backends)]
+		} else {
+			v = c
 		}
-		create = func(b []byte, from net.Addr) (rconn net.Conn, clean func(), header []byte, err error) {
-			addr, data, err := ss.ParseAddr(b[3:])
-			if err != nil {
-				err = fmt.Errorf("unexcepted header")
-				return
-			}
-			var v *ss.Config
-			if len(c.Backends) != 0 && c.Type == "socksproxy" {
-				v = c.Backends[rand.Int()%len(c.Backends)]
-			} else {
-				v = c
-			}
-			rconn, err = ss.DialUDPOverTCP(net.JoinHostPort(addr.Host(), addr.Port()), v.Remoteaddr, v)
-			if err != nil {
-				return
-			}
-			rconn.Write(data)
-			hdrlen := len(b) - len(data)
-			header = make([]byte, hdrlen)
-			copy(header, b)
+		rconn, err = ss.DialUDP(v)
+		if err != nil {
 			return
 		}
-	} else {
-		handle = func(sess *udpSession, b []byte) {
-			sess.conn.Write(b[3:])
-		}
-		create = func(b []byte, from net.Addr) (rconn net.Conn, clean func(), header []byte, err error) {
-			var v *ss.Config
-			if len(c.Backends) != 0 && c.Type == "socksproxy" {
-				v = c.Backends[rand.Int()%len(c.Backends)]
-			} else {
-				v = c
-			}
-			rconn, err = ss.DialUDP(v)
-			if err != nil {
-				return
-			}
-			rconn.Write(b[3:])
-			header = []byte{0, 0, 0}
-			return
-		}
+		rconn.Write(b[3:])
+		header = []byte{0, 0, 0}
+		return
 	}
 
 	RunUDPServer(conn, c, check, handle, create)

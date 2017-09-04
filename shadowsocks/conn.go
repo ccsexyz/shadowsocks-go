@@ -2,8 +2,6 @@ package shadowsocks
 
 import (
 	"bufio"
-	"encoding/binary"
-	"fmt"
 	"io"
 	"math/rand"
 	"net"
@@ -291,63 +289,6 @@ func xuroutine() {
 			}
 		}
 	}
-}
-
-// FIXME
-type Conn2 struct {
-	Conn
-}
-
-// FIXME
-func NewConn2(conn Conn) Conn {
-	return &Conn2{
-		Conn: conn,
-	}
-}
-
-func (c *Conn2) Read(b []byte) (n int, err error) {
-	_, err = io.ReadFull(c.Conn, b[:2])
-	if err != nil {
-		return
-	}
-	nbytes := binary.BigEndian.Uint16(b[:2])
-	if nbytes > 1500 {
-		err = fmt.Errorf("wrong nbytes %d", nbytes)
-		return
-	}
-	_, err = io.ReadFull(c.Conn, b[:int(nbytes)])
-	if err != nil {
-		return
-	}
-	n = int(nbytes)
-	return
-}
-
-func (c *Conn2) Write(b []byte) (n int, err error) {
-	n = len(b)
-	if n > 1500 {
-		err = fmt.Errorf("cannot write %d bytes", n)
-		return
-	}
-	buf := make([]byte, 2)
-	binary.BigEndian.PutUint16(buf[:], uint16(n))
-	_, err = c.Conn.WriteBuffers([][]byte{buf, b})
-	if err != nil {
-		n = 0
-	}
-	return
-}
-
-func (c *Conn2) WriteBuffers(b [][]byte) (n int, err error) {
-	for _, v := range b {
-		var nbytes int
-		nbytes, err = c.Write(v)
-		if err != nil {
-			return
-		}
-		n += nbytes
-	}
-	return
 }
 
 type DstConn struct {

@@ -44,7 +44,6 @@ const (
 	smuxaddr            = "smux:10086"
 	smuxhost            = "smux"
 	smuxport            = 10086
-	Udprelayaddr        = "UdpRelayOverTcp:65535"
 	defaultObfsHost     = "www.bing.com"
 )
 
@@ -481,15 +480,11 @@ func GetInnerConn(conn net.Conn) (c net.Conn, err error) {
 		c = i.Conn
 	case *SsConn:
 		c = i.Conn
-	case *Conn2:
-		c = i.Conn
 	case *DebugConn:
 		c = i.Conn
 	case *DstConn:
 		c = i.Conn
 	case *RemainConn:
-		c = i.Conn
-	case *DelayConn:
 		c = i.Conn
 	case *LimitConn:
 		c = i.Conn

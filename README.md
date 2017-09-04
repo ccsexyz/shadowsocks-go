@@ -11,8 +11,7 @@ Features
 * 支持 aes-128/192/256-ctr aes-128/192/256-cfb chacha20 chacha20-ietf rc4-md5 salsa20 加密  
 * 支持代理中继功能,可以从多个 ss 服务端中选取一个响应最快的服务端建立连接  
 * 支持 TCP 隧道(如 ssh over shadowsocks)  
-* 支持 UDP over UDP/TCP  
-* 支持 UDP Tunnel over UDP/TCP  
+* 支持 UDP Tunnel
 * 支持 TCP redirect,类似 ss-libev 的 redir 模式  
 * 支持单个端口设置不同的加密方式及密码  
 * 配置文件更改后自动重载配置文件,并且不影响已经建立的连接  
@@ -73,7 +72,6 @@ json 对象中的可选配置:
 * password: 密码  
 * nonop: 我实现的 ss 客户端在发送第一段数据时会向服务端发送一段随机数据,设置这个选项为 true 以和官方的 ss 服务端兼容   
 * udprelay: 设置为 true 时启用 udp 转发功能,默认行为为不启用  
-* udpovertcp: 设置为 true 时通过 TCP 转发 UDP 数据,默认通过 UDP 进行转发  
 * backend: 用在 tcptun 中,设置用于转发的 ss 服务端的配置信息  
 * backends: 用于 *proxy 中,设置一组用于转发的 ss 服务端的配置信息  
 * obfs: 设置是否启用 HTTP 伪装,服务端开启此选项后仍然兼容不适用 HTTP 伪装的客户端    

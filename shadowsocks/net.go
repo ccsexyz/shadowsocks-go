@@ -135,9 +135,6 @@ func ListenSS(service string, c *Config) (lis net.Listener, err error) {
 	}
 	var handlers []ListenHandler
 	handlers = append(handlers, limitAcceptHandler)
-	if c.Delay {
-		handlers = append(handlers, delayAcceptHandler)
-	}
 	if c.Obfs {
 		handlers = append(handlers, obfsAcceptHandler)
 	}
@@ -194,9 +191,6 @@ func ListenMultiSS(service string, c *Config) (lis net.Listener, err error) {
 	}
 	var handlers []ListenHandler
 	handlers = append(handlers, limitAcceptHandler)
-	if c.Delay {
-		handlers = append(handlers, delayAcceptHandler)
-	}
 	if c.Obfs {
 		handlers = append(handlers, obfsAcceptHandler)
 	}
@@ -796,9 +790,6 @@ func DialSSWithRawHeader(header []byte, service string, c *Config) (conn Conn, e
 			Rlimiters: limiters,
 		}
 	}
-	if c.Delay {
-		conn = NewDelayConn(conn)
-	}
 	C := NewSsConn(conn, c)
 	conn = C
 	if c.PartEncHTTPS && len(header) > 2 && binary.BigEndian.Uint16(header[len(header)-2:]) == 443 {
@@ -844,24 +835,6 @@ func NewSSDialer(c *Config) func(string) (net.Conn, error) {
 	return func(addr string) (net.Conn, error) {
 		return DialSS(addr, c.Remoteaddr, c)
 	}
-}
-
-func DialUDPOverTCP(target, service string, c *Config) (conn Conn, err error) {
-	conn, err = DialSS(Udprelayaddr, service, c)
-	if err != nil {
-		return
-	}
-	var buf [512]byte
-	buf[0] = byte(len(target))
-	copy(buf[1:], []byte(target))
-	_, err = conn.Write(buf[:1+len(target)])
-	if err != nil {
-		conn.Close()
-		conn = nil
-		return
-	}
-	conn = NewConn2(conn)
-	return
 }
 
 type MuxDialer struct {

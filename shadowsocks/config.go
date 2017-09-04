@@ -19,7 +19,6 @@ type Config struct {
 	Password     string    `json:"password"`
 	Nonop        bool      `json:"nonop"`
 	UDPRelay     bool      `json:"udprelay"`
-	UDPOverTCP   bool      `json:"udpovertcp"`
 	Backend      *Config   `json:"backend"`
 	Backends     []*Config `json:"backends"`
 	Verbose      bool      `json:"verbose"`
@@ -28,7 +27,6 @@ type Config struct {
 	Obfs         bool      `json:"obfs"`
 	ObfsHost     []string  `json:"obfshost"`
 	ObfsAlive    bool      `json:"obfsalive"`
-	Delay        bool      `json:"delay"`
 	Mux          bool      `json:"mux"`
 	Smux         bool      `json:"smux"`
 	SmuxConn     int       `json:"smuxconn"`
@@ -185,9 +183,6 @@ func CheckConfig(c *Config) {
 		}
 		if c.Verbose {
 			v.Verbose = true
-		}
-		if c.Delay {
-			v.Delay = true
 		}
 		if c.LogHTTP {
 			v.LogHTTP = true
