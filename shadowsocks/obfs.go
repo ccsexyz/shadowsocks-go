@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/ccsexyz/utils"
 )
 
 type ObfsConn struct {
@@ -132,19 +134,9 @@ func (c *ObfsConn) readObfsHeader(b []byte) (n int, err error) {
 		err = fmt.Errorf("short read")
 		return
 	}
-	ok := false
-	it := 0
-	if c.resp {
-		parser := newHTTPReplyParser()
-		for ; it < n && !ok && err == nil; it++ {
-			ok, err = parser.read(buf[it])
-		}
-	} else if c.req {
-		parser := newHTTPRequestParser()
-		for ; it < n && !ok && err == nil; it++ {
-			ok, err = parser.read(buf[it])
-		}
-	}
+	parser := utils.NewHTTPHeaderParser(bufPool.Get().([]byte))
+	defer bufPool.Put(parser.GetBuf())
+	ok, err := parser.Read(b)
 	if err != nil {
 		return
 	}
@@ -154,7 +146,7 @@ func (c *ObfsConn) readObfsHeader(b []byte) (n int, err error) {
 	}
 	c.resp = false
 	c.req = false
-	remain := buf[it:n]
+	remain := buf[parser.HeaderLen():n]
 	if len(remain) != 0 {
 		n = copy(b, remain)
 		if n < len(remain) {

@@ -3,6 +3,7 @@ package shadowsocks
 import (
 	"bufio"
 	"io"
+	"log"
 	"math/rand"
 	"net"
 	"time"
@@ -30,7 +31,11 @@ func (c *sconn) WriteBuffers(b [][]byte) (n int, err error) {
 }
 
 func (c *sconn) Read(b []byte) (n int, err error) {
-	return c.r.Read(b)
+	n, err = c.r.Read(b)
+	if n == 0 && err == nil {
+		log.Fatal(c.LocalAddr(), c.RemoteAddr())
+	}
+	return
 }
 
 var (
@@ -360,45 +365,77 @@ type MuxConn struct {
 
 type HttpLogConn struct {
 	net.Conn
-	pr *httpRequestParser
-	pw *httpRelyParser
+	pr *utils.HTTPHeaderParser
+	pw *utils.HTTPHeaderParser
 	c  *Config
 }
 
 func NewHttpLogConn(conn net.Conn, c *Config) *HttpLogConn {
 	return &HttpLogConn{
 		Conn: conn,
-		pr:   newHTTPRequestParser(),
-		pw:   newHTTPReplyParser(),
+		pr:   utils.NewHTTPHeaderParser(bufPool.Get().([]byte)),
+		pw:   utils.NewHTTPHeaderParser(bufPool.Get().([]byte)),
 		c:    c,
 	}
 }
 
+func cleanHTTPParser(p *utils.HTTPHeaderParser) {
+	if p != nil {
+		bufPool.Put(p.GetBuf())
+	}
+}
+
+func (conn *HttpLogConn) Close() error {
+	if conn.pr != nil {
+		cleanHTTPParser(conn.pr)
+		conn.pr = nil
+	}
+	if conn.pw != nil {
+		cleanHTTPParser(conn.pw)
+		conn.pw = nil
+	}
+	return conn.Conn.Close()
+}
+
 func (conn *HttpLogConn) Read(b []byte) (n int, err error) {
 	n, err = conn.Conn.Read(b)
-	for it := 0; it < n && conn.pr != nil; it++ {
-		ok, e := conn.pr.read(b[it])
+	if conn.pr != nil {
+		ok, e := conn.pr.Read(b[:n])
 		if ok {
-			conn.c.Log(conn.LocalAddr(), "->", conn.RemoteAddr(), conn.pr.marshal())
+			var n2 int
+			buf := bufPool.Get().([]byte)
+			defer bufPool.Put(buf)
+			n2, e = conn.pr.Encode(buf)
+			if err == nil {
+				conn.c.Log(conn.LocalAddr(), "->", conn.RemoteAddr(), utils.SliceToString(buf[:n2]))
+			}
 		}
-		if ok || e != nil {
+		if e != nil {
+			cleanHTTPParser(conn.pr)
 			conn.pr = nil
-			break
 		}
+
 	}
 	return
 }
 
 func (conn *HttpLogConn) Write(b []byte) (n int, err error) {
-	for it, n := 0, len(b); it < n && conn.pw != nil; it++ {
-		ok, e := conn.pw.read(b[it])
+	if conn.pw != nil {
+		ok, e := conn.pw.Read(b[:n])
 		if ok {
-			conn.c.Log(conn.LocalAddr(), "->", conn.RemoteAddr(), conn.pw.marshal())
+			var n2 int
+			buf := bufPool.Get().([]byte)
+			defer bufPool.Put(buf)
+			n2, e = conn.pw.Encode(buf)
+			if err == nil {
+				conn.c.Log(conn.LocalAddr(), "->", conn.RemoteAddr(), utils.SliceToString(buf[:n2]))
+			}
 		}
-		if ok || e != nil {
+		if e != nil {
+			cleanHTTPParser(conn.pw)
 			conn.pw = nil
-			break
 		}
+
 	}
 	return conn.Conn.Write(b)
 }

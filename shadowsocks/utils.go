@@ -382,6 +382,7 @@ func Pipe(c1, c2 net.Conn, c *Config) {
 		var err error
 		for err == nil {
 			n, err = src.Read(buf)
+			// log.Println(n, err, src.LocalAddr(), src.RemoteAddr())
 			if n > 0 || err == nil {
 				updated = true
 				_, err = dst.Write(buf[:n])

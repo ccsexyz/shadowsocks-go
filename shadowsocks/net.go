@@ -1,6 +1,7 @@
 package shadowsocks
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -440,18 +441,15 @@ func httpProxyAcceptor(conn Conn, lis *listener) (c Conn) {
 			conn.Close()
 		}
 	}()
-	parser := newHTTPRequestParser()
+	parser := utils.NewHTTPHeaderParser(bufPool.Get().([]byte))
+	defer bufPool.Put(parser.GetBuf())
+	buf := make([]byte, 4096)
 	for {
-		buf := make([]byte, 512)
 		n, err := conn.Read(buf)
 		if err != nil {
 			return
 		}
-		it := 0
-		ok := false
-		for ; it < n && !ok && err == nil; it++ {
-			ok, err = parser.read(buf[it])
-		}
+		ok, err := parser.Read(buf[:n])
 		if err != nil {
 			return
 		}
@@ -459,8 +457,17 @@ func httpProxyAcceptor(conn Conn, lis *listener) (c Conn) {
 			break
 		}
 	}
-	if parser.requestMethod == "CONNECT" {
-		host, port, err := net.SplitHostPort(parser.requestURI)
+	requestMethod, err := parser.GetFirstLine1()
+	if err != nil {
+		return
+	}
+	requestURI, err := parser.GetFirstLine2()
+	if err != nil {
+		return
+	}
+	uri := SliceToString(requestURI)
+	if bytes.Equal(requestMethod, []byte("CONNECT")) {
+		host, port, err := net.SplitHostPort(uri)
 		if err != nil {
 			return
 		}
@@ -472,16 +479,22 @@ func httpProxyAcceptor(conn Conn, lis *listener) (c Conn) {
 		c = NewDstConn(conn, &DstAddr{host: host, port: port})
 		return
 	}
-	parser.requestURI = strings.Replace(parser.requestURI, "http://", "", 1)
-	it := strings.Index(parser.requestURI, "/")
+	if bytes.HasPrefix(requestURI, []byte("http://")) {
+		requestURI = requestURI[7:]
+	}
+	it := bytes.IndexByte(requestURI, '/')
 	if it < 0 {
 		return
 	}
-	parser.requestURI = parser.requestURI[it:]
-	dst, ok := parser.headers["Host"]
+	ok := parser.StoreFirstline2(requestURI[it:])
 	if !ok {
 		return
 	}
+	hosts, ok := parser.Load([]byte("Host"))
+	if !ok || len(hosts) == 0 || len(hosts[0]) == 0 {
+		return
+	}
+	dst := string(hosts[0])
 	it = strings.Index(dst, ":")
 	if it < 0 {
 		dst = dst + ":80"
@@ -490,15 +503,21 @@ func httpProxyAcceptor(conn Conn, lis *listener) (c Conn) {
 	if err != nil {
 		return
 	}
-	if v, ok := parser.headers["Proxy-Connection"]; ok {
-		parser.headers["Connection"] = v
-		delete(parser.headers, "Proxy-Connection")
+	proxys, ok := parser.Load([]byte("Proxy-Connection"))
+	if ok && len(proxys) > 0 && len(proxys[0]) > 0 {
+		parser.Store([]byte("Connection"), proxys[0])
+		parser.Delete([]byte("Proxy-Connection"))
 	}
+	n, err := parser.Encode(buf)
+	if err != nil {
+		return
+	}
+	buf = buf[:n]
 	rconn, ok := conn.(*RemainConn)
 	if !ok {
 		rconn = &RemainConn{Conn: conn}
 	}
-	rconn.remain = append(rconn.remain, []byte(parser.marshal())...)
+	rconn.remain = append(rconn.remain, buf...)
 	c = NewDstConn(rconn, &DstAddr{host: host, port: port})
 	return
 }
