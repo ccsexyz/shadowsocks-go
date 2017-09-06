@@ -3,7 +3,6 @@ package shadowsocks
 import (
 	"bufio"
 	"io"
-	"log"
 	"math/rand"
 	"net"
 	"time"
@@ -32,9 +31,6 @@ func (c *sconn) WriteBuffers(b [][]byte) (n int, err error) {
 
 func (c *sconn) Read(b []byte) (n int, err error) {
 	n, err = c.r.Read(b)
-	if n == 0 && err == nil {
-		log.Fatal(c.LocalAddr(), c.RemoteAddr())
-	}
 	return
 }
 
