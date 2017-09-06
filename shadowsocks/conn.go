@@ -410,7 +410,7 @@ func (conn *HttpLogConn) Read(b []byte) (n int, err error) {
 				conn.c.Log(conn.LocalAddr(), "->", conn.RemoteAddr(), utils.SliceToString(buf[:n2]))
 			}
 		}
-		if e != nil {
+		if e != nil || ok {
 			cleanHTTPParser(conn.pr)
 			conn.pr = nil
 		}
@@ -421,7 +421,7 @@ func (conn *HttpLogConn) Read(b []byte) (n int, err error) {
 
 func (conn *HttpLogConn) Write(b []byte) (n int, err error) {
 	if conn.pw != nil {
-		ok, e := conn.pw.Read(b[:n])
+		ok, e := conn.pw.Read(b)
 		if ok {
 			var n2 int
 			buf := bufPool.Get().([]byte)
@@ -431,7 +431,7 @@ func (conn *HttpLogConn) Write(b []byte) (n int, err error) {
 				conn.c.Log(conn.LocalAddr(), "->", conn.RemoteAddr(), utils.SliceToString(buf[:n2]))
 			}
 		}
-		if e != nil {
+		if e != nil || ok {
 			cleanHTTPParser(conn.pw)
 			conn.pw = nil
 		}

@@ -136,7 +136,7 @@ func (c *ObfsConn) readObfsHeader(b []byte) (n int, err error) {
 	}
 	parser := utils.NewHTTPHeaderParser(bufPool.Get().([]byte))
 	defer bufPool.Put(parser.GetBuf())
-	ok, err := parser.Read(b)
+	ok, err := parser.Read(buf[:n])
 	if err != nil {
 		return
 	}
