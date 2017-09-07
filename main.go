@@ -45,6 +45,10 @@ func main() {
 		return
 	}
 
+	if len(os.Args) == 2 {
+		configfile = os.Args[1]
+	}
+
 	if len(pprofaddr) != 0 {
 		go func() {
 			log.Println(http.ListenAndServe(pprofaddr, nil))
@@ -83,16 +87,17 @@ func main() {
 			}(c)
 		}
 		go func() {
-			err = watcher.Add(os.Args[1])
+			err = watcher.Add(configfile)
 			if err != nil {
+				log.Println(err)
 				return
 			}
-			defer watcher.Remove(os.Args[1])
+			defer watcher.Remove(configfile)
 			for {
 				select {
 				case event := <-watcher.Events:
 					if event.Op&fsnotify.Write == fsnotify.Write || event.Op&fsnotify.Rename == fsnotify.Rename {
-						newConfigs, err := ss.ReadConfig(os.Args[1])
+						newConfigs, err := ss.ReadConfig(configfile)
 						if err != nil {
 							continue
 						}
