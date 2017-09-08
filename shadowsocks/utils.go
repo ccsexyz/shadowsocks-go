@@ -374,19 +374,21 @@ func Pipe(c1, c2 net.Conn, c *Config) {
 	defer c2.Close()
 	c1die := make(chan bool)
 	c2die := make(chan bool)
-	updated := true
+	var timeout int
+	if c != nil && c.Timeout > 0 {
+		timeout = c.Timeout
+	}
 	f := func(dst, src net.Conn, die chan bool, buf []byte) {
 		defer close(die)
 		defer bufPool.Put(buf)
 		var n int
 		var err error
 		for err == nil {
+			src.SetReadDeadline(time.Now().Add(time.Duration(timeout) * time.Second))
 			n, err = src.Read(buf)
-			// log.Println(n, err, src.LocalAddr(), src.RemoteAddr())
 			if n > 0 || err == nil {
-				updated = true
+				dst.SetWriteDeadline(time.Now().Add(time.Duration(timeout) * time.Second))
 				_, err = dst.Write(buf[:n])
-				updated = true
 			}
 		}
 	}
@@ -394,27 +396,11 @@ func Pipe(c1, c2 net.Conn, c *Config) {
 	buf2 := bufPool.Get().([]byte)
 	go f(c1, c2, c1die, buf1)
 	go f(c2, c1, c2die, buf2)
-	if c != nil && c.Timeout > 0 {
-		ticker := time.NewTicker(time.Duration(c.Timeout) * time.Second)
-		for {
-			select {
-			case <-ticker.C:
-				if updated {
-					updated = false
-					continue
-				}
-			case <-c1die:
-			case <-c2die:
-			}
-			return
-		}
-	} else {
-		select {
-		case <-c1die:
-		case <-c2die:
-		}
-		return
+	select {
+	case <-c1die:
+	case <-c2die:
 	}
+	return
 }
 
 type Limiter struct {

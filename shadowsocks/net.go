@@ -63,12 +63,14 @@ func (lis *listener) acceptor() {
 }
 
 func (lis *listener) handleNewConn(conn Conn) {
+	conn.SetReadDeadline(time.Now().Add(time.Second * 4))
 	for _, handler := range lis.handlers {
 		conn = handler(conn, lis)
 		if conn == nil {
 			return
 		}
 	}
+	conn.SetReadDeadline(time.Time{})
 	select {
 	case <-lis.die:
 		conn.Close()
