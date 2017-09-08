@@ -132,7 +132,7 @@ func (c *MultiUDPConn) ReadFrom(b []byte) (n int, addr net.Addr, err error) {
 			c.lock.Unlock()
 			// *(chs.Any.(*int))++
 			chs.LogD("udp mode choose", chs.Method, chs.Password)
-			n = copy(b, []byte(sock))
+			n = copy(b, sock.header)
 			n += copy(b[n:], data)
 		} else {
 			dec, err = utils.NewDecrypter(v.Method, v.Password, b2[:v.Ivlen])

@@ -32,6 +32,7 @@ const (
 	typeTs              = 0x74 // timestamp
 	typeNop             = 0x90 // [nop 1 byte] [noplen 1 byte (< 128)] [zero data, noplen byte]
 	typePartEnc         = 0x37 // [partEnc 1 byte] [partLen 1 byte] [partLen * 1024 bytes data]
+	typeSnappy          = 0x44
 	lenIPv4             = 4
 	lenIPv6             = 16
 	lenTs               = 8
@@ -95,17 +96,13 @@ func GetHeader(host string, port int) (buf []byte, err error) {
 	return
 }
 
-func ParseAddrWithMultipleBackends(b, buf []byte, configs []*Config) (addr SockAddr, data []byte, dec utils.Decrypter, chs *Config, err error) {
-	addr, data, dec, chs, _, err = ParseAddrWithMultipleBackendsAndPartEncLen(b, buf, configs)
-	return
-}
-
-func ParseAddrWithMultipleBackendsAndPartEncLen(b, buf []byte, configs []*Config) (addr SockAddr, data []byte, dec utils.Decrypter, chs *Config, partEncLen int, err error) {
+func ParseAddrWithMultipleBackends(b, buf []byte, configs []*Config) (addr *SockAddr, data []byte, dec utils.Decrypter, chs *Config, err error) {
+	addr = &SockAddr{}
 	defer func() {
 		if chs != nil {
 			err = nil
 			data = DupBuffer(data)
-			addr = SockAddr(DupBuffer([]byte(addr)))
+			addr.header = DupBuffer(addr.header)
 		} else {
 			if err == nil {
 				err = errInvalidHeader
@@ -174,12 +171,21 @@ outer:
 					continue outer
 				}
 				dec.Decrypt(buf, b[off:off+2])
-				partEncLen = int(buf[0]) * 1024
+				addr.partEncLen = int(buf[0]) * 1024
 				atyp = buf[1]
 				buf[0] = buf[1]
 				off += 2
+			case typeSnappy:
+				if n < off+1 {
+					continue outer
+				}
+				dec.Decrypt(buf, b[off:off+1])
+				addr.snappy = true
+				atyp = buf[0]
+				off++
 			}
 		}
+		addr.nop = nop
 		var port int
 		switch atyp {
 		default:
@@ -191,7 +197,7 @@ outer:
 			chs = config
 			dec.Decrypt(buf, b[off:])
 			data = buf[:len(b)-off]
-			addr = SockAddr([]byte{atyp})
+			addr.header = []byte{atyp}
 			return
 		case typeDm:
 			if off+1 >= n {
@@ -209,7 +215,7 @@ outer:
 					continue outer
 				}
 			}
-			addr = SockAddr(buf[:2+dmlen+2])
+			addr.header = buf[:2+dmlen+2]
 			off += dmlen + 2
 			if n > off {
 				dec.Decrypt(buf[2+dmlen+2:], b[off:])
@@ -224,7 +230,7 @@ outer:
 			dec.Decrypt(buf[1:lenIPv6+2+1], b[off:off+lenIPv6+2])
 			off += lenIPv6 + 2
 			port = int(binary.BigEndian.Uint16(buf[lenIPv6+1:]))
-			addr = SockAddr(buf[:lenIPv6+2+1])
+			addr.header = buf[:lenIPv6+2+1]
 		case typeIPv4:
 			if nop || n < off+lenIPv4+2 {
 				continue
@@ -232,7 +238,7 @@ outer:
 			dec.Decrypt(buf[1:lenIPv4+2+1], b[off:off+lenIPv4+2])
 			off += lenIPv4 + 2
 			port = int(binary.BigEndian.Uint16(buf[lenIPv4+1:]))
-			addr = SockAddr(buf[:lenIPv4+2+1])
+			addr.header = buf[:lenIPv4+2+1]
 		}
 		if port == 80 || port == 443 || port == 22 || port == 53 || port == 8080 {
 			dec.Decrypt(buf[off:], b[off:])
@@ -249,7 +255,7 @@ outer:
 			return
 		}
 		dec.Decrypt(buf, b[chs.Ivlen:])
-		addr, data, partEncLen, err = ParseAddrAndPartEncLen(buf)
+		addr, data, err = ParseAddr(buf)
 	}
 	return
 }
@@ -262,13 +268,14 @@ func checkTimestamp(ts int64) (ok bool) {
 	return (ts - nts) <= 64
 }
 
-func ParseAddr(b []byte) (addr SockAddr, data []byte, err error) {
-	addr, data, _, err = ParseAddrAndPartEncLen(b)
-	return
-}
-
-func ParseAddrAndPartEncLen(b []byte) (addr SockAddr, data []byte, partEncLen int, err error) {
+func ParseAddr(b []byte) (addr *SockAddr, data []byte, err error) {
 	err = errInvalidHeader
+	addr = &SockAddr{}
+	defer func() {
+		if err != nil {
+			addr = nil
+		}
+	}()
 	n := len(b)
 	if n < 1 {
 		return
@@ -294,6 +301,7 @@ l:
 			n = len(b)
 			atyp = b[0]
 			nop = true
+			addr.nop = nop
 		case typeTs:
 			if n < lenTs+1+1 {
 				return
@@ -309,8 +317,16 @@ l:
 			if n < 3 {
 				return
 			}
-			partEncLen = int(b[1]) * 1024
+			addr.partEncLen = int(b[1]) * 1024
 			b = b[2:]
+			n = len(b)
+			atyp = b[0]
+		case typeSnappy:
+			if n < 2 {
+				return
+			}
+			addr.snappy = true
+			b = b[1:]
 			n = len(b)
 			atyp = b[0]
 		}
@@ -354,7 +370,7 @@ l:
 		header = b[:2+dmlen+2]
 		data = b[2+dmlen+2:]
 	}
-	addr = SockAddr(DupBuffer(header))
+	addr.header = DupBuffer(header)
 	data = DupBuffer(data)
 	err = nil
 	return
@@ -473,6 +489,8 @@ func GetInnerConn(conn net.Conn) (c net.Conn, err error) {
 		c = i.Conn
 	case *MuxConn:
 		c = i.conn
+	case *SnappyConn:
+		c = i.Conn
 	}
 	return
 }
@@ -562,9 +580,15 @@ type Addr interface {
 	Header() []byte
 }
 
-type SockAddr []byte
+type SockAddr struct {
+	header     []byte
+	partEncLen int
+	snappy     bool
+	nop        bool
+}
 
-func (b SockAddr) Host() string {
+func (s *SockAddr) Host() string {
+	b := s.header
 	switch b[0] {
 	default:
 		return SliceToString(b[2 : 2+int(b[1])])
@@ -577,8 +601,9 @@ func (b SockAddr) Host() string {
 	}
 }
 
-func (b SockAddr) Port() string {
+func (s *SockAddr) Port() string {
 	var off int
+	b := s.header
 	switch b[0] {
 	default:
 		off = int(b[1]) + 2
@@ -592,8 +617,8 @@ func (b SockAddr) Port() string {
 	return strconv.Itoa(int(binary.BigEndian.Uint16(b[off:])))
 }
 
-func (b SockAddr) Header() []byte {
-	return b
+func (s *SockAddr) Header() []byte {
+	return s.header
 }
 
 type DstAddr struct {

@@ -33,6 +33,7 @@ type Config struct {
 	LogHTTP      bool      `json:"loghttp"`
 	PartEncHTTPS bool      `json:"partenchttps"`
 	Timeout      int       `json:"timeout"`
+	Snappy       bool      `json:"snappy"`
 	limiters     []*Limiter
 	Vlogger      *log.Logger
 	Dlogger      *log.Logger

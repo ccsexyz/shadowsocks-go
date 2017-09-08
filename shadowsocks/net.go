@@ -272,7 +272,7 @@ func ssMultiAcceptHandler(conn Conn, lis *listener) (c Conn) {
 
 	rbuf := bufPool.Get().([]byte)
 	defer bufPool.Put(rbuf)
-	addr, data, dec, chs, partenclen, err := ParseAddrWithMultipleBackendsAndPartEncLen(buf[:n], rbuf, lis.c.Backends)
+	addr, data, dec, chs, err := ParseAddrWithMultipleBackends(buf[:n], rbuf, lis.c.Backends)
 	if err != nil {
 		lis.c.Log("recv an unexpected header from", conn.RemoteAddr().String())
 		return
@@ -293,9 +293,9 @@ func ssMultiAcceptHandler(conn Conn, lis *listener) (c Conn) {
 	}
 	C.dec = dec
 	C.c = chs
-	if partenclen > 0 {
+	if addr.partEncLen > 0 {
 		C.partenc = true
-		C.partencnum = partenclen
+		C.partencnum = addr.partEncLen
 		C.decnum = n - chs.Ivlen - len(data)
 	}
 	conn = C
@@ -303,6 +303,9 @@ func ssMultiAcceptHandler(conn Conn, lis *listener) (c Conn) {
 		conn = &RemainConn{Conn: C, remain: data}
 	}
 	conn = NewDstConn(conn, addr)
+	if addr.snappy {
+		conn = NewSnappyConn(conn)
+	}
 	c = conn
 	chs.LogD("choose", chs.Method, chs.Password, addr.Host(), addr.Port())
 	return
@@ -327,7 +330,7 @@ func ssAcceptHandler(conn Conn, lis *listener) (c Conn) {
 	dbuf := bufPool.Get().([]byte)
 	defer bufPool.Put(dbuf)
 	dec.Decrypt(dbuf, buf[lis.c.Ivlen:n])
-	addr, data, partenclen, err := ParseAddrAndPartEncLen(dbuf[:n-lis.c.Ivlen])
+	addr, data, err := ParseAddr(dbuf[:n-lis.c.Ivlen])
 	if err != nil {
 		lis.c.Log("recv an unexpected header from", conn.RemoteAddr().String(), " : ", err)
 		return
@@ -346,18 +349,23 @@ func ssAcceptHandler(conn Conn, lis *listener) (c Conn) {
 		}
 	}
 	C := NewSsConn(conn, lis.c)
-	if partenclen > 0 {
+	if addr.partEncLen > 0 {
 		C.partenc = true
-		C.partencnum = partenclen
+		C.partencnum = addr.partEncLen
 		C.decnum = n - lis.c.Ivlen - len(data)
 	}
 	C.dec = dec
-	C.Xu1s()
+	if !addr.nop {
+		C.Xu1s()
+	}
 	conn = C
 	if len(data) != 0 {
 		conn = &RemainConn{Conn: C, remain: data}
 	}
 	conn = NewDstConn(conn, addr)
+	if addr.snappy {
+		conn = NewSnappyConn(conn)
+	}
 	c = conn
 	return
 }
@@ -563,7 +571,7 @@ func socksAcceptor(conn Conn, lis *listener) (c Conn) {
 			addrbuf[0] = typeIPv4
 			copy(addrbuf[lenIPv4+1:], buf[2:4])
 			copy(addrbuf[1:lenIPv4+1], buf[4:4+lenIPv4])
-			dstaddr = SockAddr(addrbuf)
+			dstaddr = &SockAddr{header: addrbuf}
 		}
 		buf[0] = verSocks4Resp
 		buf[1] = cmdSocks4OK
@@ -756,11 +764,6 @@ func DialSSWithRawHeader(header []byte, service string, c *Config) (conn Conn, e
 	}
 	C := NewSsConn(conn, c)
 	conn = C
-	if c.PartEncHTTPS && len(header) > 2 && binary.BigEndian.Uint16(header[len(header)-2:]) == 443 {
-		C.partenc = true
-		C.partencnum = 4096
-		header = append([]byte{typePartEnc, 0x4}, header...)
-	}
 	if c.Nonop {
 		rconn := &RemainConn{
 			Conn:    conn,
@@ -769,6 +772,16 @@ func DialSSWithRawHeader(header []byte, service string, c *Config) (conn Conn, e
 		copy(rconn.wremain, header)
 		conn = rconn
 	} else {
+		port := binary.BigEndian.Uint16(header[len(header)-2:])
+		if c.PartEncHTTPS && len(header) > 2 && port == 443 {
+			C.partenc = true
+			C.partencnum = 4096
+			header = append([]byte{typePartEnc, 0x4}, header...)
+		}
+		useSnappy := (c.Snappy && port != 443)
+		if useSnappy {
+			header = append([]byte{typeSnappy}, header...)
+		}
 		noplen := rand.Intn(128 - (lenTs + 1))
 		buf := make([]byte, 1024)
 		buf[0] = typeNop
@@ -779,6 +792,10 @@ func DialSSWithRawHeader(header []byte, service string, c *Config) (conn Conn, e
 		_, err = conn.Write(buf[:noplen+2+1+lenTs+len(header)])
 		if err != nil {
 			conn.Close()
+			return
+		}
+		if useSnappy {
+			conn = NewSnappyConn(conn)
 		}
 	}
 	return
