@@ -7,10 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"net/http"
-	_ "net/http/pprof"
-
 	ss "github.com/ccsexyz/shadowsocks-go/shadowsocks"
+	"github.com/ccsexyz/utils"
 	"github.com/fsnotify/fsnotify"
 )
 
@@ -38,6 +36,9 @@ func main() {
 	flag.BoolVar(&c.Debug, "debug", false, "show debug log")
 	flag.StringVar(&pprofaddr, "pprof", "", "the pprof listen address")
 	flag.IntVar(&c.Timeout, "timeout", 0, "set the timeout of tcp connection")
+	flag.BoolVar(&c.Snappy, "snappy", false, "enable snappy compression")
+	flag.BoolVar(&c.PartEncHTTPS, "partenchttps", false, "partially encrypt https traffic")
+	flag.BoolVar(&c.PartEnc, "partenc", false, "partially encrypt traffic")
 	flag.Parse()
 
 	if len(os.Args) == 1 {
@@ -50,9 +51,14 @@ func main() {
 	}
 
 	if len(pprofaddr) != 0 {
-		go func() {
-			log.Println(http.ListenAndServe(pprofaddr, nil))
-		}()
+		if utils.PprofEnabled() {
+			log.Println("run pprof http server at", pprofaddr)
+			go func() {
+				utils.RunProfileHTTPServer(pprofaddr)
+			}()
+		} else {
+			log.Println("set pprof but pprof isn't compiled")
+		}
 	}
 
 	if len(configfile) == 0 {

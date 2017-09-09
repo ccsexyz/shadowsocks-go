@@ -1,7 +1,6 @@
 package shadowsocks
 
 import (
-	"bufio"
 	"io"
 	"math/rand"
 	"net"
@@ -15,11 +14,12 @@ type Conn utils.Conn
 
 type sconn struct {
 	net.Conn
-	r *bufio.Reader
+	// r *bufio.Reader
 }
 
 func Newsconn(c net.Conn) *sconn {
-	return &sconn{Conn: c, r: bufio.NewReader(c)}
+	// return &sconn{Conn: c, r: bufio.NewReader(c)}
+	return &sconn{Conn: c}
 }
 
 func (c *sconn) WriteBuffers(b [][]byte) (n int, err error) {
@@ -30,10 +30,10 @@ func (c *sconn) WriteBuffers(b [][]byte) (n int, err error) {
 	return
 }
 
-func (c *sconn) Read(b []byte) (n int, err error) {
-	n, err = c.r.Read(b)
-	return
-}
+// func (c *sconn) Read(b []byte) (n int, err error) {
+// 	n, err = c.r.Read(b)
+// 	return
+// }
 
 var (
 	xuch  chan net.Conn

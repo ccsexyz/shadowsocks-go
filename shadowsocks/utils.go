@@ -18,7 +18,7 @@ const (
 	defaultMethod       = "aes-256-cfb"
 	defaultPassword     = "secret"
 	defaultTimeout      = 65
-	buffersize          = 4096
+	buffersize          = 8192
 	verSocks4Resp       = 0
 	verSocks4           = 4
 	verSocks5           = 5

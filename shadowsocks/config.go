@@ -32,6 +32,7 @@ type Config struct {
 	LimitPerConn int       `json:"limitperconn"`
 	LogHTTP      bool      `json:"loghttp"`
 	PartEncHTTPS bool      `json:"partenchttps"`
+	PartEnc      bool      `json:"partenc"`
 	Timeout      int       `json:"timeout"`
 	Snappy       bool      `json:"snappy"`
 	limiters     []*Limiter
