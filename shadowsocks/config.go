@@ -143,6 +143,11 @@ func CheckConfig(c *Config) {
 			c.Type = "server"
 		}
 	}
+	if c.Type == "socks" {
+		c.Type = "socksproxy"
+		c.Backend = nil
+		c.Backends = nil
+	}
 	CheckLogFile(c)
 	CheckBasicConfig(c)
 	if c.pool == nil && c.Obfs && c.ObfsAlive && (c.Type == "server" || c.Type == "multiserver" || c.Type == "local") {

@@ -51,6 +51,13 @@ func (lis *listener) acceptor() {
 	for {
 		conn, err := lis.TCPListener.Accept()
 		if err != nil {
+			if operr, ok := err.(*net.OpError); ok {
+				lis.c.Log(operr.Net, operr.Op, operr.Addr, operr.Err)
+				if operr.Temporary() {
+					time.Sleep(time.Second)
+					continue
+				}
+			}
 			lis.errch <- err
 			return
 		}
