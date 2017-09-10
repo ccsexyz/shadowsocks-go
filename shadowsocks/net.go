@@ -749,10 +749,8 @@ func DialSSWithRawHeader(header []byte, service string, c *Config) (conn Conn, e
 		buf := make([]byte, 1024)
 		buf[0] = typeNop
 		buf[1] = byte(noplen)
-		buf[noplen+2] = typeTs
-		binary.BigEndian.PutUint64(buf[noplen+3:], uint64(time.Now().Unix()))
-		copy(buf[noplen+2+1+lenTs:], header)
-		_, err = conn.Write(buf[:noplen+2+1+lenTs+len(header)])
+		copy(buf[noplen+2:], header)
+		_, err = conn.Write(buf[:noplen+2+len(header)])
 		if err != nil {
 			conn.Close()
 			return
