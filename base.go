@@ -61,7 +61,7 @@ func (sess *udpSession) Close() {
 	}
 }
 
-func sessionsCleaner(sessions map[string]*udpSession, lock *sync.Mutex, die chan bool, d time.Duration) {
+func sessionsCleaner(sessions *sync.Map, die chan bool, d time.Duration) {
 	ticker := time.NewTicker(d)
 	for {
 		select {
@@ -69,19 +69,19 @@ func sessionsCleaner(sessions map[string]*udpSession, lock *sync.Mutex, die chan
 			return
 		case <-ticker.C:
 			var closeSessions []*udpSession
-			lock.Lock()
-			for k, v := range sessions {
-				if v.live {
-					v.live = false
+			sessions.Range(func(key, value interface{}) bool {
+				session := value.(*udpSession)
+				if session.live {
+					session.live = false
 				} else {
-					delete(sessions, k)
-					closeSessions = append(closeSessions, v)
+					closeSessions = append(closeSessions, session)
 				}
-			}
-			lock.Unlock()
+				return true
+			})
 			for _, v := range closeSessions {
 				v.Close()
 			}
+
 		}
 	}
 }
@@ -92,10 +92,9 @@ func RunUDPServer(conn net.PacketConn, c *ss.Config, check func([]byte) bool, ha
 	die := make(chan bool)
 	defer close(die)
 	rbuf := make([]byte, 2048)
-	sessions := make(map[string]*udpSession)
-	var lock sync.Mutex
+	sessions := new(sync.Map)
 
-	go sessionsCleaner(sessions, &lock, die, time.Second*15)
+	go sessionsCleaner(sessions, die, time.Second*15)
 	go func() {
 		if c.Die != nil {
 			<-c.Die
@@ -112,10 +111,9 @@ func RunUDPServer(conn net.PacketConn, c *ss.Config, check func([]byte) bool, ha
 			continue
 		}
 		addrstr := addr.String()
-		lock.Lock()
-		sess, ok := sessions[addrstr]
-		lock.Unlock()
+		v, ok := sessions.Load(addrstr)
 		if ok {
+			sess := v.(*udpSession)
 			sess.live = true
 			if handle != nil {
 				handle(sess, rbuf[:n])
@@ -130,10 +128,8 @@ func RunUDPServer(conn net.PacketConn, c *ss.Config, check func([]byte) bool, ha
 				if rconn == nil {
 					continue
 				}
-				sess = &udpSession{conn: rconn, live: true, from: addr.(*net.UDPAddr), header: header, die: make(chan bool), clean: clean}
-				lock.Lock()
-				sessions[addrstr] = sess
-				lock.Unlock()
+				sess := &udpSession{conn: rconn, live: true, from: addr.(*net.UDPAddr), header: header, die: make(chan bool), clean: clean}
+				sessions.Store(addrstr, sess)
 				go func(sess *udpSession) {
 					defer sess.Close()
 					buf := make([]byte, 2048)

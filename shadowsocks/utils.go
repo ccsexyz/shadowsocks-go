@@ -15,33 +15,33 @@ import (
 )
 
 const (
-	defaultMethod       = "aes-256-cfb"
-	defaultPassword     = "secret"
-	defaultTimeout      = 65
-	buffersize          = 8192
-	verSocks4Resp       = 0
-	verSocks4           = 4
-	verSocks5           = 5
-	cmdConnect          = 1
-	cmdUDP              = 3
-	cmdSocks4OK         = 0x5A
-	typeIPv4            = 1
-	typeDm              = 3
-	typeIPv6            = 4
-	typeMux             = 0x6D
-	typeTs              = 0x74 // timestamp
-	typeNop             = 0x90 // [nop 1 byte] [noplen 1 byte (< 128)] [zero data, noplen byte]
-	typePartEnc         = 0x37 // [partEnc 1 byte] [partLen 1 byte] [partLen * 1024 bytes data]
-	typeSnappy          = 0x44
-	lenIPv4             = 4
-	lenIPv6             = 16
-	lenTs               = 8
-	ivmapHighWaterLevel = 100000
-	ivmapLowWaterLevel  = 10000
-	muxaddr             = "mux:12580"
-	muxhost             = "mux"
-	muxport             = 12580
-	defaultObfsHost     = "www.bing.com"
+	defaultMethod          = "aes-256-cfb"
+	defaultPassword        = "secret"
+	defaultTimeout         = 65
+	buffersize             = 8192
+	verSocks4Resp          = 0
+	verSocks4              = 4
+	verSocks5              = 5
+	cmdConnect             = 1
+	cmdUDP                 = 3
+	cmdSocks4OK            = 0x5A
+	typeIPv4               = 1
+	typeDm                 = 3
+	typeIPv6               = 4
+	typeMux                = 0x6D
+	typeTs                 = 0x74 // timestamp
+	typeNop                = 0x90 // [nop 1 byte] [noplen 1 byte (< 128)] [zero data, noplen byte]
+	typePartEnc            = 0x37 // [partEnc 1 byte] [partLen 1 byte] [partLen * 1024 bytes data]
+	typeSnappy             = 0x44
+	lenIPv4                = 4
+	lenIPv6                = 16
+	lenTs                  = 8
+	muxaddr                = "mux:12580"
+	muxhost                = "mux"
+	muxport                = 12580
+	defaultObfsHost        = "www.bing.com"
+	defaultFilterCapacity  = 100000
+	defaultFilterFalseRate = 0.00001
 )
 
 var (
@@ -59,7 +59,8 @@ func init() {
 type cb func()
 
 var (
-	errInvalidHeader = fmt.Errorf("invalid header")
+	errInvalidHeader        = fmt.Errorf("invalid header")
+	errDuplicatedInitVector = fmt.Errorf("receive duplicated iv")
 )
 
 func PutRandomBytes(b []byte) {

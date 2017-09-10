@@ -22,13 +22,11 @@ type ListenHandler func(Conn, *listener) Conn
 
 type listener struct {
 	net.TCPListener
-	c         *Config
-	die       chan bool
-	connch    chan net.Conn
-	errch     chan error
-	handlers  []ListenHandler
-	IvMap     map[string]bool
-	IvMapLock sync.Mutex
+	c        *Config
+	die      chan bool
+	connch   chan net.Conn
+	errch    chan error
+	handlers []ListenHandler
 }
 
 func NewListener(lis *net.TCPListener, c *Config, handlers []ListenHandler) *listener {
@@ -38,11 +36,9 @@ func NewListener(lis *net.TCPListener, c *Config, handlers []ListenHandler) *lis
 		handlers:    handlers,
 		die:         make(chan bool),
 		connch:      make(chan net.Conn, 32),
-		IvMap:       make(map[string]bool),
 		errch:       make(chan error, 1),
 	}
 	go l.acceptor()
-	go l.ivMapCleaner()
 	return l
 }
 
@@ -82,33 +78,6 @@ func (lis *listener) handleNewConn(conn Conn) {
 	case <-lis.die:
 		conn.Close()
 	case lis.connch <- conn:
-	}
-}
-
-func (lis *listener) ivMapCleaner() {
-	ticker := time.NewTicker(time.Minute)
-	flag := false
-	for _ = range ticker.C {
-		lis.IvMapLock.Lock()
-		lenIvMap := len(lis.IvMap)
-		if flag && lenIvMap < ivmapLowWaterLevel {
-			flag = false
-		} else if !flag && lenIvMap > ivmapHighWaterLevel {
-			flag = true
-		}
-		if !flag {
-			lis.IvMapLock.Unlock()
-			continue
-		}
-		lenIvMap /= 10
-		for k := range lis.IvMap {
-			lenIvMap--
-			delete(lis.IvMap, k)
-			if lenIvMap < 0 {
-				break
-			}
-		}
-		lis.IvMapLock.Unlock()
 	}
 }
 
@@ -243,7 +212,7 @@ func ListenMultiSS(service string, c *Config) (lis net.Listener, err error) {
 				return
 			}
 			backends := make([]*Config, len(lis.c.Backends))
-			lis.IvMapLock.Lock()
+			lis.c.tcpFilterLock.Lock()
 			copy(backends, lis.c.Backends)
 			sort.SliceStable(backends, func(i, j int) bool {
 				ihits := *(backends[i].Any.(*int))
@@ -256,7 +225,7 @@ func ListenMultiSS(service string, c *Config) (lis net.Listener, err error) {
 				}
 			}
 			lis.c.Backends = backends
-			lis.IvMapLock.Unlock()
+			lis.c.tcpFilterLock.Unlock()
 		}
 	}(lis.(*listener))
 	return
@@ -285,15 +254,8 @@ func ssMultiAcceptHandler(conn Conn, lis *listener) (c Conn) {
 		return
 	}
 	if chs.Ivlen != 0 {
-		iv := string(dec.GetIV())
-		lis.IvMapLock.Lock()
-		_, ok := lis.IvMap[iv]
-		if !ok {
-			lis.IvMap[iv] = true
-			*(chs.Any.(*int))++
-		}
-		lis.IvMapLock.Unlock()
-		if ok {
+		exists := chs.tcpFilterTestAndAdd(dec.GetIV())
+		if exists {
 			lis.c.Log("receive duplicate iv from", conn.RemoteAddr().String(), ", this means that you maight be attacked!")
 			return
 		}
@@ -343,14 +305,8 @@ func ssAcceptHandler(conn Conn, lis *listener) (c Conn) {
 		return
 	}
 	if lis.c.Ivlen != 0 {
-		iv := string(dec.GetIV())
-		lis.IvMapLock.Lock()
-		_, ok := lis.IvMap[iv]
-		if !ok {
-			lis.IvMap[iv] = true
-		}
-		lis.IvMapLock.Unlock()
-		if ok {
+		exists := lis.c.tcpFilterTestAndAdd(dec.GetIV())
+		if exists {
 			lis.c.Log("receive duplicate iv from", conn.RemoteAddr().String(), ", this means that you maight be attacked!")
 			return
 		}

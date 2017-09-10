@@ -40,6 +40,10 @@ func (c *UDPConn) ReadFrom(b []byte) (n int, addr net.Addr, err error) {
 		if err != nil {
 			return
 		}
+		exists := c.c.udpFilterTestAndAdd(dec.GetIV())
+		if exists {
+			continue
+		}
 		rbuf := b[c.c.Ivlen:n]
 		dec.Decrypt(b, rbuf)
 		n -= c.c.Ivlen
@@ -90,15 +94,13 @@ func (c *UDPConn) WriteBuffers(bufs [][]byte) (n int, err error) {
 type MultiUDPConn struct {
 	*net.UDPConn
 	c        *Config
-	sessions map[string]*Config
-	lock     sync.Mutex
+	sessions sync.Map
 }
 
 func NewMultiUDPConn(conn *net.UDPConn, c *Config) *MultiUDPConn {
 	return &MultiUDPConn{
-		UDPConn:  conn,
-		c:        c,
-		sessions: make(map[string]*Config),
+		UDPConn: conn,
+		c:       c,
 	}
 }
 
@@ -117,30 +119,35 @@ func (c *MultiUDPConn) ReadFrom(b []byte) (n int, addr net.Addr, err error) {
 		if n > 1500 {
 			continue
 		}
-		c.lock.Lock()
-		v, ok := c.sessions[addr.String()]
-		c.lock.Unlock()
+		v, ok := c.sessions.Load(addr.String())
 		var dec utils.Decrypter
 		if !ok {
 			buf := make([]byte, n)
-			sock, data, _, chs, err := ParseAddrWithMultipleBackends(b2[:n], buf, c.c.Backends)
+			sock, data, dec, chs, err := ParseAddrWithMultipleBackends(b2[:n], buf, c.c.Backends)
 			if err != nil {
 				continue
 			}
-			c.lock.Lock()
-			c.sessions[addr.String()] = chs
-			c.lock.Unlock()
+			exists := chs.udpFilterTestAndAdd(dec.GetIV())
+			if exists {
+				continue
+			}
+			c.sessions.Store(addr.String(), chs)
 			// *(chs.Any.(*int))++
 			chs.LogD("udp mode choose", chs.Method, chs.Password)
 			n = copy(b, sock.header)
 			n += copy(b[n:], data)
 		} else {
-			dec, err = utils.NewDecrypter(v.Method, v.Password, b2[:v.Ivlen])
+			cfg := v.(*Config)
+			dec, err = utils.NewDecrypter(cfg.Method, cfg.Password, b2[:cfg.Ivlen])
 			if err != nil {
 				return
 			}
-			dec.Decrypt(b, b2[v.Ivlen:n])
-			n -= v.Ivlen
+			exists := cfg.udpFilterTestAndAdd(dec.GetIV())
+			if exists {
+				continue
+			}
+			dec.Decrypt(b, b2[cfg.Ivlen:n])
+			n -= cfg.Ivlen
 		}
 		return
 	}
@@ -152,25 +159,22 @@ func (c *MultiUDPConn) WriteTo(b []byte, addr net.Addr) (n int, err error) {
 			n = len(b)
 		}
 	}()
-	c.lock.Lock()
-	v, ok := c.sessions[addr.String()]
-	c.lock.Unlock()
+	v, ok := c.sessions.Load(addr.String())
 	if !ok {
 		return
 	}
-	enc, err := utils.NewEncrypter(v.Method, v.Password)
+	cfg := v.(*Config)
+	enc, err := utils.NewEncrypter(cfg.Method, cfg.Password)
 	if err != nil {
 		return
 	}
-	b2 := make([]byte, v.Ivlen+len(b))
+	b2 := make([]byte, cfg.Ivlen+len(b))
 	copy(b2, enc.GetIV())
-	enc.Encrypt(b2[v.Ivlen:], b)
+	enc.Encrypt(b2[cfg.Ivlen:], b)
 	_, err = c.UDPConn.WriteTo(b2, addr)
 	return
 }
 
 func (c *MultiUDPConn) RemoveAddr(addr net.Addr) {
-	c.lock.Lock()
-	defer c.lock.Unlock()
-	delete(c.sessions, addr.String())
+	c.sessions.Delete(addr.String())
 }

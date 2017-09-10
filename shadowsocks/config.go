@@ -6,46 +6,54 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
+	"sync"
 
 	"github.com/ccsexyz/utils"
+	"github.com/willf/bloom"
 )
 
 type Config struct {
-	Nickname     string    `json:"nickname"`
-	Type         string    `json:"type"`
-	Localaddr    string    `json:"localaddr"`
-	Remoteaddr   string    `json:"remoteaddr"`
-	Method       string    `json:"method"`
-	Password     string    `json:"password"`
-	Nonop        bool      `json:"nonop"`
-	UDPRelay     bool      `json:"udprelay"`
-	Backend      *Config   `json:"backend"`
-	Backends     []*Config `json:"backends"`
-	Verbose      bool      `json:"verbose"`
-	Debug        bool      `json:"debug"`
-	LogFile      string    `json:"logfile"`
-	Obfs         bool      `json:"obfs"`
-	ObfsHost     []string  `json:"obfshost"`
-	ObfsAlive    bool      `json:"obfsalive"`
-	Mux          bool      `json:"mux"`
-	Limit        int       `json:"limit"`
-	LimitPerConn int       `json:"limitperconn"`
-	LogHTTP      bool      `json:"loghttp"`
-	PartEncHTTPS bool      `json:"partenchttps"`
-	PartEnc      bool      `json:"partenc"`
-	Timeout      int       `json:"timeout"`
-	Snappy       bool      `json:"snappy"`
-	limiters     []*Limiter
-	Vlogger      *log.Logger
-	Dlogger      *log.Logger
-	Logger       *log.Logger
-	logfile      *os.File
-	Ivlen        int
-	Any          interface{}
-	Die          chan bool
-	pool         *ConnPool
-	muxDialer    *MuxDialer
-	closers      []cb
+	Nickname       string    `json:"nickname"`
+	Type           string    `json:"type"`
+	Localaddr      string    `json:"localaddr"`
+	Remoteaddr     string    `json:"remoteaddr"`
+	Method         string    `json:"method"`
+	Password       string    `json:"password"`
+	Nonop          bool      `json:"nonop"`
+	UDPRelay       bool      `json:"udprelay"`
+	Backend        *Config   `json:"backend"`
+	Backends       []*Config `json:"backends"`
+	Verbose        bool      `json:"verbose"`
+	Debug          bool      `json:"debug"`
+	LogFile        string    `json:"logfile"`
+	Obfs           bool      `json:"obfs"`
+	ObfsHost       []string  `json:"obfshost"`
+	ObfsAlive      bool      `json:"obfsalive"`
+	Mux            bool      `json:"mux"`
+	Limit          int       `json:"limit"`
+	LimitPerConn   int       `json:"limitperconn"`
+	LogHTTP        bool      `json:"loghttp"`
+	PartEncHTTPS   bool      `json:"partenchttps"`
+	PartEnc        bool      `json:"partenc"`
+	Timeout        int       `json:"timeout"`
+	Snappy         bool      `json:"snappy"`
+	FilterCapacity int       `json:"filtcap"`
+	limiters       []*Limiter
+	Vlogger        *log.Logger
+	Dlogger        *log.Logger
+	Logger         *log.Logger
+	logfile        *os.File
+	Ivlen          int
+	Any            interface{}
+	Die            chan bool
+	pool           *ConnPool
+	muxDialer      *MuxDialer
+	closers        []cb
+	tcpFilterLock  sync.Mutex
+	tcpFilterOnce  sync.Once
+	tcpFilter      *bloom.BloomFilter
+	udpFilterOnce  sync.Once
+	udpFilter      *bloom.BloomFilter
 }
 
 func ReadConfig(path string) (configs []*Config, err error) {
@@ -83,6 +91,32 @@ func (c *Config) Close() error {
 		f()
 	}
 	return nil
+}
+
+func initBloomFilter(c *Config, f **bloom.BloomFilter) {
+	*f = bloom.NewWithEstimates(uint(c.FilterCapacity), defaultFilterFalseRate)
+}
+
+func (c *Config) udpFilterTestAndAdd(b []byte) bool {
+	if c.Ivlen == 0 {
+		return false
+	}
+	c.udpFilterOnce.Do(func() {
+		initBloomFilter(c, &c.udpFilter)
+	})
+	return c.udpFilter.TestAndAdd(b)
+}
+
+func (c *Config) tcpFilterTestAndAdd(b []byte) bool {
+	if c.Ivlen == 0 {
+		return false
+	}
+	c.tcpFilterOnce.Do(func() {
+		initBloomFilter(c, &c.tcpFilter)
+	})
+	c.tcpFilterLock.Lock()
+	defer c.tcpFilterLock.Unlock()
+	return c.tcpFilter.TestAndAdd(b)
 }
 
 func CheckLogFile(c *Config) {
@@ -133,6 +167,9 @@ func CheckBasicConfig(c *Config) {
 	}
 	if c.Timeout == 0 {
 		c.Timeout = defaultTimeout
+	}
+	if c.FilterCapacity == 0 {
+		c.FilterCapacity = defaultFilterCapacity
 	}
 }
 
