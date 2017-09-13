@@ -19,8 +19,8 @@ done
 # ARM
 ARMS=(5 6 7)
 for v in ${ARMS[@]}; do
-	env CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=$v go build -ldflags "$LDFLAGS" -gcflags "$GCFLAGS" -o shadowsocks_linux_arm$v  github.com/ccsexyz/shadowsocks-go
-	env CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=$v go build -ldflags "$LDFLAGS" -gcflags "$GCFLAGS" -tags goprof -o shadowsocks_linux_arm$v_pprof  github.com/ccsexyz/shadowsocks-go
+	env CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=$v go build -ldflags "$LDFLAGS" -gcflags "$GCFLAGS" -o shadowsocks_linux_arm${v}  github.com/ccsexyz/shadowsocks-go
+	env CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=$v go build -ldflags "$LDFLAGS" -gcflags "$GCFLAGS" -tags goprof -o shadowsocks_linux_arm${v}_pprof  github.com/ccsexyz/shadowsocks-go
 done
 
 #MIPS32LE

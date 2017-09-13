@@ -254,7 +254,12 @@ func ssMultiAcceptHandler(conn Conn, lis *listener) (c Conn) {
 		return
 	}
 	if chs.Ivlen != 0 {
-		exists := chs.tcpFilterTestAndAdd(dec.GetIV())
+		var exists bool
+		if addr.ts {
+			exists = !(chs.tcpIvChecker.check(utils.SliceToString(dec.GetIV())))
+		} else {
+			exists = chs.tcpFilterTestAndAdd(dec.GetIV())
+		}
 		if exists {
 			lis.c.Log("receive duplicate iv from", conn.RemoteAddr().String(), ", this means that you maight be attacked!")
 			return
@@ -305,7 +310,12 @@ func ssAcceptHandler(conn Conn, lis *listener) (c Conn) {
 		return
 	}
 	if lis.c.Ivlen != 0 {
-		exists := lis.c.tcpFilterTestAndAdd(dec.GetIV())
+		var exists bool
+		if addr.ts {
+			exists = !(lis.c.tcpIvChecker.check(utils.SliceToString(dec.GetIV())))
+		} else {
+			exists = lis.c.tcpFilterTestAndAdd(dec.GetIV())
+		}
 		if exists {
 			lis.c.Log("receive duplicate iv from", conn.RemoteAddr().String(), ", this means that you maight be attacked!")
 			return
@@ -438,7 +448,7 @@ func httpProxyAcceptor(conn Conn, lis *listener) (c Conn) {
 	if err != nil {
 		return
 	}
-	uri := SliceToString(requestURI)
+	uri := utils.SliceToString(requestURI)
 	if bytes.Equal(requestMethod, []byte("CONNECT")) {
 		host, port, err := net.SplitHostPort(uri)
 		if err != nil {

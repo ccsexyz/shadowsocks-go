@@ -54,6 +54,7 @@ type Config struct {
 	tcpFilter      *bloom.BloomFilter
 	udpFilterOnce  sync.Once
 	udpFilter      *bloom.BloomFilter
+	tcpIvChecker   ivChecker
 }
 
 func ReadConfig(path string) (configs []*Config, err error) {

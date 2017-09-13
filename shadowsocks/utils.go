@@ -5,11 +5,9 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net"
-	"reflect"
 	"strconv"
 	"sync"
 	"time"
-	"unsafe"
 
 	"github.com/ccsexyz/utils"
 )
@@ -167,6 +165,7 @@ outer:
 				dec.Decrypt(buf, b[off:off+1])
 				atyp = buf[0]
 				off++
+				addr.ts = true
 			case typePartEnc:
 				if n < off+2 {
 					continue outer
@@ -264,9 +263,9 @@ outer:
 func checkTimestamp(ts int64) (ok bool) {
 	nts := time.Now().Unix()
 	if nts >= ts {
-		return (nts - ts) <= 64
+		return (nts - ts) <= 4
 	}
-	return (ts - nts) <= 64
+	return (ts - nts) <= 4
 }
 
 func ParseAddr(b []byte) (addr *SockAddr, data []byte, err error) {
@@ -314,6 +313,7 @@ l:
 			b = b[lenTs+1:]
 			n = len(b)
 			atyp = b[0]
+			addr.ts = true
 		case typePartEnc:
 			if n < 3 {
 				return
@@ -586,13 +586,14 @@ type SockAddr struct {
 	partEncLen int
 	snappy     bool
 	nop        bool
+	ts         bool
 }
 
 func (s *SockAddr) Host() string {
 	b := s.header
 	switch b[0] {
 	default:
-		return SliceToString(b[2 : 2+int(b[1])])
+		return utils.SliceToString(b[2 : 2+int(b[1])])
 	case typeIPv4:
 		return net.IP(b[1 : lenIPv4+1]).String()
 	case typeIPv6:
@@ -644,23 +645,6 @@ func (d *DstAddr) Header() []byte {
 	return d.header
 }
 
-func SliceToString(b []byte) (s string) {
-	pbytes := (*reflect.SliceHeader)(unsafe.Pointer(&b))
-	pstring := (*reflect.StringHeader)(unsafe.Pointer(&s))
-	pstring.Data = pbytes.Data
-	pstring.Len = pbytes.Len
-	return
-}
-
-func StringToSlice(s string) (b []byte) {
-	pbytes := (*reflect.SliceHeader)(unsafe.Pointer(&b))
-	pstring := (*reflect.StringHeader)(unsafe.Pointer(&s))
-	pbytes.Data = pstring.Data
-	pbytes.Len = pstring.Len
-	pbytes.Cap = pstring.Len
-	return
-}
-
 func SliceCopy(b []byte) []byte {
 	c := make([]byte, len(b))
 	copy(c, b)
@@ -677,4 +661,37 @@ func Dial(network, address string) (Conn, error) {
 
 type Dialer interface {
 	Dial(string, *Config) (Conn, error)
+}
+
+type ivChecker struct {
+	ivs1    map[string]bool
+	ivs2    map[string]bool
+	expires time.Time
+	lock    sync.Mutex
+	once    sync.Once
+}
+
+func (c *ivChecker) check(iv string) bool {
+	c.once.Do(func() {
+		c.ivs1 = make(map[string]bool)
+		c.ivs2 = make(map[string]bool)
+		c.expires = time.Now().Add(time.Second * 10)
+	})
+	c.lock.Lock()
+	defer c.lock.Unlock()
+	if time.Now().After(c.expires) {
+		c.expires = time.Now().Add(time.Second * 10)
+		c.ivs1 = c.ivs2
+		c.ivs2 = make(map[string]bool)
+	}
+	_, ok := c.ivs1[iv]
+	if ok {
+		return false
+	}
+	_, ok = c.ivs2[iv]
+	if ok {
+		return false
+	}
+	c.ivs2[iv] = true
+	return true
 }
