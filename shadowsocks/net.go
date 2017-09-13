@@ -495,6 +495,13 @@ func httpProxyAcceptor(conn Conn, lis *listener) (c Conn) {
 	return
 }
 
+func SocksAcceptor(conn net.Conn) (c net.Conn) {
+	C := Newsconn(conn)
+	var lis listener
+	lis.c = &Config{}
+	return socksAcceptor(C, &lis)
+}
+
 func socksAcceptor(conn Conn, lis *listener) (c Conn) {
 	defer func() {
 		if conn != nil && c == nil {
