@@ -752,7 +752,10 @@ func DialSSWithRawHeader(header []byte, service string, c *Config) (conn Conn, e
 		copy(rconn.wremain, header)
 		conn = rconn
 	} else {
-		port := binary.BigEndian.Uint16(header[len(header)-2:])
+		var port uint16 
+		if len(header) > 2 {
+			port = binary.BigEndian.Uint16(header[len(header)-2:])
+		}
 		if c.PartEnc || (c.PartEncHTTPS && len(header) > 2 && port == 443) {
 			C.partenc = true
 			C.partencnum = 4096
