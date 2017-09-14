@@ -232,7 +232,7 @@ func ListenMultiSS(service string, c *Config) (lis net.Listener, err error) {
 }
 
 func ssMultiAcceptHandler(conn Conn, lis *listener) (c Conn) {
-	C := NewSsConn(conn, nil)
+	C := NewSsConn(conn, lis.c)
 	defer func() {
 		if conn != nil && c == nil {
 			conn.Close()
@@ -362,15 +362,18 @@ func muxAcceptHandler(conn Conn, lis *listener) (c Conn) {
 	if err != nil {
 		return
 	}
+	conn.SetReadDeadline(time.Time{})
 	conn = nil
-	defer mux.Close()
-	for {
-		muxconn, err := mux.AcceptMux()
-		if err != nil {
-			return
+	go func() {
+		defer mux.Close()
+		for {
+			muxconn, err := mux.AcceptMux()
+			if err != nil {
+				return
+			}
+			go lis.muxConnHandler(&MuxConn{conn: dstcon.Conn, Conn: muxconn})
 		}
-		go lis.muxConnHandler(&MuxConn{conn: dstcon.Conn, Conn: muxconn})
-	}
+	}()
 	return
 }
 
@@ -752,7 +755,7 @@ func DialSSWithRawHeader(header []byte, service string, c *Config) (conn Conn, e
 		copy(rconn.wremain, header)
 		conn = rconn
 	} else {
-		var port uint16 
+		var port uint16
 		if len(header) > 2 {
 			port = binary.BigEndian.Uint16(header[len(header)-2:])
 		}
