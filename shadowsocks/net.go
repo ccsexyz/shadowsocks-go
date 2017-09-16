@@ -559,7 +559,8 @@ func socksAcceptor(conn Conn, lis *listener) (c Conn) {
 		if err != nil {
 			return
 		}
-		c.SetDst(dstaddr)
+		conn.SetDst(dstaddr)
+		c = conn
 		return
 	}
 	if ver == verSocks5 {
@@ -598,7 +599,8 @@ func socksAcceptor(conn Conn, lis *listener) (c Conn) {
 		if err != nil {
 			return
 		}
-		c.SetDst(addr)
+		conn.SetDst(addr)
+		c = conn
 		return
 	}
 	return
@@ -638,7 +640,8 @@ func redirAcceptor(conn Conn, lis *listener) (c Conn) {
 	if err != nil {
 		return
 	}
-	c.SetDst(&DstAddr{host: host, port: port})
+	conn.SetDst(&DstAddr{host: host, port: port})
+	c = conn
 	return
 }
 
