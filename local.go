@@ -1,8 +1,6 @@
 package main
 
 import (
-	"net"
-
 	ss "github.com/ccsexyz/shadowsocks-go/shadowsocks"
 )
 
@@ -10,24 +8,21 @@ func RunTCPLocalServer(c *ss.Config) {
 	RunTCPServer(c.Localaddr, c, ss.ListenSocks5, tcpLocalHandler)
 }
 
-// type HttpRequestLogConn struct {
-// 	net.Conn
-// }
-
-func tcpLocalHandler(conn net.Conn, c *ss.Config) {
+func tcpLocalHandler(conn ss.Conn, c *ss.Config) {
 	defer conn.Close()
-	dst, err := ss.GetDstConn(conn)
-	if err != nil {
+	target := GetDstOfConn(conn)
+	if len(target) == 0 {
 		return
 	}
-	target := dst.GetDst()
 	rconn, err := ss.DialSS(target, c.Remoteaddr, c)
 	if err != nil {
 		c.Log("failed connect to", target, err)
 		return
 	}
 	defer rconn.Close()
-	c.Log("connect to ", target, "from", conn.RemoteAddr().String())
+	c.Log("proxy", target, "from", conn.RemoteAddr(), "->",
+		conn.LocalAddr(), "to", rconn.LocalAddr(), "->",
+		rconn.RemoteAddr())
 	// lim, err := ss.GetLimitConn(conn)
 	// if err == nil {
 	// 	defer func() {

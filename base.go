@@ -10,7 +10,7 @@ import (
 
 func RunTCPServer(address string, c *ss.Config,
 	listen func(string, *ss.Config) (net.Listener, error),
-	handler func(net.Conn, *ss.Config)) {
+	handler func(ss.Conn, *ss.Config)) {
 	lis, err := listen(address, c)
 	if err != nil {
 		c.Logger.Fatal(err)
@@ -27,7 +27,7 @@ func RunTCPServer(address string, c *ss.Config,
 		if err != nil {
 			return
 		}
-		go handler(conn, c)
+		go handler(conn.(ss.Conn), c)
 	}
 }
 
@@ -147,4 +147,12 @@ func RunUDPServer(conn net.PacketConn, c *ss.Config, check func([]byte) bool, ha
 			}
 		}
 	}
+}
+
+func GetDstOfConn(conn ss.Conn) string {
+	dst := conn.GetDst()
+	if dst == nil {
+		return ""
+	}
+	return dst.String()
 }

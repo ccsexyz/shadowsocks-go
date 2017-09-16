@@ -12,14 +12,19 @@ import (
 
 type UDPConn struct {
 	*net.UDPConn
-	c *Config
+	cfgCtx
+	dstCtx
 }
 
 func NewUDPConn(conn *net.UDPConn, c *Config) *UDPConn {
 	return &UDPConn{
 		UDPConn: conn,
-		c:       c,
+		cfgCtx:  cfgCtx{c: c},
 	}
+}
+
+func (c *UDPConn) GetCfg() *Config {
+	return c.c
 }
 
 func (c *UDPConn) ReadFrom(b []byte) (n int, addr net.Addr, err error) {

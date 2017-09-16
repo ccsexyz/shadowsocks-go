@@ -10,30 +10,53 @@ import (
 	"github.com/golang/snappy"
 )
 
-type Conn utils.Conn
-
-type sconn struct {
-	net.Conn
-	// r *bufio.Reader
+type Conn interface {
+	utils.Conn
+	GetCfg() *Config
+	SetDst(Addr)
+	GetDst() Addr
 }
 
-func Newsconn(c net.Conn) *sconn {
-	// return &sconn{Conn: c, r: bufio.NewReader(c)}
-	return &sconn{Conn: c}
+type cfg = Config
+
+type cfgCtx struct {
+	c *Config
 }
 
-func (c *sconn) WriteBuffers(b [][]byte) (n int, err error) {
-	buffers := net.Buffers(b)
-	var n2 int64
-	n2, err = buffers.WriteTo(c.Conn)
-	n = int(n2)
-	return
+func (ctx *cfgCtx) GetCfg() *Config {
+	return ctx.c
 }
 
-// func (c *sconn) Read(b []byte) (n int, err error) {
-// 	n, err = c.r.Read(b)
-// 	return
-// }
+type dstCtx struct {
+	dst Addr
+}
+
+func (ctx *dstCtx) SetDst(dst Addr) {
+	ctx.dst = dst
+}
+
+func (ctx *dstCtx) GetDst() Addr {
+	return ctx.dst
+}
+
+type TCPConn struct {
+	utils.Conn
+	cfgCtx
+	dstCtx
+}
+
+func newTCPConn(conn utils.Conn, cfg *cfg) *TCPConn {
+	return &TCPConn{
+		Conn: conn,
+		cfgCtx: cfgCtx{
+			c: cfg,
+		},
+	}
+}
+
+func newTCPConn2(conn net.Conn, cfg *cfg) *TCPConn {
+	return newTCPConn(utils.NewConn(conn), cfg)
+}
 
 var (
 	xuch  chan net.Conn
@@ -47,11 +70,11 @@ func init() {
 }
 
 type DebugConn struct {
-	net.Conn
+	Conn
 	c *Config
 }
 
-func NewDebugConn(conn net.Conn, c *Config) *DebugConn {
+func NewDebugConn(conn Conn, c *Config) *DebugConn {
 	return &DebugConn{Conn: conn, c: c}
 }
 
@@ -71,7 +94,7 @@ func (c *DebugConn) Write(b []byte) (n int, err error) {
 	return
 }
 
-func debugAcceptHandler(conn net.Conn, lis *listener) (c net.Conn) {
+func debugAcceptHandler(conn Conn, lis *listener) (c Conn) {
 	if lis.c.Debug {
 		c = &DebugConn{
 			Conn: conn,
@@ -293,19 +316,6 @@ func xuroutine() {
 	}
 }
 
-type DstConn struct {
-	Conn
-	dst Addr
-}
-
-func NewDstConn(conn net.Conn, dst Addr) *DstConn {
-	return &DstConn{Conn: GetConn(conn), dst: dst}
-}
-
-func (c *DstConn) GetDst() string {
-	return net.JoinHostPort(c.dst.Host(), c.dst.Port())
-}
-
 type LimitConn struct {
 	Conn
 	Rlimiters []*Limiter
@@ -355,19 +365,14 @@ func limitAcceptHandler(conn Conn, lis *listener) (c Conn) {
 	return
 }
 
-type MuxConn struct {
-	conn Conn
-	Conn
-}
-
 type HttpLogConn struct {
-	net.Conn
+	Conn
 	pr *utils.HTTPHeaderParser
 	pw *utils.HTTPHeaderParser
 	c  *Config
 }
 
-func NewHttpLogConn(conn net.Conn, c *Config) *HttpLogConn {
+func NewHttpLogConn(conn Conn, c *Config) *HttpLogConn {
 	return &HttpLogConn{
 		Conn: conn,
 		pr:   utils.NewHTTPHeaderParser(bufPool.Get().([]byte)),
@@ -438,12 +443,12 @@ func (conn *HttpLogConn) Write(b []byte) (n int, err error) {
 }
 
 type SnappyConn struct {
-	net.Conn
+	Conn
 	w *snappy.Writer
 	r *snappy.Reader
 }
 
-func NewSnappyConn(conn net.Conn) *SnappyConn {
+func NewSnappyConn(conn Conn) *SnappyConn {
 	return &SnappyConn{
 		Conn: conn,
 		w:    snappy.NewBufferedWriter(conn),

@@ -30,6 +30,7 @@ type Config struct {
 	ObfsHost       []string  `json:"obfshost"`
 	ObfsAlive      bool      `json:"obfsalive"`
 	Mux            bool      `json:"mux"`
+	MuxLimit       int       `json:"muxlimit"`
 	Limit          int       `json:"limit"`
 	LimitPerConn   int       `json:"limitperconn"`
 	LogHTTP        bool      `json:"loghttp"`

@@ -45,7 +45,7 @@ func NewListener(lis *net.TCPListener, c *Config, handlers []ListenHandler) *lis
 func (lis *listener) acceptor() {
 	defer lis.Close()
 	for {
-		conn, err := lis.TCPListener.Accept()
+		conn, err := lis.TCPListener.AcceptTCP()
 		if err != nil {
 			if operr, ok := err.(*net.OpError); ok {
 				lis.c.Log(operr.Net, operr.Op, operr.Addr, operr.Err)
@@ -57,11 +57,7 @@ func (lis *listener) acceptor() {
 			lis.errch <- err
 			return
 		}
-		if len(lis.handlers) == 0 {
-			conn.Close()
-			continue
-		}
-		go lis.handleNewConn(Newsconn(conn))
+		go lis.handleNewConn(newTCPConn(utils.NewConn(conn), lis.c))
 	}
 }
 
@@ -276,7 +272,7 @@ func ssMultiAcceptHandler(conn Conn, lis *listener) (c Conn) {
 	if len(data) != 0 {
 		conn = &RemainConn{Conn: C, remain: data}
 	}
-	conn = NewDstConn(conn, addr)
+	conn.SetDst(addr)
 	if addr.snappy {
 		conn = NewSnappyConn(conn)
 	}
@@ -335,7 +331,7 @@ func ssAcceptHandler(conn Conn, lis *listener) (c Conn) {
 	if len(data) != 0 {
 		conn = &RemainConn{Conn: C, remain: data}
 	}
-	conn = NewDstConn(conn, addr)
+	conn.SetDst(addr)
 	if addr.snappy {
 		conn = NewSnappyConn(conn)
 	}
@@ -349,16 +345,16 @@ func muxAcceptHandler(conn Conn, lis *listener) (c Conn) {
 			conn.Close()
 		}
 	}()
-	dstcon, err := GetDstConn(conn)
-	if err != nil {
+	dstaddr := conn.GetDst()
+	if dstaddr == nil {
 		return
 	}
-	if dstcon.GetDst() != muxaddr {
+	if net.JoinHostPort(dstaddr.Host(), dstaddr.Port()) != muxaddr {
 		c = conn
 		conn = nil
 		return
 	}
-	mux, err := mux.NewMux(dstcon.Conn)
+	mux, err := mux.NewMux(conn)
 	if err != nil {
 		return
 	}
@@ -371,7 +367,7 @@ func muxAcceptHandler(conn Conn, lis *listener) (c Conn) {
 			if err != nil {
 				return
 			}
-			go lis.muxConnHandler(&MuxConn{conn: dstcon.Conn, Conn: muxconn})
+			go lis.muxConnHandler(newTCPConn2(muxconn, lis.c))
 		}
 	}()
 	return
@@ -399,7 +395,7 @@ func (lis *listener) muxConnHandler(conn Conn) {
 	if err != nil {
 		return
 	}
-	conn = NewDstConn(conn, &dst)
+	conn.SetDst(&dst)
 	select {
 	case lis.connch <- conn:
 	case <-lis.die:
@@ -462,7 +458,8 @@ func httpProxyAcceptor(conn Conn, lis *listener) (c Conn) {
 			return
 		}
 		conn = DecayRemainConn(conn)
-		c = NewDstConn(conn, &DstAddr{host: host, port: port})
+		conn.SetDst(&DstAddr{host: host, port: port})
+		c = conn
 		return
 	}
 	if bytes.HasPrefix(requestURI, []byte("http://")) {
@@ -504,15 +501,15 @@ func httpProxyAcceptor(conn Conn, lis *listener) (c Conn) {
 		rconn = &RemainConn{Conn: conn}
 	}
 	rconn.remain = append(rconn.remain, buf...)
-	c = NewDstConn(rconn, &DstAddr{host: host, port: port})
+	conn.SetDst(&DstAddr{host: host, port: port})
+	c = conn
 	return
 }
 
 func SocksAcceptor(conn net.Conn) (c net.Conn) {
-	C := Newsconn(conn)
 	var lis listener
 	lis.c = &Config{}
-	return socksAcceptor(C, &lis)
+	return socksAcceptor(newTCPConn2(conn, nil), &lis)
 }
 
 func socksAcceptor(conn Conn, lis *listener) (c Conn) {
@@ -562,7 +559,7 @@ func socksAcceptor(conn Conn, lis *listener) (c Conn) {
 		if err != nil {
 			return
 		}
-		c = NewDstConn(conn, dstaddr)
+		c.SetDst(dstaddr)
 		return
 	}
 	if ver == verSocks5 {
@@ -601,7 +598,7 @@ func socksAcceptor(conn Conn, lis *listener) (c Conn) {
 		if err != nil {
 			return
 		}
-		c = NewDstConn(conn, addr)
+		c.SetDst(addr)
 		return
 	}
 	return
@@ -627,7 +624,7 @@ func redirAcceptor(conn Conn, lis *listener) (c Conn) {
 			conn.Close()
 		}
 	}()
-	tconn, err := GetTCPConn(conn)
+	tconn, err := GetNetTCPConn(conn)
 	if err != nil {
 		lis.c.Log(err)
 		return
@@ -641,7 +638,7 @@ func redirAcceptor(conn Conn, lis *listener) (c Conn) {
 	if err != nil {
 		return
 	}
-	c = NewDstConn(conn, &DstAddr{host: host, port: port})
+	c.SetDst(&DstAddr{host: host, port: port})
 	return
 }
 
@@ -657,7 +654,7 @@ func DialMultiSS(target string, configs []*Config) (conn net.Conn, err error) {
 			if len(v.Remoteaddr) != 0 {
 				rconn, err = DialSS(target, v.Remoteaddr, v)
 			} else {
-				rconn, err = net.Dial("tcp", target)
+				rconn, err = DialTCP(target, v)
 			}
 			if err != nil {
 				select {
@@ -729,7 +726,7 @@ func DialSSWithRawHeader(header []byte, service string, c *Config) (conn Conn, e
 	if c.Obfs {
 		conn, err = DialObfs(service, c)
 	} else {
-		conn, err = Dial("tcp", service)
+		conn, err = DialTCP(service, c)
 	}
 	if err != nil {
 		return
@@ -788,7 +785,16 @@ func DialSSWithRawHeader(header []byte, service string, c *Config) (conn Conn, e
 }
 
 func ListenTCPTun(address string, c *Config) (lis net.Listener, err error) {
-	lis, err = net.Listen("tcp", address)
+	addr, err := net.ResolveTCPAddr("tcp", address)
+	if err != nil {
+		return
+	}
+
+	l, err := net.ListenTCP("tcp", addr)
+	if err != nil {
+		return
+	}
+	lis = NewListener(l, c, []ListenHandler{})
 	return
 }
 
@@ -850,7 +856,8 @@ func (md *MuxDialer) Dial(service string, c *Config) (conn Conn, err error) {
 				}
 				return
 			}
-			mconn, err := v.mux.Dial()
+			var mconn net.Conn
+			mconn, err = v.mux.Dial()
 			if err != nil {
 				v.mux.Close()
 				md.lock.Lock()
@@ -870,7 +877,7 @@ func (md *MuxDialer) Dial(service string, c *Config) (conn Conn, err error) {
 				return
 			}
 			select {
-			case connch <- mconn:
+			case connch <- newTCPConn2(mconn, c):
 			case <-die:
 				mconn.Close()
 			}
@@ -882,14 +889,15 @@ func (md *MuxDialer) Dial(service string, c *Config) (conn Conn, err error) {
 			var smux *mux.Mux
 			smux, err = mux.NewMux(ssconn)
 			if err == nil {
-				var mconn Conn
-				mconn, err = smux.Dial()
+				var nconn net.Conn
+				nconn, err = smux.Dial()
 				if err == nil {
+					mconn := newTCPConn2(nconn, c)
 					select {
 					case <-die:
 					case connch <- mconn:
 						md.lock.Lock()
-						md.muxs = append(md.muxs, &muxDialerInfo{mux: smux, ts: time.Now().Add(time.Second * 6)})
+						md.muxs = append(md.muxs, &muxDialerInfo{mux: smux, ts: time.Now().Add(time.Second * 60)})
 						md.lock.Unlock()
 						return
 					}
@@ -933,6 +941,14 @@ out:
 		case <-timeoutch:
 			if fstarted {
 				continue out
+			}
+			if c.MuxLimit > 0 {
+				md.lock.Lock()
+				nmuxs := len(md.muxs)
+				md.lock.Unlock()
+				if nmuxs >= c.MuxLimit {
+					break
+				}
 			}
 			n++
 			fstarted = true

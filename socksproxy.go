@@ -1,8 +1,6 @@
 package main
 
 import (
-	"net"
-
 	ss "github.com/ccsexyz/shadowsocks-go/shadowsocks"
 )
 
@@ -10,13 +8,12 @@ func RunSocksProxyServer(c *ss.Config) {
 	RunTCPServer(c.Localaddr, c, ss.ListenSocks5, socksProxyHandler)
 }
 
-func socksProxyHandler(conn net.Conn, c *ss.Config) {
+func socksProxyHandler(conn ss.Conn, c *ss.Config) {
 	defer conn.Close()
-	dst, err := ss.GetDstConn(conn)
-	if err != nil {
+	target := GetDstOfConn(conn)
+	if len(target) == 0 {
 		return
 	}
-	target := dst.GetDst()
 	rconn, err := ss.DialMultiSS(target, c.Backends)
 	if err != nil {
 		c.Log(err)
@@ -26,6 +23,7 @@ func socksProxyHandler(conn net.Conn, c *ss.Config) {
 	if c.LogHTTP {
 		conn = ss.NewHttpLogConn(conn, c)
 	}
-	c.Log("proxy", target, "to", rconn.RemoteAddr().String(), "from", conn.RemoteAddr().String())
+	c.Log("proxy", target, "from", conn.RemoteAddr(), "->", conn.LocalAddr(),
+		"to", rconn.LocalAddr(), "->", rconn.RemoteAddr())
 	ss.Pipe(conn, rconn, c)
 }

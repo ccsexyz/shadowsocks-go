@@ -201,7 +201,7 @@ func (c *ObfsConn) readInLock(b []byte) (n int, err error) {
 			if c == '\n' {
 				break
 			}
-			err = fmt.Errorf("unexcepted length character", string(c))
+			err = fmt.Errorf("unexcepted length character %v", c)
 			return
 		}
 		if len(chunkLenStr) == 0 {
@@ -325,7 +325,7 @@ func DialObfs(target string, c *Config) (conn Conn, err error) {
 		conn, err = c.pool.GetNonblock()
 	}
 	if err != nil || c.pool == nil {
-		conn, err = Dial("tcp", target)
+		conn, err = DialTCP(target, c)
 	}
 	if err != nil {
 		return

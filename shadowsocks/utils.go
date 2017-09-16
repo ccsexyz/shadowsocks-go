@@ -476,28 +476,40 @@ func GetInnerConn(conn net.Conn) (c net.Conn, err error) {
 		}
 	}()
 	switch i := conn.(type) {
-	case *sconn:
-		c = i.Conn
 	case *SsConn:
 		c = i.Conn
 	case *DebugConn:
-		c = i.Conn
-	case *DstConn:
 		c = i.Conn
 	case *RemainConn:
 		c = i.Conn
 	case *LimitConn:
 		c = i.Conn
-	case *MuxConn:
-		c = i.conn
 	case *SnappyConn:
 		c = i.Conn
 	}
 	return
 }
 
-func GetTCPConn(conn net.Conn) (c *net.TCPConn, err error) {
-	c, ok := conn.(*net.TCPConn)
+func GetNetTCPConn(conn net.Conn) (c *net.TCPConn, err error) {
+	t, err := GetTCPConn(conn)
+	if err != nil {
+		return
+	}
+	ut, ok := t.Conn.(*utils.UtilsConn)
+	if !ok {
+		err = fmt.Errorf("unexpect conn with type %T", conn)
+		return
+	}
+	c, ok = ut.GetTCPConn()
+	if !ok {
+		err = fmt.Errorf("unexpect conn with type %T", conn)
+		return
+	}
+	return
+}
+
+func GetTCPConn(conn net.Conn) (c *TCPConn, err error) {
+	c, ok := conn.(*TCPConn)
 	if !ok {
 		conn, err = GetInnerConn(conn)
 		if err != nil {
@@ -516,18 +528,6 @@ func GetSsConn(conn net.Conn) (c *SsConn, err error) {
 			return
 		}
 		c, err = GetSsConn(conn)
-	}
-	return
-}
-
-func GetDstConn(conn net.Conn) (dst *DstConn, err error) {
-	dst, ok := conn.(*DstConn)
-	if !ok {
-		conn, err = GetInnerConn(conn)
-		if err != nil {
-			return
-		}
-		dst, err = GetDstConn(conn)
 	}
 	return
 }
@@ -560,7 +560,7 @@ func GetConn(conn net.Conn) (c Conn) {
 	var ok bool
 	c, ok = conn.(Conn)
 	if !ok {
-		c = Newsconn(conn)
+		c = newTCPConn2(conn, nil)
 	}
 	return
 }
@@ -579,6 +579,7 @@ type Addr interface {
 	Host() string
 	Port() string
 	Header() []byte
+	String() string
 }
 
 type SockAddr struct {
@@ -587,6 +588,10 @@ type SockAddr struct {
 	snappy     bool
 	nop        bool
 	ts         bool
+}
+
+func (s *SockAddr) String() string {
+	return net.JoinHostPort(s.Host(), s.Port())
 }
 
 func (s *SockAddr) Host() string {
@@ -637,6 +642,10 @@ func (d *DstAddr) Port() string {
 	return d.port
 }
 
+func (d *DstAddr) String() string {
+	return net.JoinHostPort(d.Host(), d.Port())
+}
+
 func (d *DstAddr) Header() []byte {
 	if d.header == nil {
 		port, _ := strconv.Atoi(d.port)
@@ -651,16 +660,16 @@ func SliceCopy(b []byte) []byte {
 	return c
 }
 
-func Dial(network, address string) (Conn, error) {
-	conn, err := net.Dial(network, address)
+func DialTCP(address string, cfg *cfg) (*TCPConn, error) {
+	raddr, err := net.ResolveTCPAddr("tcp", address)
 	if err != nil {
 		return nil, err
 	}
-	return Newsconn(conn), err
-}
-
-type Dialer interface {
-	Dial(string, *Config) (Conn, error)
+	tconn, err := utils.DialTCP("tcp", nil, raddr)
+	if err != nil {
+		return nil, err
+	}
+	return newTCPConn(tconn, cfg), nil
 }
 
 type ivChecker struct {

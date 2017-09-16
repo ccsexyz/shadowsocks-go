@@ -14,22 +14,16 @@ func RunTCPRemoteServer(c *ss.Config) {
 	RunTCPServer(c.Localaddr, c, ss.ListenSS, tcpRemoteHandler)
 }
 
-func tcpRemoteHandler(conn net.Conn, c *ss.Config) {
+func tcpRemoteHandler(conn ss.Conn, c *ss.Config) {
 	defer conn.Close()
 	C, err := ss.GetSsConn(conn)
 	if err != nil {
-		c.LogD(err)
-		return
+		C = nil
 	}
-	if C.GetConfig() != nil {
-		c = C.GetConfig()
+	if conn.GetCfg() != nil {
+		c = conn.GetCfg()
 	}
-	dst, err := ss.GetDstConn(conn)
-	if err != nil {
-		c.LogD(err)
-		return
-	}
-	target := dst.GetDst()
+	target := GetDstOfConn(conn)
 	if len(target) == 0 {
 		c.LogD("target length is 0")
 		return
@@ -40,8 +34,11 @@ func tcpRemoteHandler(conn net.Conn, c *ss.Config) {
 		return
 	}
 	defer rconn.Close()
-	C.Xu0s()
-	c.Log("connect to", target, "from", conn.RemoteAddr().String())
+	if C != nil {
+		C.Xu0s()
+	}
+	c.Log("proxy", target, "from", conn.RemoteAddr(), "->", conn.LocalAddr(),
+		"to", rconn.LocalAddr(), "->", rconn.RemoteAddr())
 	if c.LogHTTP {
 		conn = ss.NewHttpLogConn(conn, c)
 	}
