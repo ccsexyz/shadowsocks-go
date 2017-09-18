@@ -32,7 +32,5 @@ func RunUDPTunServer(c *ss.Config) {
 		c.Logger.Fatal(err)
 	}
 	defer listener.Close()
-	getDefaultUDPServerCtx().
-		RunUDPServer(listener,
-			getCreateFuncOfUDPTunServer(c))
+	RunUDPServer(listener, c, getCreateFuncOfUDPTunServer)
 }

@@ -4,6 +4,7 @@ import (
 	"net"
 
 	ss "github.com/ccsexyz/shadowsocks-go/shadowsocks"
+	"github.com/ccsexyz/utils"
 )
 
 func RunTCPServer(address string, c *ss.Config,
@@ -35,4 +36,19 @@ func GetDstOfConn(conn ss.Conn) string {
 		return ""
 	}
 	return dst.String()
+}
+
+func getDefaultUDPServerCtx() *utils.UDPServerCtx {
+	return &utils.UDPServerCtx{Mtu: 2048, Expires: 60}
+}
+
+func RunUDPServer(listener net.PacketConn, config *ss.Config, creator func(*ss.Config) func(*utils.SubConn) (net.Conn, net.Conn, error)) {
+	go func() {
+		if config.Die == nil {
+			return
+		}
+		defer listener.Close()
+		<-config.Die
+	}()
+	getDefaultUDPServerCtx().RunUDPServer(listener, creator(config))
 }

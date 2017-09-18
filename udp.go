@@ -9,10 +9,6 @@ import (
 	"github.com/ccsexyz/utils"
 )
 
-func getDefaultUDPServerCtx() *utils.UDPServerCtx {
-	return &utils.UDPServerCtx{Mtu: 2048, Expires: 60}
-}
-
 type udpLocalConn struct {
 	net.Conn
 }
@@ -117,13 +113,12 @@ func getCreateFuncOfUDPRemoteServer(c *ss.Config) func(*utils.SubConn) (net.Conn
 }
 
 func RunUDPRemoteServer(c *ss.Config) {
-	conn, err := utils.NewUDPListener(c.Localaddr)
+	listener, err := utils.NewUDPListener(c.Localaddr)
 	if err != nil {
 		c.Logger.Fatal(err)
 	}
-	getDefaultUDPServerCtx().
-		RunUDPServer(ss.NewUDPConn(conn, c),
-			getCreateFuncOfUDPRemoteServer(c))
+	defer listener.Close()
+	RunUDPServer(ss.NewUDPConn(listener, c), c, getCreateFuncOfUDPRemoteServer)
 }
 
 func RunMultiUDPRemoteServer(c *ss.Config) {
@@ -131,9 +126,8 @@ func RunMultiUDPRemoteServer(c *ss.Config) {
 	if err != nil {
 		c.Logger.Fatal(err)
 	}
-	getDefaultUDPServerCtx().
-		RunUDPServer(ss.NewMultiUDPConn(listener, c),
-			getCreateFuncOfUDPRemoteServer(c))
+	defer listener.Close()
+	RunUDPServer(ss.NewMultiUDPConn(listener, c), c, getCreateFuncOfUDPRemoteServer)
 }
 
 func getCreateFuncOfUDPLocalServer(c *ss.Config) func(*utils.SubConn) (net.Conn, net.Conn, error) {
@@ -159,5 +153,6 @@ func RunUDPLocalServer(c *ss.Config) {
 	if err != nil {
 		c.Logger.Fatal(err)
 	}
-	getDefaultUDPServerCtx().RunUDPServer(listener, getCreateFuncOfUDPLocalServer(c))
+	defer listener.Close()
+	RunUDPServer(listener, c, getCreateFuncOfUDPLocalServer)
 }
