@@ -6,57 +6,89 @@ import (
 	"net"
 
 	ss "github.com/ccsexyz/shadowsocks-go/shadowsocks"
+	"github.com/ccsexyz/utils"
 )
 
-type relaySession struct {
-	conn   net.Conn
-	live   bool
-	from   *net.UDPAddr
-	die    chan bool
+func getDefaultUDPServerCtx() *utils.UDPServerCtx {
+	return &utils.UDPServerCtx{Mtu: 2048, Expires: 60}
+}
+
+type udpLocalConn struct {
+	net.Conn
+}
+
+func (conn *udpLocalConn) Read(b []byte) (n int, err error) {
+	if len(b) < 3 {
+		err = fmt.Errorf("the length of buffer can't be less than three")
+		return
+	}
+	b[0] = 0
+	b[1] = 0
+	b[2] = 0
+	n, err = conn.Read(b[3:])
+	n += 3
+	return
+}
+
+func (conn *udpLocalConn) Write(b []byte) (n int, err error) {
+	if len(b) < 3 {
+		err = fmt.Errorf("the length of buffer can't be less than three")
+		return
+	}
+	n, err = conn.Conn.Write(b[3:])
+	n += 3
+	return
+}
+
+type udpRemoteConn struct {
+	net.Conn
 	header []byte
 }
 
-func (sess *relaySession) Close() {
-	select {
-	case <-sess.die:
-	default:
-		sess.conn.Close()
-		close(sess.die)
+func (conn *udpRemoteConn) Read(b []byte) (n int, err error) {
+	hdrlen := len(conn.header)
+	if len(b) < hdrlen {
+		err = fmt.Errorf("the length of buffer can't be less than hdrlen %d", hdrlen)
+		return
 	}
-}
-
-func newUDPListener(address string) (conn *net.UDPConn, err error) {
-	laddr, err := net.ResolveUDPAddr("udp", address)
-	if err == nil {
-		conn, err = net.ListenUDP("udp", laddr)
+	n, err = conn.Conn.Read(b[hdrlen:])
+	if err != nil {
+		return
+	}
+	if hdrlen > 0 {
+		copy(b, conn.header)
+		n += hdrlen
 	}
 	return
 }
 
-func RunUDPRemoteServer(c *ss.Config) {
-	conn, err := newUDPListener(c.Localaddr)
+func (conn *udpRemoteConn) Write(b []byte) (n int, err error) {
+	_, data, err := ss.ParseAddr(b)
 	if err != nil {
-		c.Logger.Fatal(err)
+		return
 	}
-	var pconn net.PacketConn
-	pconn = ss.NewUDPConn(conn, c)
-	handle := func(sess *udpSession, b []byte) {
-		if len(c.Backends) != 0 && c.Type == "ssproxy" {
-			sess.conn.Write(b)
-			return
-		}
-		_, data, err := ss.ParseAddr(b)
+	n, err = conn.Conn.Write(data)
+	if err != nil {
+		return
+	}
+	n += len(b) - len(data)
+	return
+}
+
+func getCreateFuncOfUDPRemoteServer(c *ss.Config) func(*utils.SubConn) (net.Conn, net.Conn, error) {
+	return func(conn *utils.SubConn) (c1, c2 net.Conn, err error) {
+		buf := make([]byte, 2048)
+		n, err := conn.Read(buf)
 		if err != nil {
 			return
 		}
-		sess.conn.Write(data)
-	}
-	create := func(b []byte, from net.Addr) (rconn net.Conn, clean func(), header []byte, err error) {
+		b := buf[:n]
 		addr, data, err := ss.ParseAddr(b)
 		if err != nil {
 			err = fmt.Errorf("unexpected header")
 			return
 		}
+		var rconn net.Conn
 		if len(c.Backends) != 0 && c.Type == "ssproxy" {
 			v := c.Backends[rand.Int()%len(c.Backends)]
 			rconn, err = ss.DialUDP(v)
@@ -64,39 +96,8 @@ func RunUDPRemoteServer(c *ss.Config) {
 				return
 			}
 			rconn.Write(b)
-			return
-		}
-		target := net.JoinHostPort(addr.Host(), addr.Port())
-		rconn, err = net.Dial("udp", target)
-		if err != nil {
-			return
-		}
-		hdrlen := len(b) - len(data)
-		header = make([]byte, hdrlen)
-		copy(header, b)
-		rconn.Write(data)
-		return
-	}
-	RunUDPServer(pconn, c, nil, handle, create)
-}
-
-func RunMultiUDPRemoteServer(c *ss.Config) {
-	conn, err := newUDPListener(c.Localaddr)
-	if err != nil {
-		c.Logger.Fatal(err)
-	}
-	mconn := ss.NewMultiUDPConn(conn, c)
-	handle := func(sess *udpSession, b []byte) {
-		_, data, err := ss.ParseAddr(b)
-		if err != nil {
-			return
-		}
-		sess.conn.Write(data)
-	}
-	create := func(b []byte, from net.Addr) (rconn net.Conn, clean func(), header []byte, err error) {
-		addr, data, err := ss.ParseAddr(b)
-		if err != nil {
-			err = fmt.Errorf("unexpected header")
+			c1 = conn
+			c2 = rconn
 			return
 		}
 		target := net.JoinHostPort(addr.Host(), addr.Port())
@@ -105,49 +106,58 @@ func RunMultiUDPRemoteServer(c *ss.Config) {
 			c.LogD(err)
 			return
 		}
-		hdrlen := len(b) - len(data)
-		header = make([]byte, hdrlen)
-		copy(header, b)
 		rconn.Write(data)
-		clean = func() {
-			mconn.RemoveAddr(from)
+		c1 = conn
+		c2 = &udpRemoteConn{
+			Conn:   rconn,
+			header: ss.DupBuffer(b[:len(b)-len(data)]),
 		}
 		return
 	}
-	RunUDPServer(mconn, c, nil, handle, create)
 }
 
-func RunUDPLocalServer(c *ss.Config) {
-	conn, err := newUDPListener(c.Localaddr)
+func RunUDPRemoteServer(c *ss.Config) {
+	conn, err := utils.NewUDPListener(c.Localaddr)
 	if err != nil {
 		c.Logger.Fatal(err)
 	}
-	check := func(b []byte) bool {
-		if len(b) < 3 || b[2] != 0 || b[1] != 0 || b[0] != 0 {
-			return false
-		}
-		return true
+	getDefaultUDPServerCtx().
+		RunUDPServer(ss.NewUDPConn(conn, c),
+			getCreateFuncOfUDPRemoteServer(c))
+}
+
+func RunMultiUDPRemoteServer(c *ss.Config) {
+	listener, err := utils.NewUDPListener(c.Localaddr)
+	if err != nil {
+		c.Logger.Fatal(err)
 	}
-	var handle func(*udpSession, []byte)
-	var create func([]byte, net.Addr) (net.Conn, func(), []byte, error)
-	handle = func(sess *udpSession, b []byte) {
-		sess.conn.Write(b[3:])
-	}
-	create = func(b []byte, from net.Addr) (rconn net.Conn, clean func(), header []byte, err error) {
-		var v *ss.Config
+	getDefaultUDPServerCtx().
+		RunUDPServer(ss.NewMultiUDPConn(listener, c),
+			getCreateFuncOfUDPRemoteServer(c))
+}
+
+func getCreateFuncOfUDPLocalServer(c *ss.Config) func(*utils.SubConn) (net.Conn, net.Conn, error) {
+	return func(conn *utils.SubConn) (c1, c2 net.Conn, err error) {
+		var subconfig *ss.Config
 		if len(c.Backends) != 0 && c.Type == "socksproxy" {
-			v = c.Backends[rand.Int()%len(c.Backends)]
+			subconfig = c.Backends[rand.Int()%len(c.Backends)]
 		} else {
-			v = c
+			subconfig = c
 		}
-		rconn, err = ss.DialUDP(v)
+		rconn, err := ss.DialUDP(subconfig)
 		if err != nil {
 			return
 		}
-		rconn.Write(b[3:])
-		header = []byte{0, 0, 0}
+		c1 = conn
+		c2 = rconn
 		return
 	}
+}
 
-	RunUDPServer(conn, c, check, handle, create)
+func RunUDPLocalServer(c *ss.Config) {
+	listener, err := utils.NewUDPListener(c.Localaddr)
+	if err != nil {
+		c.Logger.Fatal(err)
+	}
+	getDefaultUDPServerCtx().RunUDPServer(listener, getCreateFuncOfUDPLocalServer(c))
 }
