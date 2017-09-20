@@ -5,7 +5,7 @@ import (
 	"math/rand"
 	"net"
 
-	ss "github.com/ccsexyz/shadowsocks-go/shadowsocks"
+	"github.com/ccsexyz/shadowsocks-go/shadowsocks"
 	"github.com/ccsexyz/utils"
 )
 

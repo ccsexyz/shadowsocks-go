@@ -1,4 +1,4 @@
-package shadowsocks
+package ss
 
 import (
 	"io"
@@ -58,17 +58,6 @@ func newTCPConn2(conn net.Conn, cfg *cfg) *TCPConn {
 	return newTCPConn(utils.NewConn(conn), cfg)
 }
 
-var (
-	xuch  chan net.Conn
-	xudie chan bool
-)
-
-func init() {
-	xuch = make(chan net.Conn, 32)
-	xudie = make(chan bool)
-	go xuroutine()
-}
-
 type DebugConn struct {
 	Conn
 	c *Config
@@ -126,12 +115,11 @@ func (c *SsConn) GetConfig() *Config {
 
 func (c *SsConn) Close() error {
 	if c.xu1s {
-		c.xu1s = false
-		select {
-		case <-xudie:
-		case xuch <- c:
-			return nil
-		}
+		go func() {
+			time.Sleep(time.Duration(rand.Int()%64+8) * time.Second)
+			c.Conn.Close()
+		}()
+		return nil
 	}
 	return c.Conn.Close()
 }
@@ -267,53 +255,6 @@ func (c *SsConn) WriteBuffers(b [][]byte) (n int, err error) {
 		n = 0
 	}
 	return
-}
-
-func xuroutine() {
-	ticker := time.NewTicker(time.Second)
-	mn := make(map[string]int)
-	mc := make(map[string]net.Conn)
-	defer func() {
-		for _, v := range mc {
-			v.Close()
-		}
-	}()
-	for {
-		select {
-		case <-xudie:
-			return
-		case c := <-xuch:
-			s := c.RemoteAddr().String()
-			a := 0
-			b := 0
-			for b < 3 || b > 14 {
-				b = rand.Intn(16) + 1
-				a += b
-			}
-			if _, ok := c.(*SsConn); ok {
-				c.(*SsConn).c.Log("xu ", a, "seconds")
-			}
-			mn[s] = a
-			mc[s] = c
-		case <-ticker.C:
-			for k, v := range mn {
-				v--
-				if v <= 0 {
-					delete(mn, k)
-					c, ok := mc[k]
-					if ok {
-						delete(mc, k)
-						if _, ok := c.(*SsConn); ok {
-							c.(*SsConn).xu1s = false
-						}
-						c.Close()
-					}
-				} else {
-					mn[k] = v
-				}
-			}
-		}
-	}
 }
 
 type LimitConn struct {

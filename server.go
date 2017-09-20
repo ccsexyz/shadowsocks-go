@@ -3,7 +3,7 @@ package main
 import (
 	"net"
 
-	ss "github.com/ccsexyz/shadowsocks-go/shadowsocks"
+	"github.com/ccsexyz/shadowsocks-go/shadowsocks"
 )
 
 func RunMultiTCPRemoteServer(c *ss.Config) {

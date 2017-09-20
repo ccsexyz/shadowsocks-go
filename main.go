@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	ss "github.com/ccsexyz/shadowsocks-go/shadowsocks"
+	"github.com/ccsexyz/shadowsocks-go/shadowsocks"
 	"github.com/ccsexyz/utils"
 	"github.com/fsnotify/fsnotify"
 )

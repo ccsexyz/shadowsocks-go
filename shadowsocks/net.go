@@ -1,4 +1,4 @@
-package shadowsocks
+package ss
 
 import (
 	"bytes"
@@ -510,6 +510,14 @@ func SocksAcceptor(conn net.Conn) (c net.Conn) {
 	var lis listener
 	lis.c = &Config{}
 	return socksAcceptor(newTCPConn2(conn, nil), &lis)
+}
+
+func ShadowsocksAcceptor(conn net.Conn, method string, password string) (c net.Conn) {
+	var lis listener
+	lis.c = &Config{}
+	lis.c.Method = method
+	lis.c.Password = password
+	return ssAcceptHandler(newTCPConn2(conn, lis.c), &lis)
 }
 
 func socksAcceptor(conn Conn, lis *listener) (c Conn) {
