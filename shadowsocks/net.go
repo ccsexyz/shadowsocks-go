@@ -506,18 +506,41 @@ func httpProxyAcceptor(conn Conn, lis *listener) (c Conn) {
 	return
 }
 
-func SocksAcceptor(conn net.Conn) (c net.Conn) {
+type Acceptor func(net.Conn) net.Conn
+
+func GetSocksAcceptor() Acceptor {
 	var lis listener
 	lis.c = &Config{}
-	return socksAcceptor(newTCPConn2(conn, nil), &lis)
+	CheckConfig(lis.c)
+	return func(conn net.Conn) net.Conn {
+		return socksAcceptor(newTCPConn2(conn, lis.c), &lis)
+	}
 }
 
-func ShadowsocksAcceptor(conn net.Conn, method string, password string) (c net.Conn) {
+func GetShadowAcceptor(method string, password string) Acceptor {
 	var lis listener
 	lis.c = &Config{}
+	defer func() { CheckConfig(lis.c) }()
+	if method == "multi" {
+		lis.c.Type = "multiserver"
+		lis.c.Backends = []*Config{
+			&Config{Method: "chacha20", Password: password},
+			&Config{Method: "chacha20-ietf", Password: password},
+			&Config{Method: "aes-128-cfb", Password: password},
+			&Config{Method: "aes-192-cfb", Password: password},
+			&Config{Method: "aes-256-cfb", Password: password},
+			&Config{Method: "salsa20", Password: password},
+			&Config{Method: "rc4-md5", Password: password},
+		}
+		return func(conn net.Conn) net.Conn {
+			return ssMultiAcceptHandler(newTCPConn2(conn, lis.c), &lis)
+		}
+	}
 	lis.c.Method = method
 	lis.c.Password = password
-	return ssAcceptHandler(newTCPConn2(conn, lis.c), &lis)
+	return func(conn net.Conn) net.Conn {
+		return ssAcceptHandler(newTCPConn2(conn, lis.c), &lis)
+	}
 }
 
 func socksAcceptor(conn Conn, lis *listener) (c Conn) {
