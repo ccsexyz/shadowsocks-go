@@ -19,7 +19,7 @@ func ssproxyHandler(conn ss.Conn, c *ss.Config) {
 		c.LogD("target length is 0")
 		return
 	}
-	rconn, err := ss.DialMultiSS(target, c.Backends)
+	rconn, err := ss.DialSS(target, c)
 	if err != nil {
 		return
 	}

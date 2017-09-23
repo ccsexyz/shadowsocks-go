@@ -17,8 +17,10 @@ Features
 * 配置文件更改后自动重载配置文件,并且不影响已经建立的连接  
 * 实现了简单的 HTTP 伪装,伪装的目的是欺骗运营商而不是绕过某些设备,应当谨慎使用    
 * 本地客户端支持 HTTP/socks4/socks4a 代理请求(不需要配置，默认启用，与 socks5 协议共存)  
-* 支持 HTTP 请求记录，能够记录经过代理程序的 HTTP 请求的请求头(不包含 body 部分)
+* 支持 HTTP 请求记录，能够记录经过代理程序的 HTTP 请求的请求头(不包含 body 部分)  
 * 在代理 HTTPS 流量时，可以仅加密前4096个字节的数据，提升转发性能  
+* 支持设置 ChnRoute 文件，IP 地址命中 ChnRoute 文件中指定的 IP 段时直接连接  
+* 可以设置黑白名单域名文件，命中黑名单的域名走代理，命中白名单的直接连接，同时程序会每分钟更新一次黑白名单中的内容  
 
 Build
 -----
@@ -83,12 +85,18 @@ json 对象中的可选配置:
 * mux: 设置是否启用多路复用功能,设置为 true 时可由一个 TCP 连接承载多个 ss 代理连接  
 * loghttp: 设置为 true 时将记录经过代理的 HTTP 请求的请求头部分  
 * partenchttps: 开启后在传输 HTTPS 流量时仅会加密前 4096 个字节的数据  
+* snappy: 启用 snappy 数据流压缩   
+* chnlist: 设置 ChnRoute 文件地址，命中的 IP 将直接连接，不通过代理进行请求    
+* autoproxy: 启用后会根据连接延迟决定是否直接连接  
+* proxylist: 黑名单文件路径,存储需要走代理的域名  
+* notproxylist: 白名单文件路径,存储需要直接连接的域名  
+* partenc: 开启后仅仅加密前 4096 个字节的数据  
 
 type 字段的可选值:  
 * local: ss 客户端
 * server: ss 服务端  
 * ssproxy: ss 代理,前端是一个 ss 服务器  
-* socksproxy: ss 代理,前端是一个 socks5/http 服务器  
+* socksproxy: ss 代理,前端是一个 socks5/socks4/socks4a/http 服务器  
 * tcptun: TCP 隧道服务器   
 * udptun: UDP 隧道服务器    
 * redir: TCP redirect 本地客户端,使用方法参考 ss-libev 项目中的 ss-redir  

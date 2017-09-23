@@ -10,7 +10,7 @@ func RunTCPTunServer(c *ss.Config) {
 
 func tcpTunHandler(conn ss.Conn, c *ss.Config) {
 	defer conn.Close()
-	rconn, err := ss.DialSS(c.Remoteaddr, c.Backend.Remoteaddr, c.Backend)
+	rconn, err := ss.DialSS(c.Remoteaddr, c.Backend)
 	if err != nil {
 		c.Log(err)
 		return

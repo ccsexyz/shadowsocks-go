@@ -6,7 +6,9 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/ccsexyz/utils"
 	"github.com/willf/bloom"
@@ -39,6 +41,10 @@ type Config struct {
 	Timeout        int       `json:"timeout"`
 	Snappy         bool      `json:"snappy"`
 	FilterCapacity int       `json:"filtcap"`
+	AutoProxy      bool      `json:"autoproxy"`
+	ProxyList      string    `json:"proxylist"`
+	NotProxyList   string    `json:"notproxylist"`
+	ChnList        string    `json:"chnlist"`
 	limiters       []*Limiter
 	Vlogger        *log.Logger
 	Dlogger        *log.Logger
@@ -56,6 +62,8 @@ type Config struct {
 	udpFilterOnce  sync.Once
 	udpFilter      *bloom.BloomFilter
 	tcpIvChecker   ivChecker
+	autoProxyCtx   *autoProxy
+	chnListCtx     *chnRouteList
 }
 
 func ReadConfig(path string) (configs []*Config, err error) {
@@ -196,6 +204,20 @@ func CheckConfig(c *Config) {
 	if c.Backend != nil {
 		c.Backends = append(c.Backends, c.Backend)
 	}
+	if c.AutoProxy {
+		c.autoProxyCtx = newAutoProxy()
+		c.autoProxyCtx.loadByPassList(c.NotProxyList)
+		c.autoProxyCtx.loadPorxyList(c.ProxyList)
+		go c.proxyListDump()
+	}
+	if len(c.ChnList) != 0 {
+		c.chnListCtx = new(chnRouteList)
+		err := c.chnListCtx.load(c.ChnList)
+		if err != nil {
+			log.Println(err)
+			c.chnListCtx = nil
+		}
+	}
 	for _, v := range c.Backends {
 		if len(v.Type) == 0 {
 			if len(v.Remoteaddr) != 0 {
@@ -225,6 +247,9 @@ func CheckConfig(c *Config) {
 		}
 		if v.Timeout == 0 {
 			v.Timeout = c.Timeout
+		}
+		if c.autoProxyCtx != nil {
+			v.autoProxyCtx = c.autoProxyCtx
 		}
 		if c.LogFile == v.LogFile {
 			v.logfile = c.logfile
@@ -271,4 +296,45 @@ func (c *Config) Log(v ...interface{}) {
 
 func (c *Config) CallOnClosed(f cb) {
 	c.closers = append(c.closers, f)
+}
+
+func (c *Config) proxyListDump() {
+	if c.NotProxyList == "" && c.ProxyList == "" {
+		return
+	}
+	autoProxyCtx := c.autoProxyCtx
+	if autoProxyCtx == nil {
+		return
+	}
+	go func() {
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+			case <-c.Die:
+				return
+			}
+			if len(c.NotProxyList) != 0 {
+				hosts := autoProxyCtx.getByPassHosts()
+				if len(hosts) != 0 {
+					hoststr := strings.Join(hosts, "\n")
+					err := ioutil.WriteFile(c.NotProxyList, utils.StringToSlice(hoststr), 0644)
+					if err != nil {
+						c.Log(err)
+					}
+				}
+			}
+			if len(c.ProxyList) != 0 {
+				hosts := autoProxyCtx.getProxyHosts()
+				if len(hosts) != 0 {
+					hoststr := strings.Join(hosts, "\n")
+					err := ioutil.WriteFile(c.ProxyList, utils.StringToSlice(hoststr), 0644)
+					if err != nil {
+						c.Log(err)
+					}
+				}
+			}
+		}
+	}()
 }

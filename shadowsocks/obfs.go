@@ -325,7 +325,11 @@ func DialObfs(target string, c *Config) (conn Conn, err error) {
 		conn, err = c.pool.GetNonblock()
 	}
 	if err != nil || c.pool == nil {
-		conn, err = DialTCP(target, c)
+		var tconn *TCPConn
+		tconn, err = DialTCP(target, c)
+		if tconn != nil {
+			conn = tconn
+		}
 	}
 	if err != nil {
 		return

@@ -14,7 +14,7 @@ func tcpLocalHandler(conn ss.Conn, c *ss.Config) {
 	if len(target) == 0 {
 		return
 	}
-	rconn, err := ss.DialSS(target, c.Remoteaddr, c)
+	rconn, err := ss.DialSS(target, c)
 	if err != nil {
 		c.Log("failed connect to", target, err)
 		return

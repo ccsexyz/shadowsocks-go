@@ -14,7 +14,7 @@ func socksProxyHandler(conn ss.Conn, c *ss.Config) {
 	if len(target) == 0 {
 		return
 	}
-	rconn, err := ss.DialMultiSS(target, c.Backends)
+	rconn, err := ss.DialSS(target, c)
 	if err != nil {
 		c.Log(err)
 		return

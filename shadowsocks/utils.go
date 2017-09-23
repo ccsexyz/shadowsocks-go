@@ -1,10 +1,12 @@
 package ss
 
 import (
+	"bufio"
 	"crypto/rand"
 	"encoding/binary"
 	"fmt"
 	"net"
+	"os"
 	"strconv"
 	"sync"
 	"time"
@@ -37,6 +39,9 @@ const (
 	muxaddr                = "mux:12580"
 	muxhost                = "mux"
 	muxport                = 12580
+	echoaddr               = "echo:10086"
+	echohost               = "echo"
+	echoport               = 10086
 	defaultObfsHost        = "www.bing.com"
 	defaultFilterCapacity  = 100000
 	defaultFilterFalseRate = 0.00001
@@ -44,6 +49,7 @@ const (
 
 var (
 	bufPool *sync.Pool
+	nilConn = &TCPConn{}
 )
 
 func init() {
@@ -672,6 +678,14 @@ func DialTCP(address string, cfg *cfg) (*TCPConn, error) {
 	return newTCPConn(tconn, cfg), nil
 }
 
+func DialTCPConn(address string, cfg *cfg) (Conn, error) {
+	conn, err := DialTCP(address, cfg)
+	if err != nil {
+		return nil, err
+	}
+	return conn, nil
+}
+
 type ivChecker struct {
 	ivs1    map[string]bool
 	ivs2    map[string]bool
@@ -703,4 +717,117 @@ func (c *ivChecker) check(iv string) bool {
 	}
 	c.ivs2[iv] = true
 	return true
+}
+
+func newAutoProxy() *autoProxy {
+	return &autoProxy{
+		byPassDmRoot: utils.NewDomainRoot(),
+		proxyDmRoot:  utils.NewDomainRoot(),
+	}
+}
+
+type autoProxy struct {
+	byPassDmRoot *utils.DomainRoot
+	proxyDmRoot  *utils.DomainRoot
+	lock         sync.RWMutex
+}
+
+func (ap *autoProxy) loadByPassList(bypassList string) (err error) {
+	ap.lock.Lock()
+	defer ap.lock.Unlock()
+	f, err := os.Open(bypassList)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		ap.byPassDmRoot.Put(scanner.Text())
+	}
+	err = scanner.Err()
+	return
+}
+
+func (ap *autoProxy) loadPorxyList(proxyList string) (err error) {
+	ap.lock.Lock()
+	defer ap.lock.Unlock()
+	f, err := os.Open(proxyList)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		ap.proxyDmRoot.Put(scanner.Text())
+	}
+	err = scanner.Err()
+	return
+}
+
+func (ap *autoProxy) getByPassHosts() []string {
+	ap.lock.RLock()
+	defer ap.lock.RUnlock()
+	foldhosts, hosts := ap.byPassDmRoot.Get()
+	return append(foldhosts, hosts...)
+}
+
+func (ap *autoProxy) getProxyHosts() []string {
+	ap.lock.RLock()
+	defer ap.lock.RUnlock()
+	foldhosts, hosts := ap.proxyDmRoot.Get()
+	return append(foldhosts, hosts...)
+}
+
+func (ap *autoProxy) markHostNeedProxy(host string) {
+	ap.lock.Lock()
+	defer ap.lock.Unlock()
+	ap.proxyDmRoot.Put(host)
+}
+
+func (ap *autoProxy) markHostByPass(host string) {
+	ap.lock.Lock()
+	defer ap.lock.Unlock()
+	ap.byPassDmRoot.Put(host)
+}
+
+func (ap *autoProxy) checkIfProxy(host string) bool {
+	ap.lock.RLock()
+	defer ap.lock.RUnlock()
+	return ap.proxyDmRoot.Test(host)
+}
+
+func (ap *autoProxy) checkIfByPass(host string) bool {
+	ap.lock.RLock()
+	defer ap.lock.RUnlock()
+	return ap.byPassDmRoot.Test(host)
+}
+
+type chnRouteList struct {
+	tree *utils.IPTree
+	lock sync.RWMutex
+}
+
+func (route *chnRouteList) load(path string) (err error) {
+	route.lock.Lock()
+	defer route.lock.Unlock()
+	if route.tree == nil {
+		route.tree = utils.NewIPTree()
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		route.tree.Insert(scanner.Text())
+	}
+	err = scanner.Err()
+	return
+}
+
+func (route *chnRouteList) testIP(ip net.IP) bool {
+	route.lock.RLock()
+	defer route.lock.RUnlock()
+	return route.tree.TestIP(ip)
 }
