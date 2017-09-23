@@ -5,7 +5,14 @@ import "sync"
 var services sync.Map
 
 func bultinServiceHandler(conn Conn, lis *listener) (c Conn) {
-	dst := conn.GetDst().String()
+	var dst string
+	if conn.GetDst() != nil {
+		dst = conn.GetDst().String()
+	}
+	if len(dst) == 0 {
+		c = conn
+		return
+	}
 	v, ok := services.Load(dst)
 	if !ok {
 		c = conn
