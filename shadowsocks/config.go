@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/ccsexyz/utils"
+	"github.com/go-redis/redis"
 	"github.com/willf/bloom"
 )
 
@@ -45,6 +46,8 @@ type Config struct {
 	ProxyList      string    `json:"proxylist"`
 	NotProxyList   string    `json:"notproxylist"`
 	ChnList        string    `json:"chnlist"`
+	RedisAddr      string    `json:"redisaddr"`
+	RedisKey       string    `json:"rediskey"`
 	limiters       []*Limiter
 	Vlogger        *log.Logger
 	Dlogger        *log.Logger
@@ -64,6 +67,7 @@ type Config struct {
 	tcpIvChecker   ivChecker
 	autoProxyCtx   *autoProxy
 	chnListCtx     *chnRouteList
+	redisClent     *redis.Client
 }
 
 func ReadConfig(path string) (configs []*Config, err error) {
@@ -97,6 +101,9 @@ func (c *Config) Close() error {
 	if c.pool != nil {
 		c.pool.Close()
 	}
+	if c.redisClent != nil {
+		c.redisClent.Close()
+	}
 	for _, f := range c.closers {
 		f()
 	}
@@ -107,6 +114,17 @@ func initBloomFilter(c *Config, f **bloom.BloomFilter) {
 	*f = bloom.NewWithEstimates(uint(c.FilterCapacity), defaultFilterFalseRate)
 }
 
+func (c *Config) redisFilterTestAndAdd(b []byte) bool {
+	if c.Ivlen == 0 || c.redisClent == nil {
+		return false
+	}
+	_, err := c.redisClent.GetSet(utils.SliceToString(b), "true").Result()
+	if err == nil {
+		return true
+	}
+	return false
+}
+
 func (c *Config) udpFilterTestAndAdd(b []byte) bool {
 	if c.Ivlen == 0 {
 		return false
@@ -114,7 +132,9 @@ func (c *Config) udpFilterTestAndAdd(b []byte) bool {
 	c.udpFilterOnce.Do(func() {
 		initBloomFilter(c, &c.udpFilter)
 	})
-	return c.udpFilter.TestAndAdd(b)
+	ok1 := c.udpFilter.TestAndAdd(b)
+	ok2 := c.redisFilterTestAndAdd(b)
+	return ok1 || ok2
 }
 
 func (c *Config) tcpFilterTestAndAdd(b []byte) bool {
@@ -125,8 +145,10 @@ func (c *Config) tcpFilterTestAndAdd(b []byte) bool {
 		initBloomFilter(c, &c.tcpFilter)
 	})
 	c.tcpFilterLock.Lock()
-	defer c.tcpFilterLock.Unlock()
-	return c.tcpFilter.TestAndAdd(b)
+	ok1 := c.tcpFilter.TestAndAdd(b)
+	c.tcpFilterLock.Unlock()
+	ok2 := c.redisFilterTestAndAdd(b)
+	return ok1 || ok2
 }
 
 func CheckLogFile(c *Config) {
@@ -273,6 +295,13 @@ func CheckConfig(c *Config) {
 		if len(c.limiters) != 0 {
 			v.limiters = append(v.limiters, c.limiters...)
 		}
+	}
+	if len(c.RedisAddr) != 0 {
+		c.redisClent = redis.NewClient(&redis.Options{
+			Addr:     c.RedisAddr,
+			Password: c.RedisKey,
+			DB:       0,
+		})
 	}
 }
 
