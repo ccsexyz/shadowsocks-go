@@ -44,6 +44,7 @@ type Config struct {
 	AutoProxy      bool      `json:"autoproxy"`
 	ProxyList      string    `json:"proxylist"`
 	NotProxyList   string    `json:"notproxylist"`
+	DumpList       bool      `json:"dumplist"`
 	ChnList        string    `json:"chnlist"`
 	limiters       []*Limiter
 	Vlogger        *log.Logger
@@ -208,7 +209,9 @@ func CheckConfig(c *Config) {
 		c.autoProxyCtx = newAutoProxy()
 		c.autoProxyCtx.loadByPassList(c.NotProxyList)
 		c.autoProxyCtx.loadPorxyList(c.ProxyList)
-		go c.proxyListDump()
+		if c.DumpList {
+			go c.proxyListDump()
+		}
 	}
 	if len(c.ChnList) != 0 {
 		c.chnListCtx = new(chnRouteList)

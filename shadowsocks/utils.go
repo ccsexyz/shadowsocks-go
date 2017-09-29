@@ -767,15 +767,15 @@ func (ap *autoProxy) loadPorxyList(proxyList string) (err error) {
 func (ap *autoProxy) getByPassHosts() []string {
 	ap.lock.RLock()
 	defer ap.lock.RUnlock()
-	foldhosts, hosts := ap.byPassDmRoot.Get()
-	return append(foldhosts, hosts...)
+	hosts := ap.byPassDmRoot.Get()
+	return hosts
 }
 
 func (ap *autoProxy) getProxyHosts() []string {
 	ap.lock.RLock()
 	defer ap.lock.RUnlock()
-	foldhosts, hosts := ap.proxyDmRoot.Get()
-	return append(foldhosts, hosts...)
+	hosts := ap.proxyDmRoot.Get()
+	return hosts
 }
 
 func (ap *autoProxy) markHostNeedProxy(host string) {
