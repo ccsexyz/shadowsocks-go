@@ -1,10 +1,12 @@
 package ss
 
 import (
+	"encoding/binary"
 	"fmt"
 	"net"
 	"sync"
 
+	"github.com/ccsexyz/shadowsocks-go/redir"
 	"github.com/ccsexyz/utils"
 )
 
@@ -28,16 +30,12 @@ func (c *UDPConn) GetCfg() *Config {
 }
 
 func (c *UDPConn) ReadFrom(b []byte) (n int, addr net.Addr, err error) {
-	if len(b) < 1500 {
-		err = fmt.Errorf("the buffer length must be greater than 1500")
-		return
-	}
 	for {
 		n, addr, err = c.UDPConn.ReadFrom(b)
 		if err != nil {
 			return
 		}
-		if n <= c.c.Ivlen || n >= 1500 {
+		if n <= c.c.Ivlen {
 			continue
 		}
 		var dec utils.Decrypter
@@ -110,19 +108,12 @@ func NewMultiUDPConn(conn *net.UDPConn, c *Config) *MultiUDPConn {
 }
 
 func (c *MultiUDPConn) ReadFrom(b []byte) (n int, addr net.Addr, err error) {
-	if len(b) < 1500 {
-		err = fmt.Errorf("the buffer length must be greater than 1500")
-		return
-	}
 	b2 := bufPool.Get().([]byte)
 	defer bufPool.Put(b2)
 	for {
 		n, addr, err = c.UDPConn.ReadFrom(b2)
 		if err != nil {
 			return
-		}
-		if n > 1500 {
-			continue
 		}
 		v, ok := c.sessions.Load(addr.String())
 		var dec utils.Decrypter
@@ -182,4 +173,45 @@ func (c *MultiUDPConn) WriteTo(b []byte, addr net.Addr) (n int, err error) {
 
 func (c *MultiUDPConn) RemoveAddr(addr net.Addr) {
 	c.sessions.Delete(addr.String())
+}
+
+type UDPTProxyConn struct {
+	*net.UDPConn
+}
+
+func NewUDPTProxyConn(conn *net.UDPConn) (*UDPTProxyConn, error) {
+	c := &UDPTProxyConn{UDPConn: conn}
+	if err := redir.EnableUDPTProxy(conn); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+func (conn *UDPTProxyConn) ReadFrom(b []byte) (n int, addr net.Addr, err error) {
+	if len(b) < 6 {
+		err = fmt.Errorf("the buffer length should be greater than 6")
+		return
+	}
+
+	header := b[:6]
+	b = b[6:]
+	oob := make([]byte, 512)
+
+	n, oobn, _, addr, err := conn.UDPConn.ReadMsgUDP(b, oob)
+	if err != nil {
+		return
+	}
+	orig, err := redir.GetOrigDstFromOob(oob[:oobn])
+	if err != nil {
+		return
+	}
+	copy(header, []byte(orig.IP.To4()))
+	binary.BigEndian.PutUint16(header[4:6], uint16(orig.Port))
+	n += 6
+	return
+}
+
+func (conn *UDPTProxyConn) Read(b []byte) (n int, err error) {
+	n, _, err = conn.ReadFrom(b)
+	return
 }

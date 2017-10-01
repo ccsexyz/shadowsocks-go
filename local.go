@@ -39,7 +39,3 @@ func tcpLocalHandler(conn ss.Conn, c *ss.Config) {
 	}
 	ss.Pipe(conn, rconn, c)
 }
-
-func RunTCPRedirServer(c *ss.Config) {
-	RunTCPServer(c.Localaddr, c, ss.ListenRedir, tcpLocalHandler)
-}

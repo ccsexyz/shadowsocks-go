@@ -657,6 +657,8 @@ func DialSS(target string, c *Config) (conn Conn, err error) {
 		} else if c.autoProxyCtx.checkIfProxy(host) {
 			c.LogD("host", host, "hit proxy list")
 			proxy = true
+		} else if host == "localhost" {
+			direct = true
 		} else if !strings.ContainsRune(host, '.') {
 			proxy = true
 		}

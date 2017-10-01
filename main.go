@@ -146,7 +146,11 @@ func runServer(c *ss.Config) {
 		}
 		RunTCPLocalServer(c)
 	case "redir":
-		c.Log("run redir at", c.Localaddr, "with method", c.Method)
+		c.Log("run redir at", c.Localaddr)
+		if c.UDPRelay {
+			c.Log("run udp redir server at", c.Localaddr)
+			go RunUDPRedirServer(c)
+		}
 		RunTCPRedirServer(c)
 	case "server":
 		c.Log("run server at", c.Localaddr, "with method", c.Method)
