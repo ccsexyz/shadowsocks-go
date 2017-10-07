@@ -777,8 +777,8 @@ func DialSSWithRawHeader(header []byte, c *Config) (conn Conn, err error) {
 		}
 		if c.PartEnc || (c.PartEncHTTPS && len(header) > 2 && port == 443) {
 			C.partenc = true
-			C.partencnum = 4096
-			header = append([]byte{typePartEnc, 0x4}, header...)
+			C.partencnum = 16384
+			header = append([]byte{typePartEnc, 0x10}, header...)
 		}
 		useSnappy := (c.Snappy && port != 443)
 		if useSnappy {
