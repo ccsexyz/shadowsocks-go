@@ -11,6 +11,7 @@ func getCreateFuncOfUDPTunServer(c *ss.Config) func(*utils.SubConn) (net.Conn, n
 	return func(conn *utils.SubConn) (c1, c2 net.Conn, err error) {
 		rconn, err := ss.DialUDP(c.Backend)
 		if err != nil {
+			c.Log(err)
 			return
 		}
 		buf := make([]byte, 512)

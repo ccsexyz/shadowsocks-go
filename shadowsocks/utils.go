@@ -397,6 +397,7 @@ func Pipe(c1, c2 net.Conn, c *Config) {
 	defer c2.Close()
 	c1die := make(chan bool)
 	c2die := make(chan bool)
+	var alive utils.AtomicFlag
 	var timeout int
 	if c != nil && c.Timeout > 0 {
 		timeout = c.Timeout
@@ -407,11 +408,25 @@ func Pipe(c1, c2 net.Conn, c *Config) {
 		var n int
 		var err error
 		for err == nil {
-			src.SetReadDeadline(time.Now().Add(time.Duration(timeout) * time.Second))
+			if timeout > 0 {
+				src.SetReadDeadline(time.Now().Add(time.Duration(timeout) * time.Second))
+			}
 			n, err = src.Read(buf)
 			if n > 0 || err == nil {
-				dst.SetWriteDeadline(time.Now().Add(time.Duration(timeout) * time.Second))
+				if timeout > 0 {
+					dst.SetWriteDeadline(time.Now().Add(time.Duration(timeout) * time.Second))
+					alive.Set(true)
+				}
 				_, err = dst.Write(buf[:n])
+			}
+			if err != nil {
+				ne, ok := err.(net.Error)
+				if ok && ne.Timeout() {
+					if alive.Test() {
+						alive.Set(false)
+						err = nil
+					}
+				}
 			}
 		}
 	}

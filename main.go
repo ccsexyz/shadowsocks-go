@@ -187,7 +187,7 @@ func runServer(c *ss.Config) {
 		c.Log("run tcp tunnel at", c.Localaddr, "to", c.Remoteaddr)
 		RunTCPTunServer(c)
 	case "udptun":
-		if len(c.Localaddr) == 0 || c.Backend == nil || len(c.Backend.Remoteaddr) == 0 {
+		if len(c.Localaddr) == 0 || c.Backend == nil || (len(c.Backend.Remoteaddr) == 0 && len(c.Backend.FakeTCPAddr) == 0) {
 			break
 		}
 		c.Log("run udp tunnel at", c.Localaddr, "to", c.Remoteaddr)

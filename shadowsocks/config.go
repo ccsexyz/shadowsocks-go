@@ -49,6 +49,10 @@ type Config struct {
 	ChnList        string    `json:"chnlist"`
 	RedisAddr      string    `json:"redisaddr"`
 	RedisKey       string    `json:"rediskey"`
+	UseMul         bool      `json:"usemul"`
+	UseUDP         bool      `json:"useudp"`
+	MulConn        int       `json:"mulconn"`
+	FakeTCPAddr    string    `json:"faketcpaddr"`
 	limiters       []*Limiter
 	Vlogger        *log.Logger
 	Dlogger        *log.Logger

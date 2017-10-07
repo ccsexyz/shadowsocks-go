@@ -113,21 +113,21 @@ func getCreateFuncOfUDPRemoteServer(c *ss.Config) func(*utils.SubConn) (net.Conn
 }
 
 func RunUDPRemoteServer(c *ss.Config) {
-	listener, err := utils.NewUDPListener(c.Localaddr)
+	lis, err := ss.ListenUDP(c)
 	if err != nil {
 		c.Logger.Fatal(err)
 	}
-	defer listener.Close()
-	RunUDPServer(ss.NewUDPConn(listener, c), c, getCreateFuncOfUDPRemoteServer)
+	defer lis.Close()
+	RunUDPServer(lis, c, getCreateFuncOfUDPRemoteServer)
 }
 
 func RunMultiUDPRemoteServer(c *ss.Config) {
-	listener, err := utils.NewUDPListener(c.Localaddr)
+	lis, err := ss.ListenMultiUDP(c)
 	if err != nil {
 		c.Logger.Fatal(err)
 	}
-	defer listener.Close()
-	RunUDPServer(ss.NewMultiUDPConn(listener, c), c, getCreateFuncOfUDPRemoteServer)
+	defer lis.Close()
+	RunUDPServer(lis, c, getCreateFuncOfUDPRemoteServer)
 }
 
 func getCreateFuncOfUDPLocalServer(c *ss.Config) func(*utils.SubConn) (net.Conn, net.Conn, error) {
@@ -140,6 +140,7 @@ func getCreateFuncOfUDPLocalServer(c *ss.Config) func(*utils.SubConn) (net.Conn,
 		}
 		rconn, err := ss.DialUDP(subconfig)
 		if err != nil {
+			c.Logger.Println(err)
 			return
 		}
 		c1 = conn

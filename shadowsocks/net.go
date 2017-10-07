@@ -830,10 +830,26 @@ func NewSSDialer(c *Config) func(string) (net.Conn, error) {
 }
 
 func DialUDP(c *Config) (conn Conn, err error) {
-	rconn, err := net.Dial("udp", c.Remoteaddr)
+	rconn, err := dialUDP(c)
 	if err != nil {
 		return
 	}
-	conn = NewUDPConn(rconn.(*net.UDPConn), c)
+	conn = NewUDPConn2(rconn, c)
 	return
+}
+
+func ListenUDP(c *Config) (*UDPConn, error) {
+	lis, err := listenUDP(c)
+	if err != nil {
+		return nil, err
+	}
+	return NewUDPConn3(lis, c), nil
+}
+
+func ListenMultiUDP(c *Config) (*MultiUDPConn, error) {
+	lis, err := listenUDP(c)
+	if err != nil {
+		return nil, err
+	}
+	return NewMultiUDPConn(lis, c), nil
 }
