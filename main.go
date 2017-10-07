@@ -31,6 +31,7 @@ func main() {
 	flag.BoolVar(&c.UDPRelay, "udprelay", false, "relay udp packets")
 	flag.BoolVar(&c.Mux, "mux", false, "use mux to reduce the number of connections")
 	flag.StringVar(&c.Nickname, "name", "", "nickname for logging")
+	flag.BoolVar(&c.Obfs, "obfs", false, "enable obfs mode")
 	flag.StringVar(&c.LogFile, "log", "", "set the path of logfile")
 	flag.BoolVar(&c.Verbose, "verbose", false, "show verbose log")
 	flag.BoolVar(&c.Debug, "debug", false, "show debug log")

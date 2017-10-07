@@ -1,9 +1,13 @@
 package ss
 
 import (
-	"bytes"
+	"encoding/base64"
 	"fmt"
 	"math/rand"
+	"strings"
+	"time"
+
+	"github.com/ccsexyz/utils"
 )
 
 // copy from stackoverflow
@@ -34,40 +38,30 @@ func randStringBytesMaskImprSrc(n int) string {
 	return string(b)
 }
 
-var requestFormat string
-var responseFromat string
-
-func init() {
-	var requestBuffer bytes.Buffer
-	strs := []string{
-		"POST /%s HTTP/1.1\r\n",
-		"Accept: */*\r\n",
-		"Accept-Encoding: */*\r\n",
-		"Accept-Language: zh-CN\r\n",
-		"Connection: keep-alive\r\n",
-		"%s",
-		"Transfer-Encoding: chunked\r\n\r\n",
-	}
-	for _, str := range strs {
-		requestBuffer.WriteString(str)
-	}
-	requestFormat = requestBuffer.String()
-	var responseBuffer bytes.Buffer
-	strs = []string{
-		"HTTP/1.1 200 OK\r\n",
-		"Cache-Control: private, no-store, max-age=0, no-cache\r\n",
-		"Content-Type: text/html; charset=utf-8\r\n",
-		"Content-Encoding: gzip\r\n",
-		"Server: openresty/1.11.2\r\n",
-		"Connection: keep-alive\r\n",
-		"%s",
-		"Transfer-Encoding: chunked\r\n\r\n",
-	}
-	for _, str := range strs {
-		responseBuffer.WriteString(str)
-	}
-	responseFromat = responseBuffer.String()
-}
+const (
+	simpleObfsFormat = "HTTP/1.1 101 Switching Protocols\r\n" +
+		"Server: nginx/1.9.7\r\n" +
+		"Date: %s\r\n" +
+		"Upgrade: websocket\r\n" +
+		"Connection: Upgrade\r\n" +
+		"Sec-WebSocket-Accept: %s\r\n" +
+		"\r\n"
+	requestFormat = "POST /%s HTTP/1.1\r\n" +
+		"Accept: */*\r\n" +
+		"Accept-Encoding: */*\r\n" +
+		"Accept-Language: zh-CN\r\n" +
+		"Connection: keep-alive\r\n" +
+		"%s" +
+		"Transfer-Encoding: chunked\r\n\r\n"
+	responseFromat = "HTTP/1.1 200 OK\r\n" +
+		"Cache-Control: private, no-store, max-age=0, no-cache\r\n" +
+		"Content-Type: text/html; charset=utf-8\r\n" +
+		"Content-Encoding: gzip\r\n" +
+		"Server: openresty/1.11.2\r\n" +
+		"Connection: keep-alive\r\n" +
+		"%s" +
+		"Transfer-Encoding: chunked\r\n\r\n"
+)
 
 func buildHTTPRequest(headers string) string {
 	return fmt.Sprintf(requestFormat, randStringBytesMaskImprSrc(rand.Intn(48)+1), headers)
@@ -75,4 +69,12 @@ func buildHTTPRequest(headers string) string {
 
 func buildHTTPResponse(headers string) string {
 	return fmt.Sprintf(responseFromat, headers)
+}
+
+func buildSimpleObfsResponse() string {
+	key := make([]byte, 16)
+	utils.PutRandomBytes(key)
+	b64key := base64.StdEncoding.EncodeToString(key)
+	datetime := strings.Replace(time.Now().UTC().Format(time.RFC1123), "UTC", "GMT", 1)
+	return fmt.Sprintf(simpleObfsFormat, datetime, b64key)
 }

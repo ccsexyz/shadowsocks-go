@@ -1,6 +1,7 @@
 package ss
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"math/rand"
@@ -367,8 +368,31 @@ func obfsAcceptHandler(conn Conn, lis *listener) (c Conn) {
 		return
 	}
 	remain := DupBuffer(buf[:n])
+	var wremain []byte
 	if n > 4 && string(buf[:4]) != "POST" {
-		c = &RemainConn{Conn: GetConn(conn), remain: remain}
+		if string(buf[:4]) == "GET " {
+			for {
+				parser := utils.NewHTTPHeaderParser(bufPool.Get().([]byte))
+				defer bufPool.Put(parser.GetBuf())
+				ok, err := parser.Read(buf[:n])
+				if err != nil || ok == false {
+					break
+				}
+				uv, ok := parser.Load([]byte("Upgrade"))
+				if ok == false || len(uv) == 0 || !bytes.Equal(uv[0], []byte("websocket")) {
+					break
+				}
+				cv, ok := parser.Load([]byte("Connection"))
+				if ok == false || len(cv) == 0 || !bytes.Equal(cv[0], []byte("Upgrade")) {
+					break
+				}
+				remain = buf[parser.HeaderLen():n]
+				wremain = []byte(buildSimpleObfsResponse())
+				break
+			}
+
+		}
+		c = &RemainConn{Conn: conn, remain: remain, wremain: wremain}
 		return
 	}
 	resp := buildHTTPResponse("")
