@@ -11,8 +11,6 @@ import (
 	"time"
 
 	"github.com/ccsexyz/utils"
-	"github.com/go-redis/redis"
-	"github.com/willf/bloom"
 )
 
 type Config struct {
@@ -66,13 +64,13 @@ type Config struct {
 	closers        []cb
 	tcpFilterLock  sync.Mutex
 	tcpFilterOnce  sync.Once
-	tcpFilter      *bloom.BloomFilter
+	tcpFilter      bytesFilter
 	udpFilterOnce  sync.Once
-	udpFilter      *bloom.BloomFilter
+	udpFilter      bytesFilter
 	tcpIvChecker   ivChecker
 	autoProxyCtx   *autoProxy
 	chnListCtx     *chnRouteList
-	redisClent     *redis.Client
+	redisFilter    bytesFilter
 }
 
 func ReadConfig(path string) (configs []*Config, err error) {
@@ -106,8 +104,8 @@ func (c *Config) Close() error {
 	if c.pool != nil {
 		c.pool.Close()
 	}
-	if c.redisClent != nil {
-		c.redisClent.Close()
+	if c.redisFilter != nil {
+		c.redisFilter.Close()
 	}
 	for _, f := range c.closers {
 		f()
@@ -115,19 +113,15 @@ func (c *Config) Close() error {
 	return nil
 }
 
-func initBloomFilter(c *Config, f **bloom.BloomFilter) {
-	*f = bloom.NewWithEstimates(uint(c.FilterCapacity), defaultFilterFalseRate)
+func initBloomFilter(c *Config, f *bytesFilter) {
+	*f = newBloomFilter(c.FilterCapacity, defaultFilterFalseRate)
 }
 
 func (c *Config) redisFilterTestAndAdd(b []byte) bool {
-	if c.Ivlen == 0 || c.redisClent == nil {
+	if c.Ivlen == 0 || c.redisFilter == nil {
 		return false
 	}
-	_, err := c.redisClent.GetSet(utils.SliceToString(b), "true").Result()
-	if err == nil {
-		return true
-	}
-	return false
+	return c.redisFilter.TestAndAdd(b)
 }
 
 func (c *Config) udpFilterTestAndAdd(b []byte) bool {
@@ -304,11 +298,7 @@ func CheckConfig(c *Config) {
 		}
 	}
 	if len(c.RedisAddr) != 0 {
-		c.redisClent = redis.NewClient(&redis.Options{
-			Addr:     c.RedisAddr,
-			Password: c.RedisKey,
-			DB:       0,
-		})
+		c.redisFilter = newRedisFilter(c.RedisAddr, c.RedisKey, 0)
 	}
 }
 

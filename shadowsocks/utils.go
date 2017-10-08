@@ -846,3 +846,18 @@ func (route *chnRouteList) testIP(ip net.IP) bool {
 	defer route.lock.RUnlock()
 	return route.tree.TestIP(ip)
 }
+
+type bytesFilter interface {
+	Close() error
+	TestAndAdd([]byte) bool
+}
+
+type nullFilterImpl struct{}
+
+func newNullFilter() bytesFilter {
+	return &nullFilterImpl{}
+}
+
+func (r *nullFilterImpl) Close() error { return nil }
+
+func (r *nullFilterImpl) TestAndAdd(_ []byte) bool { return false }
