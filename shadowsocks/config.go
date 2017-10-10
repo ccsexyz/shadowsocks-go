@@ -51,6 +51,7 @@ type Config struct {
 	UseUDP         bool      `json:"useudp"`
 	MulConn        int       `json:"mulconn"`
 	FakeTCPAddr    string    `json:"faketcpaddr"`
+	Safe           bool      `json:"safe"`
 	limiters       []*Limiter
 	Vlogger        *log.Logger
 	Dlogger        *log.Logger
@@ -258,6 +259,9 @@ func CheckConfig(c *Config) {
 		}
 		if c.Debug {
 			v.Debug = true
+		}
+		if c.Safe {
+			v.Safe = true
 		}
 		if c.Verbose {
 			v.Verbose = true

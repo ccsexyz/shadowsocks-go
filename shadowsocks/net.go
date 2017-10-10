@@ -250,7 +250,7 @@ func ssMultiAcceptHandler(conn Conn, lis *listener) (c Conn) {
 		lis.c.Log("recv an unexpected header from", conn.RemoteAddr().String())
 		return
 	}
-	if chs.Ivlen != 0 {
+	if chs.Ivlen != 0 && !lis.c.Safe {
 		var exists bool
 		if addr.ts {
 			exists = !(chs.tcpIvChecker.check(utils.SliceToString(dec.GetIV())))
@@ -301,7 +301,7 @@ func ssAcceptHandler(conn Conn, lis *listener) (c Conn) {
 		lis.c.Log("recv an unexpected header from", conn.RemoteAddr().String(), " : ", err)
 		return
 	}
-	if lis.c.Ivlen != 0 {
+	if lis.c.Ivlen != 0 && !lis.c.Safe {
 		var exists bool
 		if addr.ts {
 			exists = !(lis.c.tcpIvChecker.check(utils.SliceToString(dec.GetIV())))
@@ -445,7 +445,9 @@ func GetSocksAcceptor() Acceptor {
 
 func GetShadowAcceptor(method string, password string) Acceptor {
 	var lis listener
-	lis.c = &Config{}
+	lis.c = &Config{
+		Safe: true,
+	}
 	defer func() { CheckConfig(lis.c) }()
 	if method == "multi" {
 		lis.c.Type = "multiserver"
