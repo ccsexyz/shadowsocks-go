@@ -3,6 +3,7 @@ package ss
 import (
 	"encoding/json"
 	"fmt"
+	"hash/crc32"
 	"io/ioutil"
 	"log"
 	"os"
@@ -72,6 +73,7 @@ type Config struct {
 	autoProxyCtx   *autoProxy
 	chnListCtx     *chnRouteList
 	redisFilter    bytesFilter
+	crctbl         *crc32.Table
 }
 
 func ReadConfig(path string) (configs []*Config, err error) {
@@ -203,6 +205,7 @@ func CheckBasicConfig(c *Config) {
 	if c.FilterCapacity == 0 {
 		c.FilterCapacity = defaultFilterCapacity
 	}
+	c.crctbl = crc32.MakeTable(crc32.ChecksumIEEE(utils.StringToSlice(c.Password)))
 }
 
 func CheckConfig(c *Config) {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"math/rand"
 	"net"
@@ -786,7 +787,8 @@ func DialSSWithRawHeader(header []byte, c *Config) (conn Conn, err error) {
 		if useSnappy {
 			header = append([]byte{typeSnappy}, header...)
 		}
-		noplen := rand.Intn(128 - (lenTs + 1))
+		noplen := rand.Intn(4)
+		noplen += int(crc32.Checksum(header, c.crctbl) % (128 - (lenTs + 5)))
 		buf := make([]byte, 1024)
 		buf[0] = typeNop
 		buf[1] = byte(noplen)
