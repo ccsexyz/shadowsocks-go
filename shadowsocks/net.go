@@ -435,22 +435,43 @@ func httpProxyAcceptor(conn Conn, lis *listener) (c Conn) {
 
 type Acceptor func(net.Conn) net.Conn
 
-func GetSocksAcceptor() Acceptor {
+func GetSocksAcceptor(args map[string]interface{}) Acceptor {
 	var lis listener
 	lis.c = &Config{}
+	iaddr, ok := args["localaddr"]
+	if ok {
+		lis.c.Localaddr, _ = iaddr.(string)
+	}
+	iudp, ok := args["udprelay"]
+	if ok {
+		lis.c.UDPRelay, _ = iudp.(bool)
+	}
+	lis.c.Type = "socksproxy"
 	CheckConfig(lis.c)
 	return func(conn net.Conn) net.Conn {
 		return socksAcceptor(newTCPConn2(conn, lis.c), &lis)
 	}
 }
 
-func GetShadowAcceptor(method string, password string) Acceptor {
+func GetShadowAcceptor(args map[string]interface{}) Acceptor {
+	var password string
+	var method string
+
+	ipass, ok := args["password"]
+	if ok {
+		password, _ = ipass.(string)
+	}
+	imethod, ok := args["method"]
+	if ok {
+		method, _ = imethod.(string)
+	}
+
 	var lis listener
 	lis.c = &Config{
 		Safe: true,
 	}
 	defer func() { CheckConfig(lis.c) }()
-	if method == "multi" {
+	if method == "multi" || method == "" {
 		lis.c.Type = "multiserver"
 		lis.c.Backends = []*Config{
 			&Config{Method: "chacha20", Password: password},
