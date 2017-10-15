@@ -1,4 +1,4 @@
-// +build (!linux) OR (!darwin)
+// +build !linux,!darwin
 
 package redir
 
