@@ -501,7 +501,7 @@ func socksAcceptor(conn Conn, lis *listener) (c Conn) {
 		return
 	}
 	ver := buf[0]
-	if ver != verSocks4 && ver != verSocks5 {
+	if ver != verSocks4 && ver != verSocks5 && ver != verSocks6 {
 		c = httpProxyAcceptor(&RemainConn{remain: buf[:n], Conn: conn}, lis)
 		return
 	}
@@ -538,6 +538,15 @@ func socksAcceptor(conn Conn, lis *listener) (c Conn) {
 		}
 		conn.SetDst(dstaddr)
 		c = conn
+		return
+	}
+	if ver == verSocks6 && cmd == cmdConnect {
+		addr, data, err := ParseAddr(buf[2:n])
+		if err != nil {
+			return
+		}
+		conn.SetDst(addr)
+		c = &RemainConn{Conn: conn, remain: data}
 		return
 	}
 	if ver == verSocks5 {

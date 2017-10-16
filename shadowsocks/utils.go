@@ -22,6 +22,7 @@ const (
 	verSocks4Resp          = 0
 	verSocks4              = 4
 	verSocks5              = 5
+	verSocks6              = 6
 	cmdConnect             = 1
 	cmdUDP                 = 3
 	cmdSocks4OK            = 0x5A
