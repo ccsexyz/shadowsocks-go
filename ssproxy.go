@@ -2,6 +2,7 @@ package main
 
 import (
 	"github.com/ccsexyz/shadowsocks-go/shadowsocks"
+	"github.com/ccsexyz/utils"
 )
 
 func RunSSProxyServer(c *ss.Config) {
@@ -19,7 +20,18 @@ func ssproxyHandler(conn ss.Conn, c *ss.Config) {
 		c.LogD("target length is 0")
 		return
 	}
-	rconn, err := ss.DialSS(target, c)
+	buf := utils.GetBuf(1024)
+	n, err := conn.Read(buf)
+	if err != nil {
+		utils.PutBuf(buf)
+		return
+	}
+	rconn, err := ss.DialSSWithOptions(ss.DialOptions{
+		Target: target,
+		C:      c,
+		Data:   buf[:n],
+	})
+	utils.PutBuf(buf)
 	if err != nil {
 		return
 	}

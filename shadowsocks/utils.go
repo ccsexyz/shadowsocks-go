@@ -19,6 +19,7 @@ const (
 	defaultPassword        = "secret"
 	defaultTimeout         = 65
 	buffersize             = 8192
+	httpbuffersize         = 4096
 	verSocks4Resp          = 0
 	verSocks4              = 4
 	verSocks5              = 5
@@ -217,7 +218,7 @@ outer:
 				continue
 			}
 			dec.Decrypt(buf[2:2+dmlen+2], b[off:off+dmlen+2])
-			for _, v := range buf[2 : 2+dmlen] {
+			for _, v := range buf[2: 2+dmlen] {
 				if !((v >= 'A' && v <= 'Z') || (v >= 'a' && v <= 'z') || (v >= '0' && v <= '9') || v == '.' || v == '-' || v == '_') {
 					continue outer
 				}
@@ -226,7 +227,7 @@ outer:
 			off += dmlen + 2
 			if n > off {
 				dec.Decrypt(buf[2+dmlen+2:], b[off:])
-				data = buf[2+dmlen+2 : 2+dmlen+2+len(b[off:])]
+				data = buf[2+dmlen+2: 2+dmlen+2+len(b[off:])]
 			}
 			chs = config
 			return
@@ -299,7 +300,7 @@ l:
 			if noplen >= 128 || n < noplen+2+1 {
 				return
 			}
-			for _, v := range b[2 : noplen+2] {
+			for _, v := range b[2: noplen+2] {
 				if v != 0 {
 					return
 				}
@@ -313,7 +314,7 @@ l:
 			if n < lenTs+1+1 {
 				return
 			}
-			ts := binary.BigEndian.Uint64(b[1 : 1+lenTs])
+			ts := binary.BigEndian.Uint64(b[1: 1+lenTs])
 			if !checkTimestamp(int64(ts)) {
 				return
 			}
@@ -370,7 +371,7 @@ l:
 		if n < dmlen+1+2+1 {
 			return
 		}
-		for _, v := range b[2 : 2+dmlen] {
+		for _, v := range b[2: 2+dmlen] {
 			if !((v >= 'A' && v <= 'Z') || (v >= 'a' && v <= 'z') || (v >= '0' && v <= '9') || v == '.' || v == '-' || v == '_') {
 				return
 			}
@@ -405,7 +406,7 @@ func Pipe(c1, c2 net.Conn, c *Config) {
 	}
 	f := func(dst, src net.Conn, die chan bool, buf []byte) {
 		defer close(die)
-		defer bufPool.Put(buf)
+		defer utils.PutBuf(buf)
 		var n int
 		var err error
 		for err == nil {
@@ -431,10 +432,8 @@ func Pipe(c1, c2 net.Conn, c *Config) {
 			}
 		}
 	}
-	buf1 := bufPool.Get().([]byte)
-	buf2 := bufPool.Get().([]byte)
-	go f(c1, c2, c1die, buf1)
-	go f(c2, c1, c2die, buf2)
+	go f(c1, c2, c1die, utils.GetBuf(buffersize))
+	go f(c2, c1, c2die, utils.GetBuf(buffersize))
 	select {
 	case <-c1die:
 	case <-c2die:
@@ -620,11 +619,11 @@ func (s *SockAddr) Host() string {
 	b := s.header
 	switch b[0] {
 	default:
-		return utils.SliceToString(b[2 : 2+int(b[1])])
+		return utils.SliceToString(b[2: 2+int(b[1])])
 	case typeIPv4:
-		return net.IP(b[1 : lenIPv4+1]).String()
+		return net.IP(b[1: lenIPv4+1]).String()
 	case typeIPv6:
-		return net.IP(b[1 : lenIPv6+1]).String()
+		return net.IP(b[1: lenIPv6+1]).String()
 	case typeMux:
 		return muxhost
 	}

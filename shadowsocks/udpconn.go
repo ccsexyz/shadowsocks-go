@@ -174,8 +174,8 @@ func NewMultiUDPConn(conn net.PacketConn, c *Config) *MultiUDPConn {
 }
 
 func (c *MultiUDPConn) ReadFrom(b []byte) (n int, addr net.Addr, err error) {
-	b2 := bufPool.Get().([]byte)
-	defer bufPool.Put(b2)
+	b2 := utils.GetBuf(buffersize)
+	defer utils.PutBuf(b2)
 	for {
 		n, addr, err = c.PacketConn.ReadFrom(b2)
 		if err != nil {

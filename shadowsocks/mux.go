@@ -159,7 +159,10 @@ func (md *MuxDialer) Dial(c *Config) (conn Conn, err error) {
 		}(v)
 	}
 	f := func() {
-		ssconn, err := DialSSWithRawHeader([]byte{typeMux}, c)
+		ssconn, err := DialSSWithOptions(DialOptions{
+			RawHeader: []byte{typeMux},
+			C: c,
+		})
 		if err == nil {
 			var smux *mux.Mux
 			smux, err = mux.NewMux(ssconn)

@@ -315,15 +315,15 @@ type HttpLogConn struct {
 func NewHttpLogConn(conn Conn, c *Config) *HttpLogConn {
 	return &HttpLogConn{
 		Conn: conn,
-		pr:   utils.NewHTTPHeaderParser(bufPool.Get().([]byte)),
-		pw:   utils.NewHTTPHeaderParser(bufPool.Get().([]byte)),
+		pr:   utils.NewHTTPHeaderParser(utils.GetBuf(httpbuffersize)),
+		pw:   utils.NewHTTPHeaderParser(utils.GetBuf(httpbuffersize)),
 		c:    c,
 	}
 }
 
 func cleanHTTPParser(p *utils.HTTPHeaderParser) {
 	if p != nil {
-		bufPool.Put(p.GetBuf())
+		utils.PutBuf(p.GetBuf())
 	}
 }
 
@@ -345,8 +345,8 @@ func (conn *HttpLogConn) Read(b []byte) (n int, err error) {
 		ok, e := conn.pr.Read(b[:n])
 		if ok {
 			var n2 int
-			buf := bufPool.Get().([]byte)
-			defer bufPool.Put(buf)
+			buf := utils.GetBuf(httpbuffersize)
+			defer utils.PutBuf(buf)
 			n2, e = conn.pr.Encode(buf)
 			if err == nil {
 				conn.c.Log(conn.LocalAddr(), "->", conn.RemoteAddr(), utils.SliceToString(buf[:n2]))
@@ -366,8 +366,8 @@ func (conn *HttpLogConn) Write(b []byte) (n int, err error) {
 		ok, e := conn.pw.Read(b)
 		if ok {
 			var n2 int
-			buf := bufPool.Get().([]byte)
-			defer bufPool.Put(buf)
+			buf := utils.GetBuf(httpbuffersize)
+			defer utils.PutBuf(buf)
 			n2, e = conn.pw.Encode(buf)
 			if err == nil {
 				conn.c.Log(conn.LocalAddr(), "->", conn.RemoteAddr(), utils.SliceToString(buf[:n2]))

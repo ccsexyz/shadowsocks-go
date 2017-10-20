@@ -4,9 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
-	"hash/crc32"
 	"io"
-	"math/rand"
 	"net"
 	"sort"
 	"strconv"
@@ -237,15 +235,15 @@ func ListenMultiSS(service string, c *Config) (lis net.Listener, err error) {
 func ssMultiAcceptHandler(conn Conn, lis *listener) (c Conn) {
 	ssConn := NewSsConn(conn, lis.c)
 
-	buf := bufPool.Get().([]byte)
-	defer bufPool.Put(buf)
+	buf := utils.GetBuf(buffersize)
+	defer utils.PutBuf(buf)
 	n, err := conn.Read(buf)
 	if err != nil {
 		return
 	}
 
-	rbuf := bufPool.Get().([]byte)
-	defer bufPool.Put(rbuf)
+	rbuf := utils.GetBuf(buffersize)
+	defer utils.PutBuf(rbuf)
 	addr, data, dec, chs, err := ParseAddrWithMultipleBackends(buf[:n], rbuf, lis.c.Backends)
 	if err != nil {
 		lis.c.Log("recv an unexpected header from", conn.RemoteAddr().String())
@@ -284,8 +282,8 @@ func ssMultiAcceptHandler(conn Conn, lis *listener) (c Conn) {
 }
 
 func ssAcceptHandler(conn Conn, lis *listener) (c Conn) {
-	buf := bufPool.Get().([]byte)
-	defer bufPool.Put(buf)
+	buf := utils.GetBuf(buffersize)
+	defer utils.PutBuf(buf)
 	n, err := conn.Read(buf)
 	if err != nil || n < lis.c.Ivlen+2 {
 		return
@@ -294,8 +292,8 @@ func ssAcceptHandler(conn Conn, lis *listener) (c Conn) {
 	if err != nil {
 		return
 	}
-	dbuf := bufPool.Get().([]byte)
-	defer bufPool.Put(dbuf)
+	dbuf := utils.GetBuf(buffersize)
+	defer utils.PutBuf(dbuf)
 	dec.Decrypt(dbuf, buf[lis.c.Ivlen:n])
 	addr, data, err := ParseAddr(dbuf[:n-lis.c.Ivlen])
 	if err != nil {
@@ -350,8 +348,8 @@ func ListenSocks5(address string, c *Config) (lis net.Listener, err error) {
 }
 
 func httpProxyAcceptor(conn Conn, lis *listener) (c Conn) {
-	parser := utils.NewHTTPHeaderParser(bufPool.Get().([]byte))
-	defer bufPool.Put(parser.GetBuf())
+	parser := utils.NewHTTPHeaderParser(utils.GetBuf(buffersize))
+	defer utils.PutBuf(parser.GetBuf())
 	buf := make([]byte, 4096)
 	for {
 		n, err := conn.Read(buf)
@@ -626,217 +624,6 @@ func redirAcceptor(conn Conn, lis *listener) (c Conn) {
 	return
 }
 
-func DialMultiSS(target string, configs []*Config) (conn Conn, err error) {
-	die := make(chan bool)
-	num := len(configs)
-	errch := make(chan error, num)
-	conch := make(chan Conn)
-	for _, v := range configs {
-		go func(v *Config) {
-			rconn, err := dialSS(target, v)
-			if err != nil {
-				select {
-				case <-die:
-				case errch <- fmt.Errorf("cannot connect to %s : %s", v.Remoteaddr, err.Error()):
-				}
-				return
-			}
-			select {
-			case <-die:
-				rconn.Close()
-			case conch <- rconn:
-			}
-		}(v)
-	}
-	for i := 0; i < num; i++ {
-		select {
-		case conn = <-conch:
-			close(die)
-			i = num
-		case <-errch:
-		}
-	}
-	if conn == nil {
-		err = fmt.Errorf("no available backends")
-	}
-	return
-}
-
-func DialSS(target string, c *Config) (conn Conn, err error) {
-	var direct, proxy bool
-	var ip net.IP
-
-	host, _, err := net.SplitHostPort(target)
-	if err != nil {
-		return
-	}
-
-	ip = net.ParseIP(host)
-
-	if ip != nil && c.chnListCtx != nil {
-		if c.chnListCtx.testIP(ip) {
-			c.LogD("host", host, "hit chn route")
-			direct = true
-		} else {
-			c.LogD("host", host, "miss chn route")
-			proxy = true
-		}
-	} else {
-		if c.autoProxyCtx == nil {
-			proxy = true
-		} else if c.autoProxyCtx.checkIfByPass(host) {
-			c.LogD("host", host, "hit bypass list")
-			direct = true
-		} else if c.autoProxyCtx.checkIfProxy(host) {
-			c.LogD("host", host, "hit proxy list")
-			proxy = true
-		} else if host == "localhost" {
-			direct = true
-		} else if !strings.ContainsRune(host, '.') {
-			proxy = true
-		}
-	}
-
-	if direct {
-		return DialTCPConn(target, c)
-	} else if proxy {
-		return dialSS(target, c)
-	}
-
-	die := make(chan bool)
-	num := 2
-	errch := make(chan error, 2)
-	conch := make(chan Conn)
-
-	type dialer func(string, *Config) (Conn, error)
-	work := func(d dialer, direct bool) {
-		rconn, err := d(target, c)
-		if err != nil {
-			select {
-			case <-die:
-			case errch <- err:
-			}
-			return
-		}
-		select {
-		case <-die:
-			rconn.Close()
-		case conch <- rconn:
-			if ip == nil {
-				if direct {
-					c.autoProxyCtx.markHostByPass(host)
-					c.LogD("add", host, "to bypass list")
-				} else {
-					c.autoProxyCtx.markHostNeedProxy(host)
-					c.LogD("add", host, "to proxy list")
-				}
-			}
-		}
-	}
-
-	go work(dialSS, false)
-	go work(DialTCPConn, true)
-
-	for i := 0; i < num; i++ {
-		select {
-		case conn = <-conch:
-			close(die)
-			i = num
-			err = nil
-		case err = <-errch:
-		}
-	}
-
-	return
-}
-
-func dialSS(target string, c *Config) (conn Conn, err error) {
-	if len(target) > 255 {
-		err = fmt.Errorf("target length is too long")
-		return
-	}
-	if len(c.Backends) != 0 {
-		return DialMultiSS(target, c.Backends)
-	}
-	if c.Mux {
-		return DialMux(target, c)
-	}
-	host, port, err := net.SplitHostPort(target)
-	if err != nil {
-		return
-	}
-	portNum, err := strconv.Atoi(port)
-	if err != nil {
-		return
-	}
-	var buf [512]byte
-	hdrlen := PutHeader(buf[:], host, portNum)
-	return DialSSWithRawHeader(buf[:hdrlen], c)
-}
-
-func DialSSWithRawHeader(header []byte, c *Config) (conn Conn, err error) {
-	if c.Obfs {
-		conn, err = DialObfs(c.Remoteaddr, c)
-	} else {
-		conn, err = DialTCP(c.Remoteaddr, c)
-	}
-	if err != nil {
-		return
-	}
-	if len(c.limiters) != 0 || c.LimitPerConn != 0 {
-		limiters := make([]*Limiter, len(c.limiters))
-		copy(limiters, c.limiters)
-		if c.LimitPerConn != 0 {
-			limiters = append(limiters, NewLimiter(c.LimitPerConn))
-		}
-		conn = &LimitConn{
-			Conn:      conn,
-			Rlimiters: limiters,
-		}
-	}
-	C := NewSsConn(conn, c)
-	conn = C
-	if c.Nonop {
-		rconn := &RemainConn{
-			Conn:    conn,
-			wremain: make([]byte, len(header)),
-		}
-		copy(rconn.wremain, header)
-		conn = rconn
-	} else {
-		var port uint16
-		if len(header) > 2 {
-			port = binary.BigEndian.Uint16(header[len(header)-2:])
-		}
-		if c.PartEnc || (c.PartEncHTTPS && len(header) > 2 && port == 443) {
-			C.partenc = true
-			C.partencnum = 16384
-			header = append([]byte{typePartEnc, 0x10}, header...)
-		}
-		useSnappy := (c.Snappy && port != 443)
-		if useSnappy {
-			header = append([]byte{typeSnappy}, header...)
-		}
-		noplen := rand.Intn(4)
-		noplen += int(crc32.Checksum(header, c.crctbl) % (128 - (lenTs + 5)))
-		buf := make([]byte, 1024)
-		buf[0] = typeNop
-		buf[1] = byte(noplen)
-		buf[noplen+2] = typeTs
-		binary.BigEndian.PutUint64(buf[noplen+3:], uint64(time.Now().Unix()))
-		copy(buf[noplen+2+1+lenTs:], header)
-		_, err = conn.Write(buf[:noplen+2+1+lenTs+len(header)])
-		if err != nil {
-			conn.Close()
-			return
-		}
-		if useSnappy {
-			conn = NewSnappyConn(conn)
-		}
-	}
-	return
-}
-
 func ListenTCPTun(address string, c *Config) (lis net.Listener, err error) {
 	addr, err := net.ResolveTCPAddr("tcp", address)
 	if err != nil {
@@ -859,7 +646,7 @@ func NewTCPDialer() func(string) (net.Conn, error) {
 
 func NewSSDialer(c *Config) func(string) (net.Conn, error) {
 	return func(addr string) (net.Conn, error) {
-		return DialSS(addr, c)
+		return DialSSWithOptions(DialOptions{Target:addr, C: c})
 	}
 }
 
