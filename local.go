@@ -12,27 +12,25 @@ func RunTCPLocalServer(c *ss.Config) {
 func tcpLocalHandler(conn ss.Conn, c *ss.Config) {
 	defer conn.Close()
 	target := GetDstOfConn(conn)
-	if len(target) == 0 {
-		return
-	}
 	buf := utils.GetBuf(1024)
 	n, err := conn.Read(buf)
 	if err != nil {
 		utils.PutBuf(buf)
 		return
 	}
-	rconn, err := ss.DialSSWithOptions(ss.DialOptions{
+	opt := &ss.DialOptions{
 		Target: target,
 		C:      c,
 		Data:   buf[:n],
-	})
+	}
+	rconn, err := ss.DialSSWithOptions(opt)
 	utils.PutBuf(buf)
 	if err != nil {
 		c.Log("failed connect to", target, err)
 		return
 	}
 	defer rconn.Close()
-	c.Log("proxy", target, "from", conn.RemoteAddr(), "->",
+	c.Log("proxy", opt.Target, "from", conn.RemoteAddr(), "->",
 		conn.LocalAddr(), "to", rconn.LocalAddr(), "->",
 		rconn.RemoteAddr())
 	// lim, err := ss.GetLimitConn(conn)

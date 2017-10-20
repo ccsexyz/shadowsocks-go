@@ -20,7 +20,8 @@ Features
 * 支持 HTTP 请求记录，能够记录经过代理程序的 HTTP 请求的请求头(不包含 body 部分)  
 * 在代理 HTTPS 流量时，可以仅加密前16384个字节的数据，提升转发性能  
 * 支持设置 ChnRoute 文件，IP 地址命中 ChnRoute 文件中指定的 IP 段时直接连接  
-* 可以设置黑白名单域名文件，命中黑名单的域名走代理，命中白名单的直接连接，同时程序会每分钟更新一次黑白名单中的内容  
+* 可以设置黑白名单域名文件，命中黑名单的域名走代理，命中白名单的直接连接，同时程序会每分钟更新一次黑白名单中的内容
+* 支持 HTTP/HTTPS MITM 反代，通过解析 HTTP/HTTPS 请求，获取真实的目的域名
 
 Build
 -----
@@ -90,7 +91,8 @@ json 对象中的可选配置:
 * autoproxy: 启用后会根据连接延迟决定是否直接连接  
 * proxylist: 黑名单文件路径,存储需要走代理的域名  
 * notproxylist: 白名单文件路径,存储需要直接连接的域名  
-* partenc: 开启后仅仅加密前 16384 个字节的数据  
+* partenc: 开启后仅仅加密 HTTPS 流量前 16384 个字节的数据
+* mitm: 开启 MITM 反向代理功能
 
 type 字段的可选值:  
 * local: ss 客户端
@@ -107,6 +109,7 @@ type 字段的可选值:
 Advanced Usage 
 --------------
 
+1.通过 Nginx 转发流量  
 在设置 obfs 的情况下可以在服务端的前方启动一个 nginx 然后将指定 Host 的请求转发到服务端，从而实现某一个端口 ss 服务与其他服务的共存  
 在 nginx 配置文件中增加一个 server 块即可实现将所有 Host 字段为 www.google.com 的请求转发到 9377 端口       
 ```
@@ -124,7 +127,58 @@ server {
 	}
 }
 
-``` 
+```
+
+2.实现 HTTP/HTTPS 流量的反向代理  
+编辑配置文件如下，其中 localaddrs 是本地监听的地址，因为 HTTPS/HTTP 流量默认端口分别为 443/80  
+mitm 选项为 true 后程序会读取到达这两个端口的流量，尝试解析 HTTPS/HTTP 请求，解析出目的地址后，开始进行反代  
+```
+{
+  "localaddrs": ["127.0.0.1:443", "127.0.0.1:80"],
+  "remoteaddr": "xx:xx:xx:xx:xx",
+  "method": "chacha20",
+  "partenchttps": true,
+  "password": "password",
+  "mitm": true
+}
+```
+编辑 Hosts 文件，将需要代理的地址的域名解析到程序监听的 ip 地址，在这里是 127.0.0.1  
+```
+$ cat /etc/hosts
+##
+# Host Database
+#
+# localhost is used to configure the loopback interface
+# when the system is booting.  Do not change this entry.
+##
+127.0.0.1	localhost
+255.255.255.255	broadcasthost
+::1             localhost
+127.0.0.1 www.google.com
+```
+使用配置文件运行程序后用 curl 验证工作是否正常   
+```
+$ curl http://www.google.com
+<HTML><HEAD><meta http-equiv="content-type" content="text/html;charset=utf-8">
+<TITLE>302 Moved</TITLE></HEAD><BODY>
+<H1>302 Moved</H1>
+The document has moved
+<A HREF="http://www.google.co.jp/?gfe_rd=cr&amp;dcr=0&amp;ei=VOXpWZmLBJDR8gfu7ZnoCg">here</A>.
+</BODY></HTML>
+
+$ curl https://www.google.com
+<HTML><HEAD><meta http-equiv="content-type" content="text/html;charset=utf-8">
+<TITLE>302 Moved</TITLE></HEAD><BODY>
+<H1>302 Moved</H1>
+The document has moved
+<A HREF="https://www.google.co.jp/?gfe_rd=cr&amp;dcr=0&amp;ei=XuXpWd_fH4XR8geBqZ7QDA">here</A>.
+</BODY></HTML>
+
+$ sudo ./shadowsocks-go mitm.json
+[info] [local-127.0.0.1:443] 2017/10/20 19:59:58.796889 main.go:144: run client at 127.0.0.1:443 with method chacha20
+[info] [local-127.0.0.1:443] 2017/10/20 20:00:19.806849 local.go:33: proxy www.google.com:80 from 127.0.0.1:64593 -> 127.0.0.1:80 to 172.24.152.239:64594 -> xx:xx:xx:xx:xx
+[info] [local-127.0.0.1:443] 2017/10/20 20:00:30.091196 local.go:33: proxy www.google.com:443 from 127.0.0.1:64607 -> 127.0.0.1:443 to 172.24.152.239:64608 -> xx:xx:xx:xx:xx
+```
 
 TODO  
 ____  
@@ -134,6 +188,6 @@ ____
 * ~~实现 TCP redirect~~  
 * ~~实现 HTTP 伪装~~  
 * ~~实现 mux~~  
-* 兼容 shadowsocks simple-obfs  
+* ~~兼容 shadowsocks simple-obfs~~
 * ~~支持 HTTP 代理~~  
 * ~~支持 socks4/socks4a 代理~~

@@ -493,6 +493,10 @@ func GetShadowAcceptor(args map[string]interface{}) Acceptor {
 }
 
 func socksAcceptor(conn Conn, lis *listener) (c Conn) {
+	if lis.c.MITM {
+		c = conn
+		return
+	}
 	buf := make([]byte, 512)
 	n, err := conn.Read(buf)
 	if err != nil || n < 2 {
@@ -646,7 +650,7 @@ func NewTCPDialer() func(string) (net.Conn, error) {
 
 func NewSSDialer(c *Config) func(string) (net.Conn, error) {
 	return func(addr string) (net.Conn, error) {
-		return DialSSWithOptions(DialOptions{Target:addr, C: c})
+		return DialSSWithOptions(&DialOptions{Target:addr, C: c})
 	}
 }
 

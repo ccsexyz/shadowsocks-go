@@ -26,7 +26,7 @@ var (
 	errNoBackends = fmt.Errorf("no available backends")
 )
 
-func dialSSWithOptions(opt DialOptions) (conn Conn, err error) {
+func dialSSWithOptions(opt *DialOptions) (conn Conn, err error) {
 	defer func() {
 		if err != nil && conn != nil {
 			conn.Close()
@@ -153,7 +153,7 @@ func dialSSWithOptions(opt DialOptions) (conn Conn, err error) {
 	return
 }
 
-func DialSSWithOptions(opt DialOptions) (conn Conn, err error) {
+func DialSSWithOptions(opt *DialOptions) (conn Conn, err error) {
 	defer func() {
 		if conn != nil {
 			if err == nil && len(opt.Data) > 0 {
@@ -165,6 +165,41 @@ func DialSSWithOptions(opt DialOptions) (conn Conn, err error) {
 			}
 		}
 	}()
+
+	c := opt.C
+
+	if len(opt.Target) == 0 && c.MITM && len(opt.Data) > 0 {
+		ok, msg := utils.ParseTLSClientHelloMsg(opt.Data)
+		if ok {
+			if len(msg.ServerName) != 0 {
+				if c.PartEncHTTPS {
+					opt.PartEnc = true
+				}
+				opt.UseSnappy = false
+				if strings.ContainsRune(msg.ServerName, ':') {
+					opt.Target = msg.ServerName
+				} else {
+					opt.Target = msg.ServerName + ":443"
+				}
+			}
+		} else {
+			parser := utils.NewHTTPHeaderParser(utils.GetBuf(httpbuffersize))
+			defer utils.PutBuf(parser.GetBuf())
+			ok, _ = parser.Read(opt.Data)
+			if ok {
+				hosts, ok := parser.Load([]byte("Host"))
+				if ok && len(hosts) > 0 && len(hosts[0]) > 0 {
+					target := utils.SliceToString(hosts[0])
+					if strings.ContainsRune(target, ':') {
+						opt.Target = target
+					} else {
+						opt.Target = target + ":80"
+					}
+				}
+			}
+		}
+	}
+
 	var direct, proxy bool
 	var ip net.IP
 
@@ -174,7 +209,6 @@ func DialSSWithOptions(opt DialOptions) (conn Conn, err error) {
 	}
 
 	ip = net.ParseIP(host)
-	c := opt.C
 
 	if ip != nil && c.chnListCtx != nil {
 		if c.chnListCtx.testIP(ip) {
@@ -213,7 +247,7 @@ func DialSSWithOptions(opt DialOptions) (conn Conn, err error) {
 	errch := make(chan error, 2)
 	conch := make(chan Conn)
 
-	type dialer func(DialOptions) (Conn, error)
+	type dialer func(*DialOptions) (Conn, error)
 	work := func(d dialer, direct bool) {
 		rconn, err := d(opt)
 		if err != nil {
@@ -240,7 +274,7 @@ func DialSSWithOptions(opt DialOptions) (conn Conn, err error) {
 	}
 
 	go work(dialSSWithOptions, false)
-	go work(func(opt DialOptions) (Conn, error){return DialTCPConn(opt.Target, opt.C)}, true)
+	go work(func(opt *DialOptions) (Conn, error){return DialTCPConn(opt.Target, opt.C)}, true)
 
 	for i := 0; i < num; i++ {
 		select {

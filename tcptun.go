@@ -10,7 +10,7 @@ func RunTCPTunServer(c *ss.Config) {
 
 func tcpTunHandler(conn ss.Conn, c *ss.Config) {
 	defer conn.Close()
-	rconn, err := ss.DialSSWithOptions(ss.DialOptions{
+	rconn, err := ss.DialSSWithOptions(&ss.DialOptions{
 		Target: c.Remoteaddr,
 		C:      c.Backend,
 	})

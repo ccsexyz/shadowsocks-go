@@ -12,16 +12,13 @@ func RunSocksProxyServer(c *ss.Config) {
 func socksProxyHandler(conn ss.Conn, c *ss.Config) {
 	defer conn.Close()
 	target := GetDstOfConn(conn)
-	if len(target) == 0 {
-		return
-	}
 	buf := utils.GetBuf(1024)
 	n, err := conn.Read(buf)
 	if err != nil {
 		utils.PutBuf(buf)
 		return
 	}
-	rconn, err := ss.DialSSWithOptions(ss.DialOptions{
+	rconn, err := ss.DialSSWithOptions(&ss.DialOptions{
 		Target: target,
 		C:      c,
 		Data: buf[:n],

@@ -5,29 +5,51 @@ import (
 
 	ss "github.com/ccsexyz/shadowsocks-go/shadowsocks"
 	"github.com/ccsexyz/utils"
+	"sync"
 )
 
 func RunTCPServer(address string, c *ss.Config,
 	listen func(string, *ss.Config) (net.Listener, error),
 	handler func(ss.Conn, *ss.Config)) {
-	lis, err := listen(address, c)
-	if err != nil {
-		c.Logger.Fatal(err)
-	}
-	defer lis.Close()
-	go func() {
-		if c.Die != nil {
-			<-c.Die
-			lis.Close()
+	var addresses []string
+	func() {
+		addrsMap := make(map[string]bool)
+		c.Localaddrs = append(c.Localaddrs, c.Localaddr)
+		for _, addr := range c.Localaddrs {
+			if len(addr) > 0 {
+				addrsMap[addr] = true
+			}
+		}
+		for addr, _ := range addrsMap {
+			addresses = append(addresses, addr)
 		}
 	}()
-	for {
-		conn, err := lis.Accept()
-		if err != nil {
-			return
-		}
-		go handler(conn.(ss.Conn), c)
+	var wg sync.WaitGroup
+	for _, address := range addresses {
+		wg.Add(1)
+		go func(address string) {
+			defer wg.Done()
+			lis, err := listen(address, c)
+			if err != nil {
+				c.Logger.Fatal(err)
+			}
+			defer lis.Close()
+			go func() {
+				if c.Die != nil {
+					<-c.Die
+					lis.Close()
+				}
+			}()
+			for {
+				conn, err := lis.Accept()
+				if err != nil {
+					return
+				}
+				go handler(conn.(ss.Conn), c)
+			}
+		}(address)
 	}
+	wg.Wait()
 }
 
 func GetDstOfConn(conn ss.Conn) string {

@@ -26,7 +26,7 @@ func ssproxyHandler(conn ss.Conn, c *ss.Config) {
 		utils.PutBuf(buf)
 		return
 	}
-	rconn, err := ss.DialSSWithOptions(ss.DialOptions{
+	rconn, err := ss.DialSSWithOptions(&ss.DialOptions{
 		Target: target,
 		C:      c,
 		Data:   buf[:n],

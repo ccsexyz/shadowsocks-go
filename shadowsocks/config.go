@@ -18,6 +18,7 @@ type Config struct {
 	Nickname       string    `json:"nickname"`
 	Type           string    `json:"type"`
 	Localaddr      string    `json:"localaddr"`
+	Localaddrs     []string  `json:"localaddrs"`
 	Remoteaddr     string    `json:"remoteaddr"`
 	Method         string    `json:"method"`
 	Password       string    `json:"password"`
@@ -53,6 +54,7 @@ type Config struct {
 	MulConn        int       `json:"mulconn"`
 	FakeTCPAddr    string    `json:"faketcpaddr"`
 	Safe           bool      `json:"safe"`
+	MITM           bool      `json:"mitm"`
 	limiters       []*Limiter
 	Vlogger        *log.Logger
 	Dlogger        *log.Logger
@@ -209,6 +211,10 @@ func CheckBasicConfig(c *Config) {
 }
 
 func CheckConfig(c *Config) {
+	if len(c.Localaddr) == 0 && len(c.Localaddrs) > 0 {
+		c.Localaddr = c.Localaddrs[0]
+		c.Localaddrs = c.Localaddrs[1:]
+	}
 	if len(c.Type) == 0 {
 		if len(c.Localaddr) != 0 && len(c.Remoteaddr) != 0 {
 			c.Type = "local"
