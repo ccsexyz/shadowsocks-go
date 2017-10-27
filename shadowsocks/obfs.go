@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/ccsexyz/utils"
+	"crypto/tls"
+	"encoding/binary"
 )
 
 type ObfsConn struct {
@@ -316,6 +318,80 @@ func (c *RemainConn) WriteBuffers(b [][]byte) (n int, err error) {
 	return c.Conn.WriteBuffers(b)
 }
 
+type SimpleTLSConn struct {
+	Conn
+	sessionID []byte
+	frameLen  int
+	responsed bool
+	wlock     sync.Mutex
+}
+
+func (conn *SimpleTLSConn) Read(b []byte) (n int, err error) {
+	for conn.frameLen == 0 {
+		frameBuf := make([]byte, 5)
+		_, err = io.ReadFull(conn.Conn, frameBuf)
+		if err != nil {
+			return
+		}
+		conn.frameLen = int(binary.BigEndian.Uint16(frameBuf[3:]))
+	}
+	if len(b) > conn.frameLen {
+		b = b[:conn.frameLen]
+	}
+	n, err = conn.Conn.Read(b)
+	if n > 0 {
+		conn.frameLen -= n
+	}
+	return
+}
+
+func (conn *SimpleTLSConn) writeBuffersInLock(bufs [][]byte) (n int, err error) {
+	if len(bufs) == 0 {
+		return
+	}
+	var wbufs [][]byte
+	if !conn.responsed {
+		tlsBuf := utils.GetBuf(len(bufs[0]) + 512)
+		defer utils.PutBuf(tlsBuf)
+		n += len(bufs[0])
+		tlsLen := utils.GenTLSServerHello(tlsBuf, len(bufs[0]), conn.sessionID)
+		wbufs = append(wbufs, tlsBuf[:tlsLen])
+		wbufs = append(wbufs, bufs[0])
+		bufs = bufs[1:]
+		conn.responsed = true
+	}
+	if len(bufs) != 0 {
+		frameHeaders := utils.GetBuf(len(bufs)*5)
+		defer utils.PutBuf(frameHeaders)
+		for it, buf := range bufs {
+			frameBuf := frameHeaders[it*5:(it+1)*5]
+			copy(frameBuf, []byte{0x17, 0x03, 0x03})
+			binary.BigEndian.PutUint16(frameBuf[3:], uint16(len(buf)))
+			wbufs = append(wbufs, frameBuf)
+			wbufs = append(wbufs, buf)
+			n += len(buf)
+		}
+	}
+	_, err = conn.Conn.WriteBuffers(wbufs)
+	if err != nil {
+		n = 0
+	}
+	return
+}
+
+func (conn *SimpleTLSConn) Write(b []byte) (n int, err error) {
+	conn.wlock.Lock()
+	defer conn.wlock.Unlock()
+	return conn.writeBuffersInLock([][]byte{b})
+}
+
+func (conn *SimpleTLSConn) WriteBuffers(b [][]byte) (n int, err error) {
+	conn.wlock.Lock()
+	defer conn.wlock.Unlock()
+	return conn.writeBuffersInLock(b)
+	return
+}
+
 func DialObfs(target string, c *Config) (conn Conn, err error) {
 	defer func() {
 		if err != nil && conn != nil {
@@ -367,8 +443,8 @@ func obfsAcceptHandler(conn Conn, lis *listener) (c Conn) {
 	if err != nil || n == 0 {
 		return
 	}
-	remain := DupBuffer(buf[:n])
-	var wremain []byte
+	var remain, wremain []byte
+	remain = DupBuffer(buf[:n])
 	if n > 4 && string(buf[:4]) != "POST" {
 		if string(buf[:4]) == "GET " {
 			for {
@@ -386,12 +462,45 @@ func obfsAcceptHandler(conn Conn, lis *listener) (c Conn) {
 				if ok == false || len(cv) == 0 || !bytes.Equal(cv[0], []byte("Upgrade")) {
 					break
 				}
-				remain = buf[parser.HeaderLen():n]
+				remain = DupBuffer(buf[parser.HeaderLen():n])
 				wremain = []byte(buildSimpleObfsResponse())
 				break
 			}
-
+		} else if buf[0] == 0x16 && n > 0x20 {
+			tlsVer := binary.BigEndian.Uint16(buf[1:3])
+			tlsLen := int(binary.BigEndian.Uint16(buf[3:5])) + 5
+			if tlsVer > tls.VersionTLS12 || tlsVer < tls.VersionSSL30 {
+				goto OUT
+			}
+			if tlsLen > n {
+				if tlsLen > 16389 {
+					goto OUT
+				}
+				newBuf := utils.GetBuf(tlsLen)
+				defer utils.PutBuf(newBuf)
+				_, err = io.ReadFull(conn, newBuf[n:tlsLen])
+				if err != nil {
+					return
+				}
+				copy(newBuf, buf[:n])
+				buf = newBuf
+				n = tlsLen
+			}
+			ok, nh, cliMsg := utils.ParseTLSClientHelloMsg(buf[:n]);
+			if ok && cliMsg != nil {
+				if len(buf[nh:n]) > 0 {
+					conn = &RemainConn{Conn: conn, remain: DupBuffer(buf[nh:n])}
+				}
+				conn = &SimpleTLSConn{Conn: conn, sessionID: DupBuffer(cliMsg.SessionId)}
+				if len(cliMsg.SessionTicket) > 0 {
+					conn = &RemainConn{Conn: conn, remain: DupBuffer(cliMsg.SessionTicket)}
+				}
+				c = conn
+				return
+			}
+			//log.Println(buf[:n], n, ok, cliMsg)
 		}
+		OUT:
 		c = &RemainConn{Conn: conn, remain: remain, wremain: wremain}
 		return
 	}

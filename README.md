@@ -22,6 +22,7 @@ Features
 * 支持设置 ChnRoute 文件，IP 地址命中 ChnRoute 文件中指定的 IP 段时直接连接  
 * 可以设置黑白名单域名文件，命中黑名单的域名走代理，命中白名单的直接连接，同时程序会每分钟更新一次黑白名单中的内容
 * 支持 HTTP/HTTPS MITM 反代，通过解析 HTTP/HTTPS 请求，获取真实的目的域名
+* 兼容 shadowsocks/simple-obfs(tls/http)
 
 Build
 -----
@@ -188,6 +189,7 @@ ____
 * ~~实现 TCP redirect~~  
 * ~~实现 HTTP 伪装~~  
 * ~~实现 mux~~  
-* ~~兼容 shadowsocks simple-obfs~~
+* ~~兼容 shadowsocks simple-obfs:http~~
 * ~~支持 HTTP 代理~~  
 * ~~支持 socks4/socks4a 代理~~
+* ~~兼容 shadowsocks/simple-obfs:tls~~

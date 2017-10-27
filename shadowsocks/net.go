@@ -297,7 +297,7 @@ func ssAcceptHandler(conn Conn, lis *listener) (c Conn) {
 	dec.Decrypt(dbuf, buf[lis.c.Ivlen:n])
 	addr, data, err := ParseAddr(dbuf[:n-lis.c.Ivlen])
 	if err != nil {
-		lis.c.Log("recv an unexpected header from", conn.RemoteAddr().String(), " : ", err)
+		lis.c.Log("recv an unexpected header from", conn.RemoteAddr().String(), " : ", err, buf[:n])
 		return
 	}
 	if lis.c.Ivlen != 0 && !lis.c.Safe {

@@ -91,7 +91,7 @@ func dialSSWithOptions(opt *DialOptions) (conn Conn, err error) {
 		opt.PartEnc = true
 	}
 	if c.PartEncHTTPS && !opt.PartEnc && len(opt.Data) > 0 {
-		ok, _ := utils.ParseTLSClientHelloMsg(opt.Data)
+		ok, _, _ := utils.ParseTLSClientHelloMsg(opt.Data)
 		if ok {
 			opt.PartEnc = true
 			opt.UseSnappy = false
@@ -169,7 +169,7 @@ func DialSSWithOptions(opt *DialOptions) (conn Conn, err error) {
 	c := opt.C
 
 	if len(opt.Target) == 0 && c.MITM && len(opt.Data) > 0 {
-		ok, msg := utils.ParseTLSClientHelloMsg(opt.Data)
+		ok, _, msg := utils.ParseTLSClientHelloMsg(opt.Data)
 		if ok {
 			if len(msg.ServerName) != 0 {
 				if c.PartEncHTTPS {
