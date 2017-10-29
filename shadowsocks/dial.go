@@ -1,14 +1,15 @@
 package ss
 
 import (
-	"fmt"
-	"github.com/ccsexyz/utils"
-	"math/rand"
-	"hash/crc32"
 	"encoding/binary"
-	"time"
+	"fmt"
+	"hash/crc32"
+	"math/rand"
 	"net"
 	"strings"
+	"time"
+
+	"github.com/ccsexyz/utils"
 )
 
 type DialOptions struct {
@@ -23,7 +24,7 @@ type DialOptions struct {
 
 var (
 	errTargetTooLong = fmt.Errorf("target length is too long")
-	errNoBackends = fmt.Errorf("no available backends")
+	errNoBackends    = fmt.Errorf("no available backends")
 )
 
 func dialSSWithOptions(opt *DialOptions) (conn Conn, err error) {
@@ -100,7 +101,11 @@ func dialSSWithOptions(opt *DialOptions) (conn Conn, err error) {
 	if c.Obfs {
 		conn, err = DialObfs(c.Remoteaddr, c)
 	} else {
-		conn, err = DialTCP(c.Remoteaddr, c)
+		var tconn *TCPConn
+		tconn, err = DialTCP(c.Remoteaddr, c)
+		if tconn != nil {
+			conn = tconn
+		}
 	}
 	if err != nil {
 		return
@@ -143,7 +148,7 @@ func dialSSWithOptions(opt *DialOptions) (conn Conn, err error) {
 		binary.BigEndian.PutUint64(header[headerLen:], uint64(time.Now().Unix()))
 		headerLen += lenTs
 		conn = &RemainConn{
-			Conn: conn,
+			Conn:    conn,
 			wremain: append(header[:headerLen], opt.RawHeader...),
 		}
 		if opt.UseSnappy {
@@ -274,7 +279,7 @@ func DialSSWithOptions(opt *DialOptions) (conn Conn, err error) {
 	}
 
 	go work(dialSSWithOptions, false)
-	go work(func(opt *DialOptions) (Conn, error){return DialTCPConn(opt.Target, opt.C)}, true)
+	go work(func(opt *DialOptions) (Conn, error) { return DialTCPConn(opt.Target, opt.C) }, true)
 
 	for i := 0; i < num; i++ {
 		select {
