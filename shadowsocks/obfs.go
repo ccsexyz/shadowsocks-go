@@ -5,13 +5,21 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
-	"strconv"
 	"sync"
 	"time"
 
-	"github.com/ccsexyz/utils"
 	"crypto/tls"
 	"encoding/binary"
+
+	"github.com/ccsexyz/utils"
+)
+
+const (
+	obfsParseChunkLen = iota
+	obfsParseRN       = iota
+	obfsParsePayload  = iota
+	obfsParseRNR      = iota
+	obfsParseRNRN     = iota
 )
 
 type ObfsConn struct {
@@ -25,6 +33,7 @@ type ObfsConn struct {
 	rlock    sync.Mutex
 	wlock    sync.Mutex
 	destroy  bool
+	status   int
 }
 
 func (c *ObfsConn) Close() (err error) {
@@ -40,7 +49,7 @@ func (c *ObfsConn) Close() (err error) {
 	}
 	c.wlock.Lock()
 	defer c.wlock.Unlock()
-	_, err = c.write(nil)
+	_, err = c.writeBuffers([][]byte{nil})
 	if err != nil {
 		err = c.RemainConn.Close()
 		return
@@ -72,21 +81,16 @@ func (c *ObfsConn) Close() (err error) {
 	return
 }
 
-func (c *ObfsConn) write(b []byte) (n int, err error) {
-	n = len(b)
-	defer func() {
-		if err != nil {
-			n = 0
-		}
-	}()
-	wbuf := make([]byte, n+16)
-	length := copy(wbuf, []byte(fmt.Sprintf("%x\r\n", n)))
-	copy(wbuf[length:], b)
-	length += n
-	wbuf[length] = '\r'
-	wbuf[length+1] = '\n'
-	_, err = c.RemainConn.Write(wbuf[:length+2])
-	return
+func (c *ObfsConn) writeBuffers(bufs [][]byte) (n int, err error) {
+	wbufs := make([][]byte, 0, 3+len(bufs))
+	length := 0
+	for _, buf := range bufs {
+		length += len(buf)
+	}
+	wbufs = append(wbufs, []byte(fmt.Sprintf("%x\r\n", length)))
+	wbufs = append(wbufs, bufs...)
+	wbufs = append(wbufs, []byte("\r\n"))
+	return c.RemainConn.WriteBuffers(wbufs)
 }
 
 func (c *ObfsConn) Write(b []byte) (n int, err error) {
@@ -99,7 +103,7 @@ func (c *ObfsConn) Write(b []byte) (n int, err error) {
 		err = fmt.Errorf("write to closed connection")
 		return
 	}
-	n, err = c.write(b)
+	n, err = c.writeBuffers([][]byte{b})
 	return
 }
 
@@ -110,19 +114,7 @@ func (c *ObfsConn) WriteBuffers(b [][]byte) (n int, err error) {
 		err = fmt.Errorf("write to closed connection")
 		return
 	}
-	for _, v := range b {
-		n += len(v)
-	}
-	wbuf := make([]byte, 16)
-	length := copy(wbuf, []byte(fmt.Sprintf("%x\r\n", n)))
-	bufs := make([][]byte, len(b)+2)
-	bufs[0] = wbuf[:length]
-	copy(bufs[1:], b)
-	bufs[1+len(b)] = []byte{'\r', '\n'}
-	_, err = c.RemainConn.WriteBuffers(bufs)
-	if err != nil {
-		n = 0
-	}
+	n, err = c.writeBuffers(b)
 	return
 }
 
@@ -173,74 +165,84 @@ func (c *ObfsConn) doRead(b []byte) (n int, err error) {
 
 func (c *ObfsConn) readInLock(b []byte) (n int, err error) {
 	if len(b) == 0 {
-		return
+		return c.RemainConn.Read(b)
 	}
-	if c.chunkLen <= 2 && c.chunkLen > 0 {
-		_, err = c.doRead(b[:c.chunkLen])
+	for n == 0 {
+		var nr int
+		nr, err = c.doRead(b)
 		if err != nil {
 			return
 		}
-		c.chunkLen = 0
-	}
-	if c.chunkLen == 0 {
-		var chunkLenStr string
-		for {
-			n, err = c.doRead(b[:1])
-			if err != nil {
-				return
-			}
-			if n == 0 {
-				err = fmt.Errorf("short read")
-				return
-			}
-			c := b[0]
-			if (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') {
-				chunkLenStr += string(c)
+		b2 := b[:nr]
+		for len(b2) > 0 {
+			if c.status == obfsParseChunkLen {
+				if b2[0] >= '0' && b2[0] <= '9' {
+					c.chunkLen *= 16
+					c.chunkLen += int(b2[0] - '0')
+					b2 = b2[1:]
+				} else if b2[0] >= 'a' && b2[0] <= 'f' {
+					c.chunkLen *= 16
+					c.chunkLen += 10 + int(b2[0]-'a')
+					b2 = b2[1:]
+				} else if b2[0] == '\r' {
+					c.status = obfsParseRN
+					b2 = b2[1:]
+				} else {
+					err = fmt.Errorf("unexcepted length character %v", b2[0])
+					return
+				}
+			} else if c.status == obfsParseRN {
+				if b2[0] == '\n' {
+					c.status = obfsParsePayload
+					if c.chunkLen == 0 {
+						c.eos = true
+					}
+					b2 = b2[1:]
+				} else {
+					err = fmt.Errorf("unexcepted length character %v", b2[0])
+					return
+				}
+			} else if c.status == obfsParsePayload {
+				if c.chunkLen == 0 {
+					c.status = obfsParseRNR
+					continue
+				}
+				var ncopy int
+				if c.chunkLen > len(b2) {
+					ncopy = len(b2)
+				} else {
+					ncopy = c.chunkLen
+				}
+				ncopy = copy(b[n:], b2[:ncopy])
+				b2 = b2[ncopy:]
+				n += ncopy
+				c.chunkLen -= ncopy
+				if c.chunkLen == 0 {
+					c.status = obfsParseRNR
+				}
 				continue
+			} else if c.status == obfsParseRNR {
+				if b2[0] == '\r' {
+					c.status = obfsParseRNRN
+					b2 = b2[1:]
+				} else {
+					err = fmt.Errorf("unexcepted length character %v", b2[0])
+					return
+				}
+			} else if c.status == obfsParseRNRN {
+				if b2[0] == '\n' {
+					c.status = obfsParseChunkLen
+					b2 = b2[1:]
+					if c.eos {
+						err = fmt.Errorf("read from closed obfsconn")
+						return
+					}
+				} else {
+					err = fmt.Errorf("unexcepted length character %v", b2[0])
+					return
+				}
 			}
-			if c == '\r' {
-				continue
-			}
-			if c == '\n' {
-				break
-			}
-			err = fmt.Errorf("unexcepted length character %v", c)
-			return
 		}
-		if len(chunkLenStr) == 0 {
-			err = fmt.Errorf("incorrect chunked data")
-			return
-		}
-		var i int64
-		i, err = strconv.ParseInt(chunkLenStr, 16, 0)
-		if err != nil {
-			return
-		}
-		c.chunkLen = int(i) + 2
-	}
-	if c.chunkLen == 2 {
-		buf := make([]byte, 2)
-		_, err = io.ReadFull(&(c.RemainConn), buf)
-		if err == nil {
-			n = 0
-			c.eos = true
-			err = fmt.Errorf("read from closed obfsconn")
-		}
-		return
-	}
-	var buf []byte
-	if c.chunkLen > len(b) {
-		buf = b
-	} else {
-		buf = b[:c.chunkLen]
-	}
-	n, err = c.doRead(buf)
-	if err != nil {
-		return
-	}
-	c.chunkLen -= n
-	if c.chunkLen < 2 {
-		n -= 2 - c.chunkLen
 	}
 	return
 }
@@ -361,10 +363,10 @@ func (conn *SimpleTLSConn) writeBuffersInLock(bufs [][]byte) (n int, err error) 
 		conn.responsed = true
 	}
 	if len(bufs) != 0 {
-		frameHeaders := utils.GetBuf(len(bufs)*5)
+		frameHeaders := utils.GetBuf(len(bufs) * 5)
 		defer utils.PutBuf(frameHeaders)
 		for it, buf := range bufs {
-			frameBuf := frameHeaders[it*5:(it+1)*5]
+			frameBuf := frameHeaders[it*5 : (it+1)*5]
 			copy(frameBuf, []byte{0x17, 0x03, 0x03})
 			binary.BigEndian.PutUint16(frameBuf[3:], uint16(len(buf)))
 			wbufs = append(wbufs, frameBuf)
@@ -486,7 +488,7 @@ func obfsAcceptHandler(conn Conn, lis *listener) (c Conn) {
 				buf = newBuf
 				n = tlsLen
 			}
-			ok, nh, cliMsg := utils.ParseTLSClientHelloMsg(buf[:n]);
+			ok, nh, cliMsg := utils.ParseTLSClientHelloMsg(buf[:n])
 			if ok && cliMsg != nil {
 				if len(buf[nh:n]) > 0 {
 					conn = &RemainConn{Conn: conn, remain: DupBuffer(buf[nh:n])}
@@ -500,7 +502,7 @@ func obfsAcceptHandler(conn Conn, lis *listener) (c Conn) {
 			}
 			//log.Println(buf[:n], n, ok, cliMsg)
 		}
-		OUT:
+	OUT:
 		c = &RemainConn{Conn: conn, remain: remain, wremain: wremain}
 		return
 	}
