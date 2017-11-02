@@ -22,23 +22,24 @@ Features
 * 支持设置 ChnRoute 文件，IP 地址命中 ChnRoute 文件中指定的 IP 段时直接连接  
 * 可以设置黑白名单域名文件，命中黑名单的域名走代理，命中白名单的直接连接，同时程序会每分钟更新一次黑白名单中的内容
 * 支持 HTTP/HTTPS MITM 反代，通过解析 HTTP/HTTPS 请求，获取真实的目的域名
-* 兼容 shadowsocks/simple-obfs(tls/http)
+* 兼容 shadowsocks/simple-obfs(tls/http)  
+* 实现了前向纠错码，用于降低 UDP 流量的丢包率  
 
 Build
 -----
-``` 
+```
 go get -u -v github.com/ccsexyz/shadowsocks-go  
 ```
 
 Usage
 -----
-``` 
+```
 shadowsocks-go configfile
 ```
 
-shadowsocks-go 使用 json 配置文件,配置文件的基本单位为一个 json object,一个配置文件中可以只有一个 object,也可以是由多个 json object 组成的数组 
+shadowsocks-go 使用 json 配置文件,配置文件的基本单位为一个 json object,一个配置文件中可以只有一个 object,也可以是由多个 json object 组成的数组
 ```json
-// ok 
+// ok
 {
   "localaddr": ":1080",
   "remoteaddr": "vps:8888",
@@ -107,7 +108,7 @@ type 字段的可选值:
 
 具体的使用可以参考 sample-config 中的示例配置文件  
 
-Advanced Usage 
+Advanced Usage
 --------------
 
 1.通过 Nginx 转发流量  

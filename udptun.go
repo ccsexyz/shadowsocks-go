@@ -14,14 +14,15 @@ func getCreateFuncOfUDPTunServer(c *ss.Config) func(*utils.SubConn) (net.Conn, n
 			c.Log(err)
 			return
 		}
-		buf := make([]byte, 512)
+		buf := utils.GetBuf(512)
+		defer utils.PutBuf(buf)
 		addr, err := net.ResolveUDPAddr("udp", c.Remoteaddr)
 		if err != nil {
 			c.Logger.Fatal(err)
 		}
 		hdrlen := ss.PutHeader(buf, addr.IP.String(), addr.Port)
 		header := buf[:hdrlen]
-		c1 = rconn
+		c1 = newFECConn(rconn, c.Backend)
 		c2 = &udpRemoteConn{Conn: conn, header: header}
 		return
 	}

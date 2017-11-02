@@ -72,8 +72,10 @@ func (conn *udpRemoteConn) Write(b []byte) (n int, err error) {
 }
 
 func getCreateFuncOfUDPRemoteServer(c *ss.Config) func(*utils.SubConn) (net.Conn, net.Conn, error) {
-	return func(conn *utils.SubConn) (c1, c2 net.Conn, err error) {
-		buf := make([]byte, 2048)
+	return func(subconn *utils.SubConn) (c1, c2 net.Conn, err error) {
+		conn := newFECConn(subconn, c)
+		buf := utils.GetBuf(2048)
+		defer utils.PutBuf(buf)
 		n, err := conn.Read(buf)
 		if err != nil {
 			return
@@ -143,7 +145,7 @@ func getCreateFuncOfUDPLocalServer(c *ss.Config) func(*utils.SubConn) (net.Conn,
 			c.Logger.Println(err)
 			return
 		}
-		c1 = conn
+		c1 = newFECConn(conn, subconfig)
 		c2 = &udpLocalConn{Conn: rconn}
 		return
 	}
@@ -156,4 +158,11 @@ func RunUDPLocalServer(c *ss.Config) {
 	}
 	defer listener.Close()
 	RunUDPServer(listener, c, getCreateFuncOfUDPLocalServer)
+}
+
+func newFECConn(conn net.Conn, cfg *ss.Config) net.Conn {
+	if cfg != nil && cfg.DataShard > 0 && cfg.ParityShard > 0 {
+		return utils.NewFecConn(conn, cfg.DataShard, cfg.ParityShard)
+	}
+	return conn
 }

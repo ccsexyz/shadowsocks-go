@@ -42,6 +42,8 @@ func main() {
 	flag.BoolVar(&c.PartEnc, "partenc", false, "partially encrypt traffic")
 	flag.BoolVar(&c.Safe, "safe", false, "runs under safe mode, server won't validate iv if safe is enabled")
 	flag.BoolVar(&c.MITM, "mitm", false, "enable MITM-based http/https proxy")
+	flag.IntVar(&c.DataShard, "ds", 0, "set datashard - fec")
+	flag.IntVar(&c.ParityShard, "ps", 0, "set parityshard - fec")
 	flag.Parse()
 
 	if len(os.Args) == 1 {

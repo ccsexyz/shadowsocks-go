@@ -55,6 +55,8 @@ type Config struct {
 	FakeTCPAddr    string    `json:"faketcpaddr"`
 	Safe           bool      `json:"safe"`
 	MITM           bool      `json:"mitm"`
+	DataShard      int       `json:"datashard"`
+	ParityShard    int       `json:"parityshard"`
 	limiters       []*Limiter
 	Vlogger        *log.Logger
 	Dlogger        *log.Logger
