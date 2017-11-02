@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
+	"net"
 	"sync"
 	"time"
 
@@ -126,7 +127,7 @@ func (c *ObfsConn) readObfsHeader(b []byte) (n int, err error) {
 		return
 	}
 	if n == 0 {
-		err = fmt.Errorf("short read")
+		err = io.ErrUnexpectedEOF
 		return
 	}
 	parser := utils.NewHTTPHeaderParser(utils.GetBuf(buffersize))
@@ -320,15 +321,125 @@ func (c *RemainConn) WriteBuffers(b [][]byte) (n int, err error) {
 	return c.Conn.WriteBuffers(b)
 }
 
+type SimpleHTTPConn struct {
+	Conn
+	host   string
+	req    bool
+	resp   bool
+	parser *utils.HTTPHeaderParser
+}
+
+func (conn *SimpleHTTPConn) Close() error {
+	if conn.parser != nil {
+		utils.PutBuf(conn.parser.GetBuf())
+		conn.parser = nil
+	}
+	return conn.Conn.Close()
+}
+
+func (conn *SimpleHTTPConn) Write(b []byte) (n int, err error) {
+	return conn.WriteBuffers([][]byte{b})
+}
+
+func (conn *SimpleHTTPConn) WriteBuffers(bufs [][]byte) (n int, err error) {
+	if !conn.req {
+		return conn.Conn.WriteBuffers(bufs)
+	}
+	for _, buf := range bufs {
+		n += len(buf)
+	}
+	req := buildSimpleObfsRequest(conn.host, n)
+	newbufs := make([][]byte, len(bufs)+1)
+	newbufs[0] = utils.StringToSlice(req)
+	copy(newbufs[1:], bufs)
+	n, err = conn.Conn.WriteBuffers(newbufs)
+	conn.host = ""
+	conn.req = false
+	return
+}
+
+func (conn *SimpleHTTPConn) Read(b []byte) (n int, err error) {
+	if !conn.resp {
+		return conn.Conn.Read(b)
+	}
+	if conn.parser == nil {
+		conn.parser = utils.NewHTTPHeaderParser(utils.GetBuf(buffersize))
+	}
+	var buf []byte
+	if len(b) < buffersize {
+		buf = utils.GetBuf(buffersize)
+		defer utils.PutBuf(buf)
+	} else {
+		buf = b
+	}
+	off := 0
+	for {
+		var nm int
+		nm, err = conn.Conn.Read(buf[off:])
+		if err != nil {
+			return
+		}
+		var ok bool
+		ok, err = conn.parser.Read(buf[off : off+nm])
+		if err != nil {
+			return
+		}
+		off += nm
+		if ok {
+			hdrlen := conn.parser.HeaderLen()
+			n = copy(b, buf[hdrlen:off])
+			if hdrlen+n < off {
+				conn.Conn = &RemainConn{Conn: conn.Conn, remain: DupBuffer(buf[hdrlen+n : off])}
+			}
+			utils.PutBuf(conn.parser.GetBuf())
+			conn.parser = nil
+			conn.resp = false
+			return
+		}
+	}
+}
+
 type SimpleTLSConn struct {
 	Conn
 	sessionID []byte
 	frameLen  int
-	responsed bool
+	clireq    bool
+	cliresp   bool
+	srvresp   bool
+	host      string
 	wlock     sync.Mutex
 }
 
+func (conn *SimpleTLSConn) cliHandshake(b []byte) (err error) {
+	var buf []byte
+	if len(b) < buffersize {
+		buf = utils.GetBuf(buffersize)
+		defer utils.PutBuf(buf)
+	} else {
+		buf = b
+	}
+	for it := 0; it < 2; it++ {
+		_, err = io.ReadFull(conn.Conn, buf[:5])
+		if err != nil {
+			return
+		}
+		frameLen := int(binary.BigEndian.Uint16(buf[3:5]))
+		_, err = io.ReadFull(conn.Conn, buf[:frameLen])
+		if err != nil {
+			return
+		}
+	}
+	return
+}
+
 func (conn *SimpleTLSConn) Read(b []byte) (n int, err error) {
+	if conn.cliresp {
+		conn.cliresp = false
+		err = conn.cliHandshake(b)
+		if err != nil {
+			return
+		}
+	}
 	for conn.frameLen == 0 {
 		frameBuf := make([]byte, 5)
 		_, err = io.ReadFull(conn.Conn, frameBuf)
@@ -351,33 +462,43 @@ func (conn *SimpleTLSConn) writeBuffersInLock(bufs [][]byte) (n int, err error) 
 	if len(bufs) == 0 {
 		return
 	}
-	var wbufs [][]byte
-	if !conn.responsed {
-		tlsBuf := utils.GetBuf(len(bufs[0]) + 512)
-		defer utils.PutBuf(tlsBuf)
-		n += len(bufs[0])
-		tlsLen := utils.GenTLSServerHello(tlsBuf, len(bufs[0]), conn.sessionID)
-		wbufs = append(wbufs, tlsBuf[:tlsLen])
-		wbufs = append(wbufs, bufs[0])
-		bufs = bufs[1:]
-		conn.responsed = true
+	buflen := len(bufs[0])
+	for _, buf := range bufs[1:] {
+		buflen += len(buf)
 	}
-	if len(bufs) != 0 {
-		frameHeaders := utils.GetBuf(len(bufs) * 5)
-		defer utils.PutBuf(frameHeaders)
-		for it, buf := range bufs {
-			frameBuf := frameHeaders[it*5 : (it+1)*5]
-			copy(frameBuf, []byte{0x17, 0x03, 0x03})
-			binary.BigEndian.PutUint16(frameBuf[3:], uint16(len(buf)))
-			wbufs = append(wbufs, frameBuf)
-			wbufs = append(wbufs, buf)
-			n += len(buf)
+	var wbufs [][]byte
+	if conn.srvresp {
+		tlsBuf := utils.GetBuf(buflen + 512)
+		defer utils.PutBuf(tlsBuf)
+		tlsLen := utils.GenTLSServerHello(tlsBuf, buflen, conn.sessionID)
+		wbufs = append(wbufs, tlsBuf[:tlsLen])
+		wbufs = append(wbufs, bufs...)
+		conn.srvresp = false
+	} else if conn.clireq {
+		tlsBuf := utils.GetBuf(buflen + 512)
+		defer utils.PutBuf(tlsBuf)
+		buf := utils.GetBuf(buflen)
+		defer utils.PutBuf(buf)
+		for _, v := range bufs {
+			n += copy(buf[n:], v)
 		}
+		tlsLen := utils.GenTLSClientHello(tlsBuf, conn.host, utils.GetRandomBytes(32), buf[:buflen])
+		wbufs = append(wbufs, tlsBuf[:tlsLen])
+		conn.clireq = false
+		conn.host = ""
+	} else {
+		frameBuf := utils.GetBuf(5)
+		defer utils.PutBuf(frameBuf)
+		copy(frameBuf, []byte{0x17, 0x03, 0x03})
+		binary.BigEndian.PutUint16(frameBuf[3:], uint16(buflen))
+		wbufs = append(wbufs, frameBuf[:5])
+		wbufs = append(wbufs, bufs...)
 	}
 	_, err = conn.Conn.WriteBuffers(wbufs)
 	if err != nil {
 		n = 0
 	}
+	n = buflen
 	return
 }
 
@@ -420,6 +541,34 @@ func DialObfs(target string, c *Config) (conn Conn, err error) {
 		host = c.ObfsHost[0]
 	} else {
 		host = c.ObfsHost[rand.Intn(len(c.ObfsHost))]
+	}
+	_, port, err := net.SplitHostPort(c.Remoteaddr)
+	if err != nil {
+		return
+	}
+	if c.ObfsMethod == "websocket" {
+		if port != "80" {
+			host = host + port
+		}
+		conn = &SimpleHTTPConn{
+			Conn: conn,
+			host: host,
+			req:  true,
+			resp: true,
+		}
+		return
+	}
+	if c.ObfsMethod == "tls" {
+		if port != "443" {
+			host = host + port
+		}
+		conn = &SimpleTLSConn{
+			Conn:    conn,
+			host:    host,
+			clireq:  true,
+			cliresp: true,
+		}
+		return
 	}
 	req := buildHTTPRequest(fmt.Sprintf("Host: %s\r\nX-Online-Host: %s\r\n", host, host))
 	obfsconn, ok := conn.(*ObfsConn)
@@ -493,7 +642,7 @@ func obfsAcceptHandler(conn Conn, lis *listener) (c Conn) {
 				if len(buf[nh:n]) > 0 {
 					conn = &RemainConn{Conn: conn, remain: DupBuffer(buf[nh:n])}
 				}
-				conn = &SimpleTLSConn{Conn: conn, sessionID: DupBuffer(cliMsg.SessionId)}
+				conn = &SimpleTLSConn{Conn: conn, sessionID: DupBuffer(cliMsg.SessionId), srvresp: true}
 				if len(cliMsg.SessionTicket) > 0 {
 					conn = &RemainConn{Conn: conn, remain: DupBuffer(cliMsg.SessionTicket)}
 				}

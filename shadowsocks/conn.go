@@ -145,32 +145,45 @@ func (c *SsConn) Read(b []byte) (n int, err error) {
 		c.dec = nil
 		return c.Conn.Read(b)
 	}
-	if c.dec == nil {
-		iv := make([]byte, c.c.Ivlen)
-		_, err = io.ReadFull(c.Conn, iv)
-		if err != nil {
-			return
-		}
-		c.dec, err = utils.NewDecrypter(c.c.Method, c.c.Password, iv)
-		if err != nil {
-			return
-		}
+	if len(b) < c.c.Ivlen {
+		err = io.ErrShortBuffer
+		return
 	}
-	n, err = c.Conn.Read(b)
-	if n <= 0 {
+	off := 0
+	if c.dec == nil {
+		n, err = io.ReadAtLeast(c.Conn, b, c.c.Ivlen)
+		if err == nil {
+			c.dec, err = utils.NewDecrypter(c.c.Method, c.c.Password, b[:c.c.Ivlen])
+			if err == nil {
+				off = c.c.Ivlen
+				n -= off
+			}
+		}
+	} else {
+		n, err = c.Conn.Read(b)
+	}
+	if err != nil {
 		return
 	}
 	if !c.partenc {
-		c.dec.Decrypt(b[:n], b[:n])
+		if n == 0 {
+			return c.Read(b)
+		}
+		c.dec.Decrypt(b[:n], b[off:n+off])
 		return
 	}
 	if c.decnum+n >= c.partencnum {
 		m := c.partencnum - c.decnum
-		c.dec.Decrypt(b[:m], b[:m])
+		if off == 0 {
+			c.dec.Decrypt(b[:m], b[:m])
+		} else {
+			c.dec.Decrypt(b[:m], b[off:off+m])
+			copy(b[m:], b[off+m:off+n])
+		}
 		c.reqdec = false
 	} else {
 		c.decnum += n
-		c.dec.Decrypt(b[:n], b[:n])
+		c.dec.Decrypt(b[:n], b[off:n+off])
 	}
 	return
 }

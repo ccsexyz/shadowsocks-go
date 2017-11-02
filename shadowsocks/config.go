@@ -30,6 +30,7 @@ type Config struct {
 	Debug          bool      `json:"debug"`
 	LogFile        string    `json:"logfile"`
 	Obfs           bool      `json:"obfs"`
+	ObfsMethod     string    `json:"obfsmethod"`
 	ObfsHost       []string  `json:"obfshost"`
 	ObfsAlive      bool      `json:"obfsalive"`
 	Mux            bool      `json:"mux"`

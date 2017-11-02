@@ -39,6 +39,14 @@ func randStringBytesMaskImprSrc(n int) string {
 }
 
 const (
+	simpleObfsRequestFormat = "GET / HTTP/1.1\r\n" +
+		"Host: %s\r\n" +
+		"User-Agent: curl/7.%d.%d\r\n" +
+		"Upgrade: websocket\r\n" +
+		"Connection: Upgrade\r\n" +
+		"Sec-WebSocket-Key: %s\r\n" +
+		"Content-Length: %d\r\n" +
+		"\r\n"
 	simpleObfsFormat = "HTTP/1.1 101 Switching Protocols\r\n" +
 		"Server: nginx/1.9.7\r\n" +
 		"Date: %s\r\n" +
@@ -69,6 +77,13 @@ func buildHTTPRequest(headers string) string {
 
 func buildHTTPResponse(headers string) string {
 	return fmt.Sprintf(responseFromat, headers)
+}
+
+func buildSimpleObfsRequest(host string, length int) string {
+	key := make([]byte, 16)
+	utils.PutRandomBytes(key)
+	b64key := base64.StdEncoding.EncodeToString(key)
+	return fmt.Sprintf(simpleObfsRequestFormat, host, rand.Intn(51), rand.Intn(3), b64key, length)
 }
 
 func buildSimpleObfsResponse() string {

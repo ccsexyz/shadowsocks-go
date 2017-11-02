@@ -44,6 +44,7 @@ func main() {
 	flag.BoolVar(&c.MITM, "mitm", false, "enable MITM-based http/https proxy")
 	flag.IntVar(&c.DataShard, "ds", 0, "set datashard - fec")
 	flag.IntVar(&c.ParityShard, "ps", 0, "set parityshard - fec")
+	flag.StringVar(&c.ObfsMethod, "om", "", "set the method for obfs(http/websocket/tls)")
 	flag.Parse()
 
 	if len(os.Args) == 1 {

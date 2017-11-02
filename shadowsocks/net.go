@@ -297,7 +297,7 @@ func ssAcceptHandler(conn Conn, lis *listener) (c Conn) {
 	dec.Decrypt(dbuf, buf[lis.c.Ivlen:n])
 	addr, data, err := ParseAddr(dbuf[:n-lis.c.Ivlen])
 	if err != nil {
-		lis.c.Log("recv an unexpected header from", conn.RemoteAddr().String(), " : ", err, buf[:n])
+		lis.c.Log("recv an unexpected header from", conn.RemoteAddr().String(), " : ", err, buf[:n], n)
 		return
 	}
 	if lis.c.Ivlen != 0 && !lis.c.Safe {
@@ -650,7 +650,7 @@ func NewTCPDialer() func(string) (net.Conn, error) {
 
 func NewSSDialer(c *Config) func(string) (net.Conn, error) {
 	return func(addr string) (net.Conn, error) {
-		return DialSSWithOptions(&DialOptions{Target:addr, C: c})
+		return DialSSWithOptions(&DialOptions{Target: addr, C: c})
 	}
 }
 
