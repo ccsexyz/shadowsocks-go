@@ -22,7 +22,9 @@ func (conn *udpLocalConn) Read(b []byte) (n int, err error) {
 	b[1] = 0
 	b[2] = 0
 	n, err = conn.Conn.Read(b[3:])
-	n += 3
+	if err == nil {
+		n += 3
+	}
 	return
 }
 
@@ -145,8 +147,8 @@ func getCreateFuncOfUDPLocalServer(c *ss.Config) func(*utils.SubConn) (net.Conn,
 			c.Logger.Println(err)
 			return
 		}
-		c1 = newFECConn(conn, subconfig)
-		c2 = &udpLocalConn{Conn: rconn}
+		c1 = conn
+		c2 = &udpLocalConn{Conn: newFECConn(rconn, subconfig)}
 		return
 	}
 }
