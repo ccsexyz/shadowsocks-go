@@ -40,6 +40,8 @@ type ObfsConn struct {
 func (c *ObfsConn) Close() (err error) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
+	c.rlock.Lock()
+	defer c.rlock.Unlock()
 	if c.destroy {
 		return
 	}

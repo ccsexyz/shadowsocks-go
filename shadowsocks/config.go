@@ -101,6 +101,13 @@ func ReadConfig(path string) (configs []*Config, err error) {
 }
 
 func (c *Config) Close() error {
+	c.tcpFilterLock.Lock()
+	select {
+	case <-c.Die:
+	default:
+		close(c.Die)
+	}
+	c.tcpFilterLock.Unlock()
 	if len(c.LogFile) != 0 && c.logfile != os.Stderr && c.logfile != nil {
 		c.logfile.Close()
 	}
@@ -230,6 +237,9 @@ func CheckConfig(c *Config) {
 		c.Backend = nil
 		c.Backends = nil
 	}
+	if c.Die == nil {
+		c.Die = make(chan bool)
+	}
 	CheckLogFile(c)
 	CheckBasicConfig(c)
 	if c.pool == nil && c.Obfs && c.ObfsAlive && (c.Type == "server" || c.Type == "multiserver" || c.Type == "local") {
@@ -255,6 +265,7 @@ func CheckConfig(c *Config) {
 		}
 	}
 	for _, v := range c.Backends {
+		v.Die = c.Die
 		if len(v.Type) == 0 {
 			if len(v.Remoteaddr) != 0 {
 				v.Type = "local"

@@ -44,14 +44,20 @@ func dialSSWithOptions(opt *DialOptions) (conn Conn, err error) {
 		errch := make(chan error, num)
 		conch := make(chan Conn)
 		for _, v := range c.Backends {
-			go func(v *Config) {
-				newOpts := opt
-				newOpts.C = v
+			newOpts := *opt
+			newOpts.C = v
+			if len(opt.Data) > 0 {
+				newOpts.Data = utils.CopyBuffer(opt.Data)
+			}
+			go func(newOpts *DialOptions) {
+				if len(newOpts.Data) > 0 {
+					defer utils.PutBuf(newOpts.Data)
+				}
 				rconn, err := dialSSWithOptions(newOpts)
 				if err != nil {
 					select {
 					case <-die:
-					case errch <- fmt.Errorf("cannot connect to %s : %s", v.Remoteaddr, err.Error()):
+					case errch <- fmt.Errorf("cannot connect to %s : %s", newOpts.C.Remoteaddr, err.Error()):
 					}
 					return
 				}
@@ -60,7 +66,7 @@ func dialSSWithOptions(opt *DialOptions) (conn Conn, err error) {
 					rconn.Close()
 				case conch <- rconn:
 				}
-			}(v)
+			}(&newOpts)
 		}
 		for i := 0; i < num; i++ {
 			select {

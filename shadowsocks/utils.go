@@ -34,6 +34,7 @@ const (
 	typeTs                 = 0x74 // timestamp
 	typeNop                = 0x90 // [nop 1 byte] [noplen 1 byte (< 128)] [zero data, noplen byte]
 	typePartEnc            = 0x37 // [partEnc 1 byte] [partLen 1 byte] [partLen * 1024 bytes data]
+	typePartEncHTTPS       = 0x38
 	typeSnappy             = 0x44
 	lenIPv4                = 4
 	lenIPv6                = 16
@@ -218,7 +219,7 @@ outer:
 				continue
 			}
 			dec.Decrypt(buf[2:2+dmlen+2], b[off:off+dmlen+2])
-			for _, v := range buf[2: 2+dmlen] {
+			for _, v := range buf[2 : 2+dmlen] {
 				if !((v >= 'A' && v <= 'Z') || (v >= 'a' && v <= 'z') || (v >= '0' && v <= '9') || v == '.' || v == '-' || v == '_') {
 					continue outer
 				}
@@ -227,7 +228,7 @@ outer:
 			off += dmlen + 2
 			if n > off {
 				dec.Decrypt(buf[2+dmlen+2:], b[off:])
-				data = buf[2+dmlen+2: 2+dmlen+2+len(b[off:])]
+				data = buf[2+dmlen+2 : 2+dmlen+2+len(b[off:])]
 			}
 			chs = config
 			return
@@ -300,7 +301,7 @@ l:
 			if noplen >= 128 || n < noplen+2+1 {
 				return
 			}
-			for _, v := range b[2: noplen+2] {
+			for _, v := range b[2 : noplen+2] {
 				if v != 0 {
 					return
 				}
@@ -314,7 +315,7 @@ l:
 			if n < lenTs+1+1 {
 				return
 			}
-			ts := binary.BigEndian.Uint64(b[1: 1+lenTs])
+			ts := binary.BigEndian.Uint64(b[1 : 1+lenTs])
 			if !checkTimestamp(int64(ts)) {
 				return
 			}
@@ -371,7 +372,7 @@ l:
 		if n < dmlen+1+2+1 {
 			return
 		}
-		for _, v := range b[2: 2+dmlen] {
+		for _, v := range b[2 : 2+dmlen] {
 			if !((v >= 'A' && v <= 'Z') || (v >= 'a' && v <= 'z') || (v >= '0' && v <= '9') || v == '.' || v == '-' || v == '_') {
 				return
 			}
@@ -619,11 +620,11 @@ func (s *SockAddr) Host() string {
 	b := s.header
 	switch b[0] {
 	default:
-		return utils.SliceToString(b[2: 2+int(b[1])])
+		return utils.SliceToString(b[2 : 2+int(b[1])])
 	case typeIPv4:
-		return net.IP(b[1: lenIPv4+1]).String()
+		return net.IP(b[1 : lenIPv4+1]).String()
 	case typeIPv6:
-		return net.IP(b[1: lenIPv6+1]).String()
+		return net.IP(b[1 : lenIPv6+1]).String()
 	case typeMux:
 		return muxhost
 	}

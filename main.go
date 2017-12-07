@@ -94,10 +94,16 @@ func main() {
 			wg.Add(1)
 			go func(c *ss.Config) {
 				defer wg.Done()
-				c.Die = die
 				runServer(c)
 			}(c)
 		}
+		oldConfigs := configs
+		go func() {
+			<-die
+			for _, c := range oldConfigs {
+				c.Close()
+			}
+		}()
 		go func() {
 			err = watcher.Add(configfile)
 			if err != nil {

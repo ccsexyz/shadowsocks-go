@@ -3,9 +3,10 @@ package main
 import (
 	"net"
 
+	"sync"
+
 	ss "github.com/ccsexyz/shadowsocks-go/shadowsocks"
 	"github.com/ccsexyz/utils"
-	"sync"
 )
 
 func RunTCPServer(address string, c *ss.Config,
