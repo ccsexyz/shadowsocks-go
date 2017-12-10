@@ -232,23 +232,8 @@ func ListenMultiSS(service string, c *Config) (lis net.Listener, err error) {
 	return
 }
 
-func ssMultiAcceptHandler(conn Conn, lis *listener) (c Conn) {
-	ssConn := NewSsConn(conn, lis.c)
-
-	buf := utils.GetBuf(buffersize)
-	defer utils.PutBuf(buf)
-	n, err := conn.Read(buf)
-	if err != nil {
-		return
-	}
-
-	rbuf := utils.GetBuf(buffersize)
-	defer utils.PutBuf(rbuf)
-	addr, data, dec, chs, err := ParseAddrWithMultipleBackends(buf[:n], rbuf, lis.c.Backends)
-	if err != nil {
-		lis.c.Log("recv an unexpected header from", conn.RemoteAddr().String())
-		return
-	}
+func ssMultiAcceptHandler2(conn Conn, lis *listener, addr *SockAddr, n int,
+	data []byte, dec utils.Decrypter, chs *Config) (c Conn) {
 	if chs.Ivlen != 0 && !lis.c.Safe {
 		var exists bool
 		if addr.ts {
@@ -261,6 +246,8 @@ func ssMultiAcceptHandler(conn Conn, lis *listener) (c Conn) {
 			return
 		}
 	}
+
+	ssConn := NewSsConn(conn, lis.c)
 	ssConn.dec = dec
 	ssConn.c = chs
 	if addr.partEncLen > 0 {
@@ -278,6 +265,25 @@ func ssMultiAcceptHandler(conn Conn, lis *listener) (c Conn) {
 	}
 	c = conn
 	chs.LogD("choose", chs.Method, chs.Password, addr.Host(), addr.Port())
+	return
+}
+
+func ssMultiAcceptHandler(conn Conn, lis *listener) (c Conn) {
+	buf := utils.GetBuf(buffersize)
+	defer utils.PutBuf(buf)
+	n, err := conn.Read(buf)
+	if err != nil {
+		return
+	}
+
+	rbuf := utils.GetBuf(buffersize)
+	defer utils.PutBuf(rbuf)
+	addr, data, dec, chs, err := ParseAddrWithMultipleBackends(buf[:n], rbuf, lis.c.Backends)
+	if err != nil {
+		lis.c.Log("recv an unexpected header from", conn.RemoteAddr().String())
+		return
+	}
+	c = ssMultiAcceptHandler2(conn, lis, addr, n, data, dec, chs)
 	return
 }
 
@@ -433,9 +439,10 @@ func httpProxyAcceptor(conn Conn, lis *listener) (c Conn) {
 
 type Acceptor func(net.Conn) net.Conn
 
-func GetSocksAcceptor(args map[string]interface{}) Acceptor {
+func GetShadowAcceptor(args map[string]interface{}) Acceptor {
 	var lis listener
-	lis.c = &Config{}
+	lis.c = &Config{Safe: true}
+
 	iaddr, ok := args["localaddr"]
 	if ok {
 		lis.c.Localaddr, _ = iaddr.(string)
@@ -445,16 +452,9 @@ func GetSocksAcceptor(args map[string]interface{}) Acceptor {
 		lis.c.UDPRelay, _ = iudp.(bool)
 	}
 	lis.c.Type = "socksproxy"
-	CheckConfig(lis.c)
-	return func(conn net.Conn) net.Conn {
-		return socksAcceptor(newTCPConn2(conn, lis.c), &lis)
-	}
-}
 
-func GetShadowAcceptor(args map[string]interface{}) Acceptor {
 	var password string
 	var method string
-
 	ipass, ok := args["password"]
 	if ok {
 		password, _ = ipass.(string)
@@ -464,31 +464,28 @@ func GetShadowAcceptor(args map[string]interface{}) Acceptor {
 		method, _ = imethod.(string)
 	}
 
-	var lis listener
-	lis.c = &Config{
-		Safe: true,
-	}
 	defer func() { CheckConfig(lis.c) }()
-	if method == "multi" || method == "" {
-		lis.c.Type = "multiserver"
-		lis.c.Backends = []*Config{
-			&Config{Method: "chacha20", Password: password},
-			&Config{Method: "chacha20-ietf", Password: password},
-			&Config{Method: "aes-128-cfb", Password: password},
-			&Config{Method: "aes-192-cfb", Password: password},
-			&Config{Method: "aes-256-cfb", Password: password},
-			&Config{Method: "salsa20", Password: password},
-			&Config{Method: "rc4-md5", Password: password},
-			&Config{Method: "plain", Password: password},
-		}
-		return func(conn net.Conn) net.Conn {
-			return ssMultiAcceptHandler(newTCPConn2(conn, lis.c), &lis)
+	if len(password) != 0 {
+		lis.c.SSProxy = true
+		if method != "multi" && len(method) != 0 {
+			lis.c.Backends = []*Config{
+				&Config{Method: method, Password: password},
+			}
+		} else {
+			lis.c.Backends = []*Config{
+				&Config{Method: "chacha20", Password: password},
+				&Config{Method: "chacha20-ietf", Password: password},
+				&Config{Method: "aes-128-cfb", Password: password},
+				&Config{Method: "aes-192-cfb", Password: password},
+				&Config{Method: "aes-256-cfb", Password: password},
+				&Config{Method: "salsa20", Password: password},
+				&Config{Method: "rc4-md5", Password: password},
+				&Config{Method: "plain", Password: password},
+			}
 		}
 	}
-	lis.c.Method = method
-	lis.c.Password = password
 	return func(conn net.Conn) net.Conn {
-		return ssAcceptHandler(newTCPConn2(conn, lis.c), &lis)
+		return socksAcceptor(newTCPConn2(conn, lis.c), &lis)
 	}
 }
 
@@ -497,14 +494,35 @@ func socksAcceptor(conn Conn, lis *listener) (c Conn) {
 		c = conn
 		return
 	}
-	buf := make([]byte, 512)
+	buf := utils.GetBuf(buffersize)
+	defer utils.PutBuf(buf)
 	n, err := conn.Read(buf)
 	if err != nil || n < 2 {
 		return
 	}
+	var halfOK bool
+	if lis.c.SSProxy {
+		defer func() {
+			if halfOK || c != nil {
+				return
+			}
+			rbuf := utils.GetBuf(buffersize)
+			defer utils.PutBuf(rbuf)
+			addr, data, dec, chs, sserr := ParseAddrWithMultipleBackends(buf[:n], rbuf, lis.c.Backends)
+			if sserr == nil {
+				c = ssMultiAcceptHandler2(conn, lis, addr, n, data, dec, chs)
+			}
+		}()
+	}
 	ver := buf[0]
 	if ver != verSocks4 && ver != verSocks5 && ver != verSocks6 {
-		c = httpProxyAcceptor(&RemainConn{remain: buf[:n], Conn: conn}, lis)
+		parser := utils.NewHTTPHeaderParser(utils.GetBuf(buffersize))
+		defer utils.PutBuf(parser.GetBuf())
+		_, err = parser.Read(buf[:n])
+		if err == nil {
+			halfOK = true
+			c = httpProxyAcceptor(&RemainConn{remain: buf[:n], Conn: conn}, lis)
+		}
 		return
 	}
 	cmd := buf[1]
@@ -532,6 +550,7 @@ func socksAcceptor(conn Conn, lis *listener) (c Conn) {
 			copy(addrbuf[1:lenIPv4+1], buf[4:4+lenIPv4])
 			dstaddr = &SockAddr{header: addrbuf}
 		}
+		halfOK = true
 		buf[0] = verSocks4Resp
 		buf[1] = cmdSocks4OK
 		_, err = conn.Write(buf[:8])
@@ -552,6 +571,10 @@ func socksAcceptor(conn Conn, lis *listener) (c Conn) {
 		return
 	}
 	if ver == verSocks5 {
+		if n != int(cmd)+2 {
+			return
+		}
+		halfOK = true
 		_, err = conn.Write([]byte{5, 0})
 		if err != nil {
 			return

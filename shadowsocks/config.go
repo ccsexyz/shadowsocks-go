@@ -45,7 +45,7 @@ type Config struct {
 	FilterCapacity int       `json:"filtcap"`
 	AutoProxy      bool      `json:"autoproxy"`
 	ProxyList      string    `json:"proxylist"`
-	NotProxyList   string    `json:"notproxylist"`
+	BlackList      string    `json:"blacklist"`
 	DumpList       bool      `json:"dumplist"`
 	ChnList        string    `json:"chnlist"`
 	RedisAddr      string    `json:"redisaddr"`
@@ -58,6 +58,7 @@ type Config struct {
 	MITM           bool      `json:"mitm"`
 	DataShard      int       `json:"datashard"`
 	ParityShard    int       `json:"parityshard"`
+	SSProxy        bool      `json:"ssproxy"`
 	limiters       []*Limiter
 	Vlogger        *log.Logger
 	Dlogger        *log.Logger
@@ -250,7 +251,7 @@ func CheckConfig(c *Config) {
 	}
 	if c.AutoProxy {
 		c.autoProxyCtx = newAutoProxy()
-		c.autoProxyCtx.loadByPassList(c.NotProxyList)
+		c.autoProxyCtx.loadByPassList(c.BlackList)
 		c.autoProxyCtx.loadPorxyList(c.ProxyList)
 		if c.DumpList {
 			go c.proxyListDump()
@@ -352,7 +353,7 @@ func (c *Config) CallOnClosed(f cb) {
 }
 
 func (c *Config) proxyListDump() {
-	if c.NotProxyList == "" && c.ProxyList == "" {
+	if c.BlackList == "" && c.ProxyList == "" {
 		return
 	}
 	autoProxyCtx := c.autoProxyCtx
@@ -368,11 +369,11 @@ func (c *Config) proxyListDump() {
 			case <-c.Die:
 				return
 			}
-			if len(c.NotProxyList) != 0 {
+			if len(c.BlackList) != 0 {
 				hosts := autoProxyCtx.getByPassHosts()
 				if len(hosts) != 0 {
 					hoststr := strings.Join(hosts, "\n")
-					err := ioutil.WriteFile(c.NotProxyList, utils.StringToSlice(hoststr), 0644)
+					err := ioutil.WriteFile(c.BlackList, utils.StringToSlice(hoststr), 0644)
 					if err != nil {
 						c.Log(err)
 					}
