@@ -42,9 +42,6 @@ const (
 	muxaddr                = "mux:12580"
 	muxhost                = "mux"
 	muxport                = 12580
-	echoaddr               = "echo:10086"
-	echohost               = "echo"
-	echoport               = 10086
 	defaultObfsHost        = "www.bing.com"
 	defaultFilterCapacity  = 100000
 	defaultFilterFalseRate = 0.00001

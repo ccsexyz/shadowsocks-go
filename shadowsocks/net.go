@@ -103,6 +103,11 @@ func (lis *listener) Accept() (conn net.Conn, err error) {
 			} else if conn == nilConn {
 				continue
 			} else {
+				if lis.c.disable {
+					conn.Close()
+					lis.c.LogD("accept: server", lis.c.Nickname, "is disabled")
+					continue
+				}
 				return
 			}
 		}

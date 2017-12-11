@@ -44,6 +44,10 @@ func dialSSWithOptions(opt *DialOptions) (conn Conn, err error) {
 		errch := make(chan error, num)
 		conch := make(chan Conn)
 		for _, v := range c.Backends {
+			if v.disable {
+				num--
+				continue
+			}
 			newOpts := *opt
 			newOpts.C = v
 			if len(opt.Data) > 0 {

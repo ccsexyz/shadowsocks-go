@@ -80,6 +80,7 @@ type Config struct {
 	chnListCtx     *chnRouteList
 	redisFilter    bytesFilter
 	crctbl         *crc32.Table
+	disable        bool
 }
 
 func ReadConfig(path string) (configs []*Config, err error) {
