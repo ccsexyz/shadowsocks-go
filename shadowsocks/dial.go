@@ -234,7 +234,7 @@ func DialSSWithOptions(opt *DialOptions) (conn Conn, err error) {
 			proxy = true
 		}
 	} else {
-		if c.autoProxyCtx == nil {
+		if c.AutoProxy == false || c.autoProxyCtx == nil {
 			proxy = true
 		} else if c.autoProxyCtx.checkIfByPass(host) {
 			c.LogD("host", host, "hit bypass list")

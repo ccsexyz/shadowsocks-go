@@ -131,6 +131,11 @@ func sendNormalPage(conn Conn, s string) {
 	conn.WriteBuffers([][]byte{buf[:n], utils.StringToSlice(s)})
 }
 
+const (
+	cmdEnable  = "enable"
+	cmdDisable = "disable"
+)
+
 func adminHandler(conn Conn, lis *listener) (c Conn) {
 	c = nilConn
 	defer conn.Close()
@@ -161,9 +166,9 @@ func adminHandler(conn Conn, lis *listener) (c Conn) {
 	}
 	if len(strs) == 2 {
 		cmd := strs[1]
-		if cmd == "enable" {
+		if cmd == cmdEnable {
 			lis.c.disable = false
-		} else if cmd == "disable" {
+		} else if cmd == cmdDisable {
 			lis.c.disable = true
 		} else {
 			err = errInvalidCommand
@@ -176,12 +181,35 @@ func adminHandler(conn Conn, lis *listener) (c Conn) {
 	nickname := strs[2]
 
 	var ok bool
-	if cmd == "enable" {
-		ok = enableBackend(lis, nickname)
-	} else if cmd == "disable" {
-		ok = disableBackend(lis, nickname)
-	} else {
+	switch cmd {
+	default:
 		err = errInvalidCommand
+	case cmdEnable:
+		ok = enableBackend(lis, nickname)
+	case cmdDisable:
+		ok = disableBackend(lis, nickname)
+	case "autoproxy":
+		if nickname == cmdDisable {
+			ok = true
+			lis.c.AutoProxy = false
+		} else if nickname == cmdEnable {
+			ok = true
+			lis.c.AutoProxy = true
+		} else {
+			err = errInvalidCommand
+		}
+	case "loghttp":
+		if nickname == cmdDisable {
+			ok = true
+			lis.c.LogHTTP = false
+		} else if nickname == cmdEnable {
+			ok = true
+			lis.c.LogHTTP = true
+		} else {
+			err = errInvalidCommand
+		}
+	}
+	if err != nil {
 		return
 	}
 	if ok {

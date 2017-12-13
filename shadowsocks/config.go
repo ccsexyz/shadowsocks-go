@@ -14,6 +14,17 @@ import (
 	"github.com/ccsexyz/utils"
 )
 
+type statServer struct {
+	startTime      time.Time
+	reloadTime     time.Time
+	connections    int
+	totalReadBytes int64
+	totalWritBytes int64
+	readSpeed      int
+	writSpeed      int
+	connErrNum     int
+}
+
 type Config struct {
 	Nickname       string    `json:"nickname"`
 	Type           string    `json:"type"`

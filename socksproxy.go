@@ -12,6 +12,9 @@ func RunSocksProxyServer(c *ss.Config) {
 func socksProxyHandler(conn ss.Conn, c *ss.Config) {
 	defer conn.Close()
 	target := GetDstOfConn(conn)
+	if c.LogHTTP {
+		conn = ss.NewHttpLogConn(conn, c)
+	}
 	buf := utils.GetBuf(1024)
 	n, err := conn.Read(buf)
 	if err != nil {
@@ -21,7 +24,7 @@ func socksProxyHandler(conn ss.Conn, c *ss.Config) {
 	rconn, err := ss.DialSSWithOptions(&ss.DialOptions{
 		Target: target,
 		C:      c,
-		Data: buf[:n],
+		Data:   buf[:n],
 	})
 	utils.PutBuf(buf)
 	if err != nil {
@@ -29,9 +32,6 @@ func socksProxyHandler(conn ss.Conn, c *ss.Config) {
 		return
 	}
 	defer rconn.Close()
-	if c.LogHTTP {
-		conn = ss.NewHttpLogConn(conn, c)
-	}
 	c.Log("proxy", target, "from", conn.RemoteAddr(), "->", conn.LocalAddr(),
 		"to", rconn.LocalAddr(), "->", rconn.RemoteAddr())
 	ss.Pipe(conn, rconn, c)

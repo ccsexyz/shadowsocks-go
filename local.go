@@ -12,6 +12,9 @@ func RunTCPLocalServer(c *ss.Config) {
 func tcpLocalHandler(conn ss.Conn, c *ss.Config) {
 	defer conn.Close()
 	target := GetDstOfConn(conn)
+	if c.LogHTTP {
+		conn = ss.NewHttpLogConn(conn, c)
+	}
 	buf := utils.GetBuf(1024)
 	n, err := conn.Read(buf)
 	if err != nil {
@@ -44,8 +47,5 @@ func tcpLocalHandler(conn ss.Conn, c *ss.Config) {
 	// 		}
 	// 	}()
 	// }
-	if c.LogHTTP {
-		conn = ss.NewHttpLogConn(conn, c)
-	}
 	ss.Pipe(conn, rconn, c)
 }
