@@ -14,17 +14,6 @@ import (
 	"github.com/ccsexyz/utils"
 )
 
-type statServer struct {
-	startTime      time.Time
-	reloadTime     time.Time
-	connections    int
-	totalReadBytes int64
-	totalWritBytes int64
-	readSpeed      int
-	writSpeed      int
-	connErrNum     int
-}
-
 type Config struct {
 	Nickname       string    `json:"nickname"`
 	Type           string    `json:"type"`
@@ -92,6 +81,7 @@ type Config struct {
 	redisFilter    bytesFilter
 	crctbl         *crc32.Table
 	disable        bool
+	stat           *statServer
 }
 
 func ReadConfig(path string) (configs []*Config, err error) {
@@ -277,6 +267,9 @@ func CheckConfig(c *Config) {
 			c.chnListCtx = nil
 		}
 	}
+	if c.stat == nil {
+		c.stat = &statServer{}
+	}
 	for _, v := range c.Backends {
 		v.Die = c.Die
 		if len(v.Type) == 0 {
@@ -336,6 +329,7 @@ func CheckConfig(c *Config) {
 		if len(c.limiters) != 0 {
 			v.limiters = append(v.limiters, c.limiters...)
 		}
+		v.stat = c.stat
 	}
 	if len(c.RedisAddr) != 0 {
 		c.redisFilter = newRedisFilter(c.RedisAddr, c.RedisKey, 0)

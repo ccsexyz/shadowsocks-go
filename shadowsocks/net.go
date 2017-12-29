@@ -108,6 +108,7 @@ func (lis *listener) Accept() (conn net.Conn, err error) {
 					lis.c.LogD("accept: server", lis.c.Nickname, "is disabled")
 					continue
 				}
+				conn = newStatConn(conn.(Conn), lis.c.stat)
 				return
 			}
 		}

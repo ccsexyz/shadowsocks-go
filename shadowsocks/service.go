@@ -3,6 +3,7 @@ package ss
 import (
 	"bufio"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"sync"
@@ -131,9 +132,18 @@ func sendNormalPage(conn Conn, s string) {
 	conn.WriteBuffers([][]byte{buf[:n], utils.StringToSlice(s)})
 }
 
+func sendStatusPage(conn Conn, s *statServer) {
+	var str string
+	str += fmt.Sprintf("Connections: %v\r\n", s.connections)
+	str += fmt.Sprintf("TotalReadBytes: %v\r\n", s.totalReadBytes)
+	str += fmt.Sprintf("TotalWritBytes: %v\r\n", s.totalWritBytes)
+	sendNormalPage(conn, str)
+}
+
 const (
 	cmdEnable  = "enable"
 	cmdDisable = "disable"
+	cmdStatus  = "status"
 )
 
 func adminHandler(conn Conn, lis *listener) (c Conn) {
@@ -170,6 +180,9 @@ func adminHandler(conn Conn, lis *listener) (c Conn) {
 			lis.c.disable = false
 		} else if cmd == cmdDisable {
 			lis.c.disable = true
+		} else if cmd == cmdStatus {
+			sendStatusPage(conn, lis.c.stat)
+			return
 		} else {
 			err = errInvalidCommand
 			return
