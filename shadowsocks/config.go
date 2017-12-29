@@ -41,7 +41,6 @@ type Config struct {
 	PartEncHTTPS   bool      `json:"partenchttps"`
 	PartEnc        bool      `json:"partenc"`
 	Timeout        int       `json:"timeout"`
-	Snappy         bool      `json:"snappy"`
 	FilterCapacity int       `json:"filtcap"`
 	AutoProxy      bool      `json:"autoproxy"`
 	ProxyList      string    `json:"proxylist"`

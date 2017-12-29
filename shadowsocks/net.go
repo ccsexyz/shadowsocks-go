@@ -266,9 +266,6 @@ func ssMultiAcceptHandler2(conn Conn, lis *listener, addr *SockAddr, n int,
 		conn = &RemainConn{Conn: ssConn, remain: data}
 	}
 	conn.SetDst(addr)
-	if addr.snappy {
-		conn = NewSnappyConn(conn)
-	}
 	c = conn
 	chs.LogD("choose", chs.Method, chs.Password, addr.Host(), addr.Port())
 	return
@@ -339,9 +336,6 @@ func ssAcceptHandler(conn Conn, lis *listener) (c Conn) {
 		conn = &RemainConn{Conn: ssConn, remain: data}
 	}
 	conn.SetDst(addr)
-	if addr.snappy {
-		conn = NewSnappyConn(conn)
-	}
 	c = conn
 	return
 }

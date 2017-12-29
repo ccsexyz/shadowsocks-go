@@ -10,7 +10,7 @@ fi
 VERSION=`date -u +%Y%m%d`
 LDFLAGS="-s -w"
 GCFLAGS=""
-TAGS="bloom snappy"
+TAGS="bloom"
 
 OSES=(linux darwin windows freebsd)
 ARCHS=(amd64 386)

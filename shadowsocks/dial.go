@@ -17,7 +17,6 @@ type DialOptions struct {
 	Data      []byte
 	C         *Config
 	PartEnc   bool
-	UseSnappy bool
 	Target    string
 	Timeout   int
 }
@@ -95,9 +94,6 @@ func dialSSWithOptions(opt *DialOptions) (conn Conn, err error) {
 			return
 		}
 	}
-	if c.Snappy {
-		opt.UseSnappy = true
-	}
 	if c.PartEnc {
 		opt.PartEnc = true
 	}
@@ -105,7 +101,6 @@ func dialSSWithOptions(opt *DialOptions) (conn Conn, err error) {
 		ok, _, _ := utils.ParseTLSClientHelloMsg(opt.Data)
 		if ok {
 			opt.PartEnc = true
-			opt.UseSnappy = false
 		}
 	}
 	if c.Obfs {
@@ -146,9 +141,6 @@ func dialSSWithOptions(opt *DialOptions) (conn Conn, err error) {
 			C.partencnum = 16384
 			headerLen += copy(header[headerLen:], []byte{typePartEnc, 0x10})
 		}
-		if opt.UseSnappy {
-			headerLen += copy(header[headerLen:], []byte{typeSnappy})
-		}
 		noplen := rand.Intn(4)
 		noplen += int(crc32.Checksum(header, c.crctbl) % (128 - (lenTs + 5)))
 		headerLen += copy(header[headerLen:], []byte{typeNop, byte(noplen)})
@@ -160,9 +152,6 @@ func dialSSWithOptions(opt *DialOptions) (conn Conn, err error) {
 		conn = &RemainConn{
 			Conn:    conn,
 			wremain: append(header[:headerLen], opt.RawHeader...),
-		}
-		if opt.UseSnappy {
-			conn = NewSnappyConn(conn)
 		}
 	}
 	return
@@ -190,7 +179,6 @@ func DialSSWithOptions(opt *DialOptions) (conn Conn, err error) {
 				if c.PartEncHTTPS {
 					opt.PartEnc = true
 				}
-				opt.UseSnappy = false
 				if strings.ContainsRune(msg.ServerName, ':') {
 					opt.Target = msg.ServerName
 				} else {

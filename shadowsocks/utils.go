@@ -35,7 +35,6 @@ const (
 	typeNop                = 0x90 // [nop 1 byte] [noplen 1 byte (< 128)] [zero data, noplen byte]
 	typePartEnc            = 0x37 // [partEnc 1 byte] [partLen 1 byte] [partLen * 1024 bytes data]
 	typePartEncHTTPS       = 0x38
-	typeSnappy             = 0x44
 	lenIPv4                = 4
 	lenIPv6                = 16
 	lenTs                  = 8
@@ -181,14 +180,6 @@ outer:
 				atyp = buf[1]
 				buf[0] = buf[1]
 				off += 2
-			case typeSnappy:
-				if n < off+1 {
-					continue outer
-				}
-				dec.Decrypt(buf, b[off:off+1])
-				addr.snappy = true
-				atyp = buf[0]
-				off++
 			}
 		}
 		addr.nop = nop
@@ -326,14 +317,6 @@ l:
 			}
 			addr.partEncLen = int(b[1]) * 1024
 			b = b[2:]
-			n = len(b)
-			atyp = b[0]
-		case typeSnappy:
-			if n < 2 {
-				return
-			}
-			addr.snappy = true
-			b = b[1:]
 			n = len(b)
 			atyp = b[0]
 		}
@@ -503,8 +486,6 @@ func GetInnerConn(conn net.Conn) (c net.Conn, err error) {
 		c = i.Conn
 	case *LimitConn:
 		c = i.Conn
-	case *SnappyConn:
-		c = i.Conn
 	}
 	return
 }
@@ -604,7 +585,6 @@ type Addr interface {
 type SockAddr struct {
 	header     []byte
 	partEncLen int
-	snappy     bool
 	nop        bool
 	ts         bool
 }

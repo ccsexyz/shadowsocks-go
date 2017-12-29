@@ -37,7 +37,6 @@ func main() {
 	flag.BoolVar(&c.Debug, "debug", false, "show debug log")
 	flag.StringVar(&pprofaddr, "pprof", "", "the pprof listen address")
 	flag.IntVar(&c.Timeout, "timeout", 0, "set the timeout of tcp connection")
-	flag.BoolVar(&c.Snappy, "snappy", false, "enable snappy compression")
 	flag.BoolVar(&c.PartEncHTTPS, "partenchttps", false, "partially encrypt https traffic")
 	flag.BoolVar(&c.PartEnc, "partenc", false, "partially encrypt traffic")
 	flag.BoolVar(&c.Safe, "safe", false, "runs under safe mode, server won't validate iv if safe is enabled")
