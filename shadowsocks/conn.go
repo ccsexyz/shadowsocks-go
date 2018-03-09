@@ -2,395 +2,207 @@ package ss
 
 import (
 	"io"
-	"math/rand"
 	"net"
-	"time"
 
 	"github.com/ccsexyz/utils"
 )
 
+// Conn interface is base interface of all connection of shadowsocks
 type Conn interface {
-	utils.Conn
-	GetCfg() *Config
-	SetDst(Addr)
-	GetDst() Addr
+	net.Conn
+
+	ReadBuffer([]byte) ([]byte, error)
+	WriteBuffers([][]byte) error
 }
 
-type cfg = Config
-
-type cfgCtx struct {
-	c *Config
+// baseConn implements ReadBuffer and WriteBuffers method
+type baseConn struct {
+	net.Conn
 }
 
-func (ctx *cfgCtx) GetCfg() *Config {
-	return ctx.c
+func (conn *baseConn) ReadBuffer(b []byte) ([]byte, error) {
+	n, err := conn.Conn.Read(b)
+	return b[:n], err
 }
 
-type dstCtx struct {
-	dst Addr
+func (conn *baseConn) WriteBuffers(bufs [][]byte) error {
+	buffers := net.Buffers(bufs)
+	var nbytesToWrite int64
+	for _, buf := range bufs {
+		nbytesToWrite += int64(len(buf))
+	}
+	n, err := buffers.WriteTo(conn.Conn)
+	if err != nil {
+		return err
+	}
+	if n != nbytesToWrite {
+		return io.ErrShortWrite
+	}
+	return nil
 }
 
-func (ctx *dstCtx) SetDst(dst Addr) {
-	ctx.dst = dst
+// NewConnFromNetConn creates baseConn from net.Conn
+func NewConnFromNetConn(conn net.Conn) Conn {
+	return &baseConn{Conn: conn}
 }
 
-func (ctx *dstCtx) GetDst() Addr {
-	return ctx.dst
+type DecrypterMaker interface {
+	Make(iv []byte) (utils.Decrypter, error)
+	Ivlen() int
 }
 
-type TCPConn struct {
-	utils.Conn
-	cfgCtx
-	dstCtx
+type EncrypterMaker interface {
+	Make() (utils.Encrypter, error)
 }
 
-func newTCPConn(conn utils.Conn, cfg *cfg) *TCPConn {
-	return &TCPConn{
-		Conn: conn,
-		cfgCtx: cfgCtx{
-			c: cfg,
-		},
+type UtilsDecrypterMaker struct {
+	method   string
+	password string
+	ivlen    int
+}
+
+func NewUtilsDecrypterMaker(method, password string) DecrypterMaker {
+	return &UtilsDecrypterMaker{
+		method:   method,
+		password: password,
+		ivlen:    utils.GetIvLen(method),
 	}
 }
 
-func newTCPConn2(conn net.Conn, cfg *cfg) *TCPConn {
-	return newTCPConn(utils.NewConn(conn), cfg)
+func (m *UtilsDecrypterMaker) Make(iv []byte) (utils.Decrypter, error) {
+	if len(iv) < m.ivlen {
+		return nil, io.ErrShortBuffer
+	}
+	return utils.NewDecrypter(m.method, m.password, iv)
 }
 
-type DebugConn struct {
+func (m *UtilsDecrypterMaker) Ivlen() int {
+	return m.ivlen
+}
+
+type UtilsEncrypterMaker struct {
+	method   string
+	password string
+}
+
+func NewUtilsEncrypterMaker(method, password string) EncrypterMaker {
+	return &UtilsEncrypterMaker{
+		method:   method,
+		password: password,
+	}
+}
+
+func (m *UtilsEncrypterMaker) Make() (utils.Encrypter, error) {
+	return utils.NewEncrypter(m.method, m.password)
+}
+
+type ShadowSocksConn struct {
 	Conn
-	c *Config
+	enc      utils.Encrypter
+	dec      utils.Decrypter
+	encMaker EncrypterMaker
+	decMaker DecrypterMaker
 }
 
-func NewDebugConn(conn Conn, c *Config) *DebugConn {
-	return &DebugConn{Conn: conn, c: c}
-}
-
-func (c *DebugConn) Read(b []byte) (n int, err error) {
-	n, err = c.Conn.Read(b)
-	if err == nil && n > 0 {
-		c.c.LogD("read", n, "bytes from", c.RemoteAddr(), b[:n])
-	}
-	return
-}
-
-func (c *DebugConn) Write(b []byte) (n int, err error) {
-	n, err = c.Conn.Write(b)
-	if err == nil && n > 0 {
-		c.c.LogD("write", n, "bytes to", c.RemoteAddr(), "from", c.LocalAddr(), b[:n])
-	}
-	return
-}
-
-func debugAcceptHandler(conn Conn, lis *listener) (c Conn) {
-	if lis.c.Debug {
-		c = &DebugConn{
-			Conn: conn,
-			c:    lis.c,
-		}
-	} else {
-		c = conn
-	}
-	return
-}
-
-type SsConn struct {
-	Conn
-	enc        utils.Encrypter
-	dec        utils.Decrypter
-	c          *Config
-	xu1s       bool
-	reqenc     bool
-	encnum     int
-	reqdec     bool
-	decnum     int
-	partenc    bool
-	partencnum int
-}
-
-func (c *SsConn) GetConfig() *Config {
-	return c.c
-}
-
-func (c *SsConn) Close() error {
-	if c.xu1s {
-		go func() {
-			time.Sleep(time.Duration(rand.Int()%64+8) * time.Second)
-			c.Conn.Close()
-		}()
-		return nil
-	}
-	return c.Conn.Close()
-}
-
-func NewSsConn(conn Conn, c *Config) *SsConn {
-	return &SsConn{
-		Conn:   conn,
-		c:      c,
-		reqdec: true,
-		reqenc: true,
+func NewShadowSocksConn(conn Conn, encMaker EncrypterMaker, decMaker DecrypterMaker) Conn {
+	return &ShadowSocksConn{
+		Conn:     conn,
+		encMaker: encMaker,
+		decMaker: decMaker,
 	}
 }
 
-func (c *SsConn) Xu1s() {
-	c.xu1s = true
-}
-
-func (c *SsConn) Xu0s() {
-	c.xu1s = false
-}
-
-func (c *SsConn) Read(b []byte) (n int, err error) {
-	if c.partenc && !c.reqdec {
-		c.dec = nil
-		return c.Conn.Read(b)
+func (c *ShadowSocksConn) ReadBuffer(b []byte) ([]byte, error) {
+	ivlen := c.decMaker.Ivlen()
+	if len(b) < ivlen {
+		return nil, io.ErrShortBuffer
 	}
-	if len(b) < c.c.Ivlen {
-		err = io.ErrShortBuffer
-		return
-	}
-	off := 0
 	if c.dec == nil {
-		n, err = io.ReadAtLeast(c.Conn, b, c.c.Ivlen)
-		if err == nil {
-			c.dec, err = utils.NewDecrypter(c.c.Method, c.c.Password, b[:c.c.Ivlen])
-			if err == nil {
-				off = c.c.Ivlen
-				n -= off
-			}
-		}
-	} else {
-		n, err = c.Conn.Read(b)
-	}
-	if err != nil {
-		return
-	}
-	if !c.partenc {
-		if n == 0 {
-			return c.Read(b)
-		}
-		c.dec.Decrypt(b[:n], b[off:n+off])
-		return
-	}
-	if c.decnum+n >= c.partencnum {
-		m := c.partencnum - c.decnum
-		if off == 0 {
-			c.dec.Decrypt(b[:m], b[:m])
-		} else {
-			c.dec.Decrypt(b[:m], b[off:off+m])
-			copy(b[m:], b[off+m:off+n])
-		}
-		c.reqdec = false
-	} else {
-		c.decnum += n
-		c.dec.Decrypt(b[:n], b[off:n+off])
-	}
-	return
-}
-
-func (c *SsConn) initEncrypter() (err error) {
-	if c.enc == nil {
-		c.enc, err = utils.NewEncrypter(c.c.Method, c.c.Password)
-	}
-	return
-}
-
-func (c *SsConn) Write(b []byte) (n int, err error) {
-	if c.partenc && !c.reqenc {
-		c.enc = nil
-		return c.Conn.Write(b)
-	}
-	bufs := make([][]byte, 0, 2)
-	if c.enc == nil {
-		c.enc, err = utils.NewEncrypter(c.c.Method, c.c.Password)
+		err := ReadFull(c.Conn, b[:ivlen])
 		if err != nil {
-			return
+			return nil, err
 		}
-		bufs = append(bufs, c.enc.GetIV())
-	}
-	if !c.partenc {
-		c.enc.Encrypt(b, b)
-	} else {
-		if c.reqenc {
-			if c.encnum+len(b) >= c.partencnum {
-				m := c.partencnum - c.encnum
-				c.enc.Encrypt(b[:m], b[:m])
-				c.reqenc = false
-			} else {
-				c.encnum += len(b)
-				c.enc.Encrypt(b, b)
-			}
-		}
-	}
-	bufs = append(bufs, b)
-	_, err = c.Conn.WriteBuffers(bufs)
-	if err == nil {
-		n = len(b)
-	}
-	return
-}
-
-func (c *SsConn) WriteBuffers(b [][]byte) (n int, err error) {
-	if c.partenc && !c.reqenc {
-		c.enc = nil
-		return c.Conn.WriteBuffers(b)
-	}
-	bufs := make([][]byte, 0, len(b)+1)
-	if c.enc == nil {
-		c.enc, err = utils.NewEncrypter(c.c.Method, c.c.Password)
+		c.dec, err = c.decMaker.Make(b[:ivlen])
 		if err != nil {
-			return
+			return nil, err
 		}
-		bufs = append(bufs, c.enc.GetIV())
 	}
-	for it := 0; it < len(b); it++ {
-		buf := b[it]
-		if !c.partenc {
-			c.enc.Encrypt(buf, buf)
-		} else {
-			if c.reqenc {
-				if c.encnum+len(buf) >= c.partencnum {
-					m := c.partencnum - c.encnum
-					c.enc.Encrypt(buf[:m], buf[:m])
-					c.reqenc = false
-				} else {
-					c.encnum += len(buf)
-					c.enc.Encrypt(buf, buf)
-				}
-			}
-		}
-		bufs = append(bufs, buf)
-		n += len(b[it])
-	}
-	_, err = c.Conn.WriteBuffers(bufs)
+	b, err := c.Conn.ReadBuffer(b)
 	if err != nil {
-		n = 0
+		return nil, err
 	}
-	return
+	c.dec.Decrypt(b, b)
+	return b, nil
 }
 
-type LimitConn struct {
+func (c *ShadowSocksConn) WriteBuffers(bufs [][]byte) error {
+	var enc utils.Encrypter
+	var err error
+	if c.enc != nil {
+		enc = c.enc
+	} else {
+		enc, err = c.encMaker.Make()
+		if err != nil {
+			return err
+		}
+	}
+	for _, buf := range bufs {
+		enc.Encrypt(buf, buf)
+	}
+	if c.enc == nil {
+		c.enc = enc
+		bufs = append([][]byte{enc.GetIV()}, bufs...)
+	}
+	return c.Conn.WriteBuffers(bufs)
+}
+
+type RemainConn struct {
 	Conn
-	Rlimiters []*Limiter
-	Wlimiters []*Limiter
+
+	spinRead   Spin
+	spinWrite  Spin
+	bufToRead  []byte
+	bufToWrite []byte
 }
 
-func (c *LimitConn) Read(b []byte) (n int, err error) {
-	n, err = c.Conn.Read(b)
-	if err == nil {
-		for _, v := range c.Rlimiters {
-			v.Update(n)
-		}
+func NewRemainConn(conn Conn, r, w []byte) Conn {
+	remainConn := &RemainConn{Conn: conn}
+	if len(r) > 0 {
+		remainConn.bufToRead = utils.CopyBuffer(r)
 	}
-	return
+	if len(w) > 0 {
+		remainConn.bufToWrite = utils.CopyBuffer(w)
+	}
+	return remainConn
 }
 
-func (c *LimitConn) Write(b []byte) (n int, err error) {
-	n, err = c.Conn.Write(b)
-	if err == nil {
-		for _, v := range c.Wlimiters {
-			v.Update(n)
-		}
+// func (c *RemainConn) Close() error {
+// 	var r, w []byte
+// 	c.spinRead.Run(func() {
+// 		if len(c.bufToRead) > 0 {
+// 			r, c.bufToRead = c.bufToRead, nil
+// 		}
+// 	})
+// 	c.spinWrite.Run(func() {
+// 		if len(c.bufToWrite) > 0 {
+// 			w, c.bufToWrite = c.bufToWrite, nil
+// 		}
+// 	})
+// 	return nil
+// }
+
+func (c *RemainConn) ReadBuffer(b []byte) ([]byte, error) {
+	if len(c.bufToRead) != 0 {
+		b, c.bufToRead = c.bufToRead, nil
+		return b, nil
 	}
-	return
+	return c.Conn.ReadBuffer(b)
 }
 
-func (c *LimitConn) WriteBuffers(b [][]byte) (n int, err error) {
-	n, err = c.Conn.WriteBuffers(b)
-	if err == nil {
-		for _, v := range c.Wlimiters {
-			v.Update(n)
-		}
+func (c *RemainConn) WriteBuffers(bufs [][]byte) error {
+	if len(c.bufToWrite) != 0 {
+		bufs = append([][]byte{c.bufToWrite}, bufs...)
+		c.bufToWrite = nil
 	}
-	return
-}
-
-func limitAcceptHandler(conn Conn, lis *listener) (c Conn) {
-	limiters := make([]*Limiter, len(lis.c.limiters))
-	copy(limiters, lis.c.limiters)
-	if lis.c.LimitPerConn != 0 {
-		limiters = append(limiters, NewLimiter(lis.c.LimitPerConn))
-	}
-	c = &LimitConn{
-		Conn:      GetConn(conn),
-		Rlimiters: limiters,
-	}
-	return
-}
-
-type HttpLogConn struct {
-	Conn
-	pr *utils.HTTPHeaderParser
-	pw *utils.HTTPHeaderParser
-	c  *Config
-}
-
-func NewHttpLogConn(conn Conn, c *Config) *HttpLogConn {
-	return &HttpLogConn{
-		Conn: conn,
-		pr:   utils.NewHTTPHeaderParser(utils.GetBuf(httpbuffersize)),
-		pw:   utils.NewHTTPHeaderParser(utils.GetBuf(httpbuffersize)),
-		c:    c,
-	}
-}
-
-func cleanHTTPParser(p *utils.HTTPHeaderParser) {
-	if p != nil {
-		utils.PutBuf(p.GetBuf())
-	}
-}
-
-func (conn *HttpLogConn) Close() error {
-	if conn.pr != nil {
-		cleanHTTPParser(conn.pr)
-		conn.pr = nil
-	}
-	if conn.pw != nil {
-		cleanHTTPParser(conn.pw)
-		conn.pw = nil
-	}
-	return conn.Conn.Close()
-}
-
-func (conn *HttpLogConn) Read(b []byte) (n int, err error) {
-	n, err = conn.Conn.Read(b)
-	if conn.pr != nil {
-		ok, e := conn.pr.Read(b[:n])
-		if ok {
-			var n2 int
-			buf := utils.GetBuf(httpbuffersize)
-			defer utils.PutBuf(buf)
-			n2, e = conn.pr.Encode(buf)
-			if err == nil {
-				conn.c.Log(conn.LocalAddr(), "->", conn.RemoteAddr(), utils.SliceToString(buf[:n2]))
-			}
-		}
-		if e != nil || ok {
-			cleanHTTPParser(conn.pr)
-			conn.pr = nil
-		}
-
-	}
-	return
-}
-
-func (conn *HttpLogConn) Write(b []byte) (n int, err error) {
-	if conn.pw != nil {
-		ok, e := conn.pw.Read(b)
-		if ok {
-			var n2 int
-			buf := utils.GetBuf(httpbuffersize)
-			defer utils.PutBuf(buf)
-			n2, e = conn.pw.Encode(buf)
-			if err == nil {
-				conn.c.Log(conn.LocalAddr(), "->", conn.RemoteAddr(), utils.SliceToString(buf[:n2]))
-			}
-		}
-		if e != nil || ok {
-			cleanHTTPParser(conn.pw)
-			conn.pw = nil
-		}
-
-	}
-	return conn.Conn.Write(b)
+	return c.Conn.WriteBuffers(bufs)
 }

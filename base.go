@@ -1,77 +1,43 @@
 package main
 
 import (
+	"context"
+	"log"
 	"net"
-
-	"sync"
+	"time"
 
 	ss "github.com/ccsexyz/shadowsocks-go/shadowsocks"
-	"github.com/ccsexyz/utils"
 )
 
-func RunTCPServer(address string, c *ss.Config,
-	listen func(string, *ss.Config) (net.Listener, error),
-	handler func(ss.Conn, *ss.Config)) {
-	var addresses []string
-	func() {
-		addrsMap := make(map[string]bool)
-		c.Localaddrs = append(c.Localaddrs, c.Localaddr)
-		for _, addr := range c.Localaddrs {
-			if len(addr) > 0 {
-				addrsMap[addr] = true
-			}
-		}
-		for addr, _ := range addrsMap {
-			addresses = append(addresses, addr)
-		}
-	}()
-	var wg sync.WaitGroup
-	for _, address := range addresses {
-		wg.Add(1)
-		go func(address string) {
-			defer wg.Done()
-			lis, err := listen(address, c)
-			if err != nil {
-				c.Logger.Fatal(err)
-			}
-			defer lis.Close()
-			go func() {
-				if c.Die != nil {
-					<-c.Die
-					lis.Close()
-				}
-			}()
-			for {
-				conn, err := lis.Accept()
-				if err != nil {
-					return
-				}
-				go handler(conn.(ss.Conn), c)
-			}
-		}(address)
+type Dialer = ss.Dialer
+type ConnCtx = ss.ConnCtx
+type Conn = ss.Conn
+type Acceptor = ss.Acceptor
+type DstAddr = ss.DstAddr
+
+func runTCPServer(ctx context.Context, address string, handler func(net.Conn)) {
+	lis, err := net.Listen("tcp", address)
+	if err != nil {
+		log.Fatal(err)
 	}
-	wg.Wait()
-}
-
-func GetDstOfConn(conn ss.Conn) string {
-	dst := conn.GetDst()
-	if dst == nil {
-		return ""
-	}
-	return dst.String()
-}
-
-func getDefaultUDPServerCtx() *utils.UDPServerCtx {
-	return &utils.UDPServerCtx{Mtu: 2048, Expires: 60}
-}
-
-func RunUDPServer(listener net.PacketConn, config *ss.Config, creator func(*ss.Config) func(*utils.SubConn) (net.Conn, net.Conn, error)) {
+	defer lis.Close()
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	go func() {
-		if config.Die == nil {
+		defer lis.Close()
+		<-ctx.Done()
+	}()
+	for {
+		conn, err := lis.Accept()
+		if err != nil {
+			if operr, ok := err.(*net.OpError); ok {
+				if operr.Temporary() {
+					time.Sleep(time.Millisecond * 10)
+					continue
+				}
+			}
 			return
 		}
-		defer listener.Close()
-		<-config.Die
-	}()
-	getDefaultUDPServerCtx().RunUDPServer(listener, creator(config))
+		go handler(conn)
+	}
 }
