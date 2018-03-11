@@ -120,6 +120,12 @@ func ParseAddr(b []byte) (addr DstAddr, n int, err error) {
 			err = errInvalidHeader
 			return
 		}
+		for _, v := range b[2 : dn-2] {
+			if !((v >= 'A' && v <= 'Z') || (v >= 'a' && v <= 'z') || (v >= '0' && v <= '9') || v == '.' || v == '-' || v == '_') {
+				err = errInvalidHeader
+				return
+			}
+		}
 		n = dn
 	} else {
 		err = errInvalidHeader

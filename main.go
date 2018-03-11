@@ -114,9 +114,9 @@ func runServer(ctx context.Context, config *Config) {
 	for _, out := range config.Output {
 		switch out.Type {
 		case "socks":
-			// dialers = append(dialers, )
+			dialers = append(dialers, ss.NewSocks5Dialer(nil, out.RemoteAddr))
 		case "http":
-			//
+			dialers = append(dialers, ss.NewHTTPProxyDialer(nil, out.RemoteAddr))
 		case "shadowsocks", "ss":
 			dialers = append(dialers, ss.NewShadowSocksDialer(
 				ss.NewNetDialer(), out.RemoteAddr, out.Method, out.Password))

@@ -1,11 +1,9 @@
 package ss
 
 import (
-	"bytes"
 	"errors"
 	"log"
 	"net"
-	"strings"
 
 	"github.com/ccsexyz/utils"
 )
@@ -104,60 +102,6 @@ func (p *PickOneAcceptor) Accept(conn Conn, ctx *ConnCtx) (Conn, error) {
 	return nil, nil
 }
 
-type Socks5Acceptor struct{}
-
-func NewSocks5Acceptor() Acceptor {
-	return &Socks5Acceptor{}
-}
-
-func (s *Socks5Acceptor) Accept(conn Conn, ctx *ConnCtx) (Conn, error) {
-	buf := utils.GetBuf(bufferSize)
-	defer utils.PutBuf(buf)
-	b, err := conn.ReadBuffer(buf)
-	if err != nil {
-		return nil, err
-	}
-	errf := func() (Conn, error) {
-		return NewRemainConn(conn, b, nil), errNotSocks5
-	}
-	if len(b) < 2 {
-		return errf()
-	}
-	ver := b[0]
-	nmethods := b[1]
-	if ver != verSocks5 || len(b) != int(nmethods)+2 {
-		return errf()
-	}
-	err = WriteBuffer(conn, []byte{5, 0})
-	if err != nil {
-		return nil, err
-	}
-	b, err = conn.ReadBuffer(buf)
-	if err != nil {
-		return nil, err
-	}
-	ver = b[0]
-	cmd := b[1]
-	if ver != verSocks5 || (cmd != cmdConnect && cmd != cmdUDP) {
-		return nil, errNotSocks5
-	}
-	addr, n, err := ParseAddr(b[3:])
-	if err != nil {
-		return nil, err
-	}
-	if n != len(b[3:]) {
-		return nil, errNotSocks5
-	}
-	err = WriteBuffer(conn, []byte{5, 0, 0, 1, 0, 0, 0, 0, 0, 0})
-	if err != nil {
-		return nil, err
-	}
-	ctx.Store(CtxTarget, addr)
-	return conn, nil
-}
-
-type Socks4Acceptor struct{}
-
 type ShadowSocksAcceptor struct {
 	encMaker EncrypterMaker
 	decMaker DecrypterMaker
@@ -215,86 +159,5 @@ func (s *ShadowSocksAcceptor) Accept(conn Conn, ctx *ConnCtx) (Conn, error) {
 	}
 	dec.Decrypt(b[ivlen:n+ivlen], b[ivlen:n+ivlen])
 	ssConn.dec = dec
-	return conn, nil
-}
-
-type HTTPProxyAcceptor struct{}
-
-func NewHTTPProxyAcceptor() Acceptor {
-	return &HTTPProxyAcceptor{}
-}
-
-func (h *HTTPProxyAcceptor) Accept(conn Conn, ctx *ConnCtx) (Conn, error) {
-	parser := utils.NewHTTPHeaderParser(utils.GetBuf(bufferSize))
-	defer utils.PutBuf(parser.GetBuf())
-	buf := utils.GetBuf(bufferSize)
-	defer utils.PutBuf(buf)
-	b, err := conn.ReadBuffer(buf)
-	if err != nil {
-		return nil, err
-	}
-	ok, err := parser.Read(b)
-	if err != nil {
-		return NewRemainConn(conn, b, nil), err
-	}
-	var requestMethod, requestURI []byte
-	if ok {
-		requestMethod, err = parser.GetFirstLine1()
-		if err == nil {
-			requestURI, err = parser.GetFirstLine2()
-		}
-	}
-	if !ok || err != nil {
-		return NewRemainConn(conn, b, nil), errNotHTTPPorxy
-	}
-	uri := utils.SliceToString(requestURI)
-	var host, port string
-	if bytes.Equal(requestMethod, []byte("CONNECT")) {
-		host, port, err = net.SplitHostPort(uri)
-		if err != nil {
-			return nil, err
-		}
-		err = WriteString(conn, "HTTP/1.1 200 Connection Established\r\n\r\n")
-		if err != nil {
-			return nil, err
-		}
-		ctx.Store(CtxTarget, DstAddr{host: host, port: port})
-		return conn, nil
-	}
-	if bytes.HasPrefix(requestURI, []byte("http://")) {
-		requestURI = requestURI[7:]
-	}
-	it := bytes.IndexByte(requestURI, '/')
-	if it < 0 {
-		return nil, errNotHTTPPorxy
-	}
-	ok = parser.StoreFirstline2(requestURI[it:])
-	if !ok {
-		return nil, errNotHTTPPorxy
-	}
-	hosts, ok := parser.Load([]byte("Host"))
-	if !ok || len(hosts) == 0 || len(hosts[0]) == 0 {
-		return nil, errNotHTTPPorxy
-	}
-	dst := string(hosts[0])
-	it = strings.Index(dst, ":")
-	if it < 0 {
-		dst = dst + ":80"
-	}
-	host, port, err = net.SplitHostPort(dst)
-	if err != nil {
-		return nil, err
-	}
-	proxys, ok := parser.Load([]byte("Proxy-Connection"))
-	if ok && len(proxys) > 0 && len(proxys[0]) > 0 {
-		parser.Store([]byte("Connection"), proxys[0])
-		parser.Delete([]byte("Proxy-Connection"))
-	}
-	n, err := parser.Encode(buf)
-	if err != nil {
-		return nil, err
-	}
-	conn = NewRemainConn(conn, buf[:n], nil)
-	ctx.Store(CtxTarget, DstAddr{host: host, port: port})
 	return conn, nil
 }

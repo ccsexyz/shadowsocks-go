@@ -193,7 +193,11 @@ func NewRemainConn(conn Conn, r, w []byte) Conn {
 
 func (c *RemainConn) ReadBuffer(b []byte) ([]byte, error) {
 	if len(c.bufToRead) != 0 {
-		b, c.bufToRead = c.bufToRead, nil
+		if len(b) > len(c.bufToRead) {
+			b, c.bufToRead = c.bufToRead, nil
+			return b, nil
+		}
+		b, c.bufToRead = c.bufToRead[:len(b)], c.bufToRead[len(b):]
 		return b, nil
 	}
 	return c.Conn.ReadBuffer(b)
