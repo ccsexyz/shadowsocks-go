@@ -122,3 +122,33 @@ func (p *PickFastDialer) Dial(network, addr string) (Conn, error) {
 	}
 	return nil, err
 }
+
+type AEADShadowSocksDialer struct {
+	Dialer
+	raddr    string
+	encMaker *SSAeadEncrypterMaker
+	decMaker *SSAeadDecrypterMaker
+}
+
+func NewAEADShadowSocksDialer(d Dialer, raddr, method, password string) Dialer {
+	if d == nil {
+		d = NewNetDialer()
+	}
+	return &AEADShadowSocksDialer{
+		Dialer:   d,
+		raddr:    raddr,
+		encMaker: NewSSAeadEncrypterMaker(method, password),
+		decMaker: NewSSAeadDecrypterMaker(method, password),
+	}
+}
+
+func (d *AEADShadowSocksDialer) Dial(network, target string) (Conn, error) {
+	conn, err := d.Dialer.Dial(network, d.raddr)
+	if err != nil {
+		return nil, err
+	}
+	conn = NewAEADShadowSocksConn(conn, d.encMaker, d.decMaker)
+	header := (&DstAddr{hostport: target}).Header()
+	conn = NewRemainConn(conn, nil, header)
+	return conn, nil
+}

@@ -19,11 +19,12 @@ const (
 )
 
 var (
-	errNotSocks5      = errors.New("not socks5 protocol")
-	errNotShadowsocks = errors.New("not shadowsocks protocol")
-	errNotHTTPPorxy   = errors.New("not http proxy protocol")
-	errUnExpected     = errors.New("unexpected error")
-	errDuplicateIV    = errors.New("duplicated IV")
+	errNotSocks5          = errors.New("not socks5 protocol")
+	errNotShadowsocks     = errors.New("not shadowsocks protocol")
+	errNotAEADShadowsocks = errors.New("not aead shadowsocks protocol")
+	errNotHTTPPorxy       = errors.New("not http proxy protocol")
+	errUnExpected         = errors.New("unexpected error")
+	errDuplicateIV        = errors.New("duplicated IV")
 )
 
 type ConnCtx struct {
@@ -147,6 +148,7 @@ func (s *ShadowSocksAcceptor) Accept(conn Conn, ctx *ConnCtx) (Conn, error) {
 		return nil, errDuplicateIV
 	}
 	ctx.Store(CtxTarget, addr)
+	log.Println(len(b), ivlen, n)
 	data := b[ivlen+n:]
 	if len(data) > 0 {
 		conn = NewRemainConn(conn, data, nil)
@@ -159,5 +161,70 @@ func (s *ShadowSocksAcceptor) Accept(conn Conn, ctx *ConnCtx) (Conn, error) {
 	}
 	dec.Decrypt(b[ivlen:n+ivlen], b[ivlen:n+ivlen])
 	ssConn.dec = dec
+	return conn, nil
+}
+
+type AEADShadowSocksAcceptor struct {
+	encMaker *SSAeadEncrypterMaker
+	decMaker *SSAeadDecrypterMaker
+	filter   bytesFilter
+}
+
+func NewAEADShadowSocksAcceptor(method, password string) Acceptor {
+	return &AEADShadowSocksAcceptor{
+		encMaker: NewSSAeadEncrypterMaker(method, password),
+		decMaker: NewSSAeadDecrypterMaker(method, password),
+		filter:   newBloomFilter(),
+	}
+}
+
+func (a *AEADShadowSocksAcceptor) Accept(conn Conn, ctx *ConnCtx) (Conn, error) {
+	buf := utils.GetBuf(bufferSize)
+	defer utils.PutBuf(buf)
+	b, err := conn.ReadBuffer(buf)
+	if err != nil {
+		return nil, err
+	}
+	ivlen := a.decMaker.ivlen
+	if len(b) < ivlen+minHeaderSize {
+		return NewRemainConn(conn, b, nil), errNotAEADShadowsocks
+	}
+	iv := utils.CopyBuffer(b[:ivlen])
+	defer utils.PutBuf(iv)
+	dec, err := a.decMaker.Make(iv)
+	if err != nil {
+		return NewRemainConn(conn, b, nil), err
+	}
+	lbuf := utils.GetBuf(16)
+	defer utils.PutBuf(lbuf)
+	err = dec.Decrypt(lbuf, b[ivlen:ivlen+2+dec.Overhead()])
+	if err != nil {
+		return NewRemainConn(conn, b, nil), err
+	}
+	dec = nil
+	conn = NewRemainConn(conn, b[ivlen:], nil)
+	conn = NewAEADShadowSocksConn(conn, a.encMaker, nil)
+	aeadSsConn := conn.(*AEADShadowSocksConn)
+	aeadSsConn.dec, err = a.decMaker.Make(b[:ivlen])
+	if err != nil {
+		return nil, err
+	}
+	b, err = conn.ReadBuffer(buf)
+	if err != nil {
+		return nil, err
+	}
+	addr, n, err := ParseAddr(b)
+	if err != nil {
+		return nil, err
+	}
+	if a.filter.TestAndAdd(iv) {
+		log.Println("recv duplicated iv from", conn.RemoteAddr(), b[:ivlen])
+		return nil, errDuplicateIV
+	}
+	ctx.Store(CtxTarget, addr)
+	data := b[n:]
+	if len(data) > 0 {
+		conn = NewRemainConn(conn, data, nil)
+	}
 	return conn, nil
 }

@@ -109,14 +109,15 @@ func ParseAddr(b []byte) (addr DstAddr, n int, err error) {
 		err = errInvalidHeader
 		return
 	}
+	var dn int
 	atyp := b[0]
 	if atyp == typeIPv4 {
-		n = lenIPv4 + 2 + 1
+		dn = lenIPv4 + 2 + 1
 	} else if atyp == typeIPv6 {
-		n = lenIPv6 + 2 + 1
+		dn = lenIPv6 + 2 + 1
 	} else if atyp == typeDomain {
-		dn := int(b[1]) + 2 + 1 + 1
-		if len(b) < dn {
+		dn = int(b[1]) + 2 + 1 + 1
+		if len(b) < dn || dn == 0 {
 			err = errInvalidHeader
 			return
 		}
@@ -126,11 +127,15 @@ func ParseAddr(b []byte) (addr DstAddr, n int, err error) {
 				return
 			}
 		}
-		n = dn
 	} else {
 		err = errInvalidHeader
 		return
 	}
+	if len(b) < dn {
+		err = errInvalidHeader
+		return
+	}
+	n = dn
 	header := utils.CopyBuffer(b[:n])
 	addr = DstAddr{header: header}
 	return

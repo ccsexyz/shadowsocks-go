@@ -159,8 +159,6 @@ func (c *ShadowSocksConn) WriteBuffers(bufs [][]byte) error {
 type RemainConn struct {
 	Conn
 
-	spinRead   Spin
-	spinWrite  Spin
 	bufToRead  []byte
 	bufToWrite []byte
 }
@@ -176,21 +174,6 @@ func NewRemainConn(conn Conn, r, w []byte) Conn {
 	return remainConn
 }
 
-// func (c *RemainConn) Close() error {
-// 	var r, w []byte
-// 	c.spinRead.Run(func() {
-// 		if len(c.bufToRead) > 0 {
-// 			r, c.bufToRead = c.bufToRead, nil
-// 		}
-// 	})
-// 	c.spinWrite.Run(func() {
-// 		if len(c.bufToWrite) > 0 {
-// 			w, c.bufToWrite = c.bufToWrite, nil
-// 		}
-// 	})
-// 	return nil
-// }
-
 func (c *RemainConn) ReadBuffer(b []byte) ([]byte, error) {
 	if len(c.bufToRead) != 0 {
 		if len(b) > len(c.bufToRead) {
@@ -198,6 +181,9 @@ func (c *RemainConn) ReadBuffer(b []byte) ([]byte, error) {
 			return b, nil
 		}
 		b, c.bufToRead = c.bufToRead[:len(b)], c.bufToRead[len(b):]
+		if len(c.bufToRead) == 0 {
+			c.bufToRead = nil
+		}
 		return b, nil
 	}
 	return c.Conn.ReadBuffer(b)

@@ -10,14 +10,14 @@ import (
 
 // Config config
 type Config struct {
-	Type       string   `json:"type"`
-	LocalAddr  string   `json:"localaddr"`
-	RemoteAddr string   `json:"remoteaddr"`
-	Method     string   `json:"method"`
-	Password   string   `json:"password"`
-	SSProxy    bool     `json:"ssproxy"`
-	Input      []Config `json:"input"`
-	Output     []Config `json:"output"`
+	Type       string    `json:"type"`
+	LocalAddr  string    `json:"localaddr"`
+	RemoteAddr string    `json:"remoteaddr"`
+	Method     string    `json:"method"`
+	Password   string    `json:"password"`
+	SSProxy    bool      `json:"ssproxy"`
+	Input      []*Config `json:"input"`
+	Output     []*Config `json:"output"`
 }
 
 var (

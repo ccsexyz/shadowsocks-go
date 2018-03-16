@@ -5,17 +5,21 @@ import (
 	"flag"
 	"log"
 	"net"
-	"net/http"
-	_ "net/http/pprof"
+	"sort"
 	"strings"
 
 	ss "github.com/ccsexyz/shadowsocks-go/shadowsocks"
+	"github.com/ccsexyz/utils"
+)
+
+var (
+	pprofaddr = flag.String("pprof", "", "listen address for pprof")
 )
 
 func init() {
-	go func() {
-		log.Println(http.ListenAndServe("localhost:6060", nil))
-	}()
+	if *pprofaddr != "" {
+		utils.RunProfileHTTPServer(*pprofaddr)
+	}
 }
 
 func init() {
@@ -87,42 +91,77 @@ func main() {
 	<-ctx.Done()
 }
 
+func getOrder(c *Config) int {
+	switch c.Type {
+	default:
+		return 5
+	case "shadowsocks", "ss":
+		if ss.IsAEAD(c.Method) {
+			return 3
+		}
+		return 4
+	case "http":
+		return 2
+	case "socks":
+		return 1
+	case "plain":
+		return 0
+	}
+}
+
 func runServer(ctx context.Context, config *Config) {
 	config.print()
 	bultin := newBultinServiceAcceptor()
 	bultin.StoreServiceAcceptor(echoaddr, new(echoAcceptor))
+	sort.SliceStable(config.Input, func(i, j int) bool {
+		return getOrder(config.Input[i]) < getOrder(config.Input[j])
+	})
+	sort.SliceStable(config.Output, func(i, j int) bool {
+		return getOrder(config.Output[i]) < getOrder(config.Output[j])
+	})
 	var pickOneAcceptors []Acceptor
 	for _, in := range config.Input {
+		var acc Acceptor
 		switch in.Type {
 		case "socks":
-			pickOneAcceptors = append(pickOneAcceptors,
-				ss.NewSocks5Acceptor())
+			acc = ss.NewSocks5Acceptor()
 		case "http":
-			pickOneAcceptors = append(pickOneAcceptors,
-				ss.NewHTTPProxyAcceptor())
+			acc = ss.NewHTTPProxyAcceptor()
 		case "shadowsocks", "ss":
-			pickOneAcceptors = append(pickOneAcceptors,
-				ss.NewShadowSocksAcceptor(in.Method, in.Password))
+			if ss.IsAEAD(in.Method) {
+				acc = ss.NewAEADShadowSocksAcceptor(in.Method, in.Password)
+			} else {
+				acc = ss.NewShadowSocksAcceptor(in.Method, in.Password)
+			}
 		case "plain":
 			if len(in.RemoteAddr) > 0 {
-				pickOneAcceptors = append(pickOneAcceptors,
-					newTunnelAcceptor(in.RemoteAddr))
+				acc = newTunnelAcceptor(in.RemoteAddr)
 			}
+		}
+		if acc != nil {
+			pickOneAcceptors = append(pickOneAcceptors, acc)
 		}
 	}
 	var dialers []Dialer
 	for _, out := range config.Output {
+		var dial Dialer
 		switch out.Type {
 		case "socks":
-			dialers = append(dialers, ss.NewSocks5Dialer(nil, out.RemoteAddr))
+			dial = ss.NewSocks5Dialer(nil, out.RemoteAddr)
 		case "http":
-			dialers = append(dialers, ss.NewHTTPProxyDialer(nil, out.RemoteAddr))
+			dial = ss.NewHTTPProxyDialer(nil, out.RemoteAddr)
 		case "shadowsocks", "ss":
-			dialers = append(dialers, ss.NewShadowSocksDialer(
-				ss.NewNetDialer(), out.RemoteAddr, out.Method, out.Password))
+			if ss.IsAEAD(out.Method) {
+				dial = ss.NewAEADShadowSocksDialer(ss.NewNetDialer(),
+					out.RemoteAddr, out.Method, out.Password)
+			} else {
+				dial = ss.NewShadowSocksDialer(
+					ss.NewNetDialer(), out.RemoteAddr, out.Method, out.Password)
+			}
 		case "plain":
-			dialers = append(dialers, ss.NewNetDialer())
+			dial = ss.NewNetDialer()
 		}
+		dialers = append(dialers, dial)
 	}
 	pickone := ss.NewPickOneAcceptor(pickOneAcceptors...)
 	accs := ss.Acceptors([]ss.Acceptor{
