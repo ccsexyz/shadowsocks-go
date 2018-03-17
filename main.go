@@ -9,8 +9,11 @@ import (
 	"sort"
 	"strings"
 
-	ss "github.com/ccsexyz/shadowsocks-go/shadowsocks"
+	"github.com/ccsexyz/shadowsocks-go/shadowsocks"
 	"github.com/ccsexyz/utils"
+	"sync"
+	"github.com/fsnotify/fsnotify"
+	"time"
 )
 
 var (
@@ -88,40 +91,107 @@ func (acc *localAcceptor) Accept(conn ss.Conn, ctx *ss.ConnCtx) (ss.Conn, error)
 
 func main() {
 	flag.Parse()
+	if configPath == "" {
+		checkConfig(&defaultConfig)
+		runServer(context.TODO(), &defaultConfig)
+		return
+	}
 	var configs []*Config
 	var err error
-	if len(configPath) != 0 {
-		configs, err = readConfig(configPath)
-		if err != nil {
-			log.Fatal(err)
+	configs, err = readConfig(configPath)
+	if err != nil {
+		log.Fatal(err)
+	}
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer watcher.Close()
+	for {
+		ctx, cancel := context.WithCancel(context.Background())
+		var wg sync.WaitGroup
+		for _, config := range configs {
+			go func(config *Config) {
+				wg.Add(1)
+				defer wg.Done()
+				runServer(ctx, config)
+			}(config)
 		}
-	} else {
-		checkConfig(&defaultConfig)
-		configs = append(configs, &defaultConfig)
+		chConfig := make(chan []*Config)
+		go func() {
+			err := watcher.Add(configPath)
+			if err != nil {
+				log.Println(err)
+				return
+			}
+			defer watcher.Remove(configPath)
+			for {
+				select {
+				case event := <-watcher.Events:
+					if event.Op&fsnotify.Write == fsnotify.Write || event.Op&fsnotify.Rename == fsnotify.Rename {
+						time.Sleep(time.Second)
+						newConfigs, err := readConfig(configPath)
+						if err != nil {
+							continue
+						}
+						select {
+						case chConfig <- newConfigs:
+						case <-ctx.Done():
+						}
+						return
+					} else if event.Op&fsnotify.Remove == fsnotify.Remove {
+						return
+					}
+				case <-watcher.Errors:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+
+		//var newConfigs []*Config
+		select {
+		case newConfigs := <-chConfig:
+			configs = newConfigs
+		case <-ctx.Done():
+			return
+		}
+
+		cancel()
+		wg.Wait()
+		time.Sleep(time.Second)
+
+		log.Println("reload success!!")
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	for _, config := range configs {
-		go runServer(ctx, config)
-	}
-	<-ctx.Done()
 }
+
+const (
+	orderPlain       = iota
+	orderRedir
+	orderSocks
+	orderHTTP
+	orderAEAD
+	orderShadowSocks
+	orderDefault
+)
 
 func getOrder(c *Config) int {
 	switch c.Type {
 	default:
-		return 5
+		return orderDefault
 	case "shadowsocks", "ss":
 		if ss.IsAEAD(c.Method) {
-			return 3
+			return orderAEAD
 		}
-		return 4
+		return orderShadowSocks
 	case "http":
-		return 2
+		return orderHTTP
 	case "socks":
-		return 1
+		return orderSocks
+	case "redir":
+		return orderRedir
 	case "plain":
-		return 0
+		return orderPlain
 	}
 }
 
@@ -149,6 +219,8 @@ func runServer(ctx context.Context, config *Config) {
 			} else {
 				acc = ss.NewShadowSocksAcceptor(in.Method, in.Password)
 			}
+		case "redir":
+			acc = ss.NewRedirAcceptor()
 		case "plain":
 			if len(in.RemoteAddr) > 0 {
 				acc = newTunnelAcceptor(in.RemoteAddr)
@@ -187,10 +259,16 @@ func runServer(ctx context.Context, config *Config) {
 		accs = append(accs, ss.NewTLSAcceptor(config.RootCA, config.RootKey))
 	}
 	accs = append(accs, newLocalAcceptor(dialers...))
+	var wg sync.WaitGroup
 	for _, addr := range strings.Split(config.LocalAddr, "|") {
-		go runTCPServer(ctx, addr, func(conn net.Conn) {
-			accs.Accept(conn)
-		})
+		go func(addr string) {
+			wg.Add(1)
+			defer wg.Done()
+			runTCPServer(ctx, addr, func(conn net.Conn) {
+				accs.Accept(conn)
+			})
+		}(addr)
 	}
+	wg.Wait()
 
 }

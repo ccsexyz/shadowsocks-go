@@ -36,10 +36,12 @@ func NewTLSAcceptor(rootCa, rootKey string) Acceptor {
 	var err error
 	acc.calts, err = tls.LoadX509KeyPair(rootCa, rootKey)
 	if err != nil {
+		log.Println(err)
 		return acc
 	}
 	acc.ca, err = x509.ParseCertificate(acc.calts.Certificate[0])
 	if err != nil {
+		log.Println(err)
 		return acc
 	}
 	acc.certsMap = make(map[string]tls.Certificate)

@@ -6,6 +6,7 @@ import (
 	"net"
 
 	"github.com/ccsexyz/utils"
+	"github.com/ccsexyz/shadowsocks-go/redir"
 )
 
 const (
@@ -25,6 +26,7 @@ var (
 	errNotHTTPPorxy       = errors.New("not http proxy protocol")
 	errUnExpected         = errors.New("unexpected error")
 	errDuplicateIV        = errors.New("duplicated IV")
+	errCantGetDst = errors.New("can't get original destination")
 )
 
 type ConnCtx struct {
@@ -226,5 +228,25 @@ func (a *AEADShadowSocksAcceptor) Accept(conn Conn, ctx *ConnCtx) (Conn, error) 
 	if len(data) > 0 {
 		conn = NewRemainConn(conn, data, nil)
 	}
+	return conn, nil
+}
+
+type RedirAcceptor struct {}
+
+func NewRedirAcceptor() Acceptor {
+	return &RedirAcceptor{}
+}
+
+func (r *RedirAcceptor) Accept(conn Conn, ctx *ConnCtx) (Conn, error) {
+	tcpConn, err := GetNetTCPConn(conn)
+	if err != nil {
+		return conn, err
+	}
+	origDst, err := redir.GetOrigDst(tcpConn)
+	if err != nil || len(origDst) == 0 {
+		return conn, errCantGetDst
+	}
+	log.Println(origDst)
+	ctx.Store(CtxTarget, origDst)
 	return conn, nil
 }

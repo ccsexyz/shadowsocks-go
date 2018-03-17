@@ -221,7 +221,7 @@ func (c *AEADShadowSocksConn) ReadBuffer(b []byte) ([]byte, error) {
 		return nil, err
 	}
 	length := int(binary.BigEndian.Uint16(b[:2])) & aeadSizeMask
-	if len(b) > length+tagLen {
+	if len(b) >= length+tagLen {
 		err = ReadFull(c.Conn, b[:length+tagLen])
 		if err != nil {
 			return nil, err
@@ -232,23 +232,26 @@ func (c *AEADShadowSocksConn) ReadBuffer(b []byte) ([]byte, error) {
 		}
 		return b[:length], nil
 	}
-	c.buf = utils.GetBuf(length + tagLen)
-	defer func() {
-		if err == nil {
-			return
-		}
-		utils.PutBuf(c.buf)
-		c.buf = nil
-	}()
-	err = ReadFull(c.Conn, c.buf)
+	buf := utils.GetBuf(length + tagLen)
+	defer utils.PutBuf(buf)
+	err = ReadFull(c.Conn, buf)
 	if err != nil {
 		return nil, err
 	}
-	err = c.dec.Decrypt(c.buf, c.buf)
+	if len(b) >= length {
+		err = c.dec.Decrypt(b, buf)
+		if err != nil {
+			return nil, err
+		}
+		return b[:length], nil
+	}
+	plain := utils.GetBuf(length)
+	err = c.dec.Decrypt(plain, buf)
 	if err != nil {
 		return nil, err
 	}
 	c.off = len(b)
+	c.buf = plain
 	return c.buf[:c.off], nil
 }
 

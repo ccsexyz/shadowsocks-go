@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 
 	"github.com/ccsexyz/utils"
+	"fmt"
 )
 
 const (
@@ -179,3 +180,36 @@ func newNullFilter() bytesFilter {
 func (r *nullFilterImpl) Close() error { return nil }
 
 func (r *nullFilterImpl) TestAndAdd(_ []byte) bool { return false }
+
+func GetInnerConn(conn net.Conn) (c net.Conn, err error) {
+	defer func() {
+		if c == nil {
+			err = fmt.Errorf("unexpected conn with type %T", conn)
+		}
+	}()
+	switch i := conn.(type) {
+	case *baseConn:
+		c = i.Conn
+	case *netConn:
+		c = i.Conn
+	case *ShadowSocksConn:
+		c = i.Conn
+	case *RemainConn:
+		c = i.Conn
+	case *AEADShadowSocksConn:
+		c = i.Conn
+	}
+	return
+}
+
+func GetNetTCPConn(conn net.Conn) (c *net.TCPConn, err error) {
+	c, ok := conn.(*net.TCPConn)
+	if !ok {
+		conn, err = GetInnerConn(conn)
+		if err != nil {
+			return
+		}
+		c, err = GetNetTCPConn(conn)
+	}
+	return
+}
