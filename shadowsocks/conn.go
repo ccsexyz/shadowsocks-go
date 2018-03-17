@@ -46,6 +46,39 @@ func NewConnFromNetConn(conn net.Conn) Conn {
 	return &baseConn{Conn: conn}
 }
 
+type netConn struct {
+	Conn
+}
+
+func (c *netConn) ReadBuffer(b []byte) ([]byte, error) {
+	panic(nil)
+}
+
+func (c *netConn) WriteBuffers(buf [][]byte) error {
+	panic(nil)
+}
+
+func (c *netConn) Read(b []byte) (n int, err error) {
+	b2, err := c.Conn.ReadBuffer(b)
+	if err != nil {
+		return 0, err
+	}
+	n = copy(b, b2)
+	return n, nil
+}
+
+func (c *netConn) Write(b []byte) (n int, err error) {
+	err = WriteBuffer(c.Conn, b)
+	if err != nil {
+		return 0, err
+	}
+	return len(b), nil
+}
+
+func NewNetConnFromConn(conn Conn) net.Conn {
+	return &netConn{Conn: conn}
+}
+
 type DecrypterMaker interface {
 	Make(iv []byte) (utils.Decrypter, error)
 	Ivlen() int

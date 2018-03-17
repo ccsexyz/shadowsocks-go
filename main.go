@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"flag"
 	"log"
 	"net"
@@ -58,14 +59,29 @@ func (acc *localAcceptor) Accept(conn ss.Conn, ctx *ss.ConnCtx) (ss.Conn, error)
 	if !ok {
 		return nil, nil
 	}
-	addr := v.(ss.DstAddr)
-	log.Println(addr.String())
-	rconn, err := acc.dialer.Dial("tcp", addr.String())
+	dst := v.(ss.DstAddr)
+	addr := dst.String()
+	var uptls bool
+	if strings.HasPrefix(addr, "tls://") {
+		uptls = true
+		addr = strings.TrimPrefix(addr, "tls://")
+	}
+	rconn, err := acc.dialer.Dial("tcp", addr)
 	if err != nil {
 		return nil, err
 	}
 	defer rconn.Close()
-	log.Println("proxy", addr.String(), "to", rconn.RemoteAddr())
+	if uptls {
+		v, ok = ctx.Get("ServerName")
+		if !ok {
+			return nil, nil
+		}
+		serverName := v.(string)
+		rTLSConn := tls.Client(ss.NewNetConnFromConn(rconn),
+			&tls.Config{ServerName: serverName})
+		rconn = ss.NewConnFromNetConn(rTLSConn)
+	}
+	log.Println("proxy", addr, "to", rconn.RemoteAddr())
 	ss.Pipe(conn, rconn)
 	return nil, nil
 }
@@ -165,8 +181,12 @@ func runServer(ctx context.Context, config *Config) {
 	}
 	pickone := ss.NewPickOneAcceptor(pickOneAcceptors...)
 	accs := ss.Acceptors([]ss.Acceptor{
-		pickone, bultin, newLocalAcceptor(dialers...),
+		pickone, bultin,
 	})
+	if config.DecTLS {
+		accs = append(accs, ss.NewTLSAcceptor(config.RootCA, config.RootKey))
+	}
+	accs = append(accs, newLocalAcceptor(dialers...))
 	for _, addr := range strings.Split(config.LocalAddr, "|") {
 		go runTCPServer(ctx, addr, func(conn net.Conn) {
 			accs.Accept(conn)

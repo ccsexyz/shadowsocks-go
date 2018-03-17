@@ -1,6 +1,8 @@
 package ss
 
 import (
+	"log"
+
 	"github.com/ccsexyz/utils"
 )
 
@@ -39,10 +41,12 @@ func PipeWithBuffer(c1, c2 Conn, b1, b2 []byte) {
 			if len(b2w) > 0 {
 				err2 := WriteBuffer(dst, b2w)
 				if err2 != nil {
+					log.Println(dst.RemoteAddr(), err2)
 					return
 				}
 			}
 			if err != nil {
+				log.Println(src.RemoteAddr(), err)
 				return
 			}
 		}

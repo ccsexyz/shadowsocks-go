@@ -15,7 +15,9 @@ type Config struct {
 	RemoteAddr string    `json:"remoteaddr"`
 	Method     string    `json:"method"`
 	Password   string    `json:"password"`
-	SSProxy    bool      `json:"ssproxy"`
+	DecTLS     bool      `json:"dectls"`
+	RootCA     string    `json:"rootca"`
+	RootKey    string    `json:"rootkey"`
 	Input      []*Config `json:"input"`
 	Output     []*Config `json:"output"`
 }
@@ -32,7 +34,7 @@ func init() {
 	flag.StringVar(&defaultConfig.RemoteAddr, "r", ":12346", "remote server address")
 	flag.StringVar(&defaultConfig.Method, "m", "chacha20", "encrypt method")
 	flag.StringVar(&defaultConfig.Password, "p", "secret", "pre-shared password")
-	flag.BoolVar(&defaultConfig.SSProxy, "ssproxy", false, "enable shadowsocks proxy")
+	flag.BoolVar(&defaultConfig.DecTLS, "dectls", false, "decrypt tls traffic")
 }
 
 func readConfig(path string) (configs []*Config, err error) {
