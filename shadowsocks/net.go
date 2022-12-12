@@ -283,7 +283,7 @@ func ssMultiAcceptHandler(conn Conn, lis *listener) (c Conn) {
 	defer utils.PutBuf(rbuf)
 	addr, data, dec, chs, err := ParseAddrWithMultipleBackends(buf[:n], rbuf, lis.c.Backends)
 	if err != nil {
-		lis.c.Log("recv an unexpected header from", conn.RemoteAddr().String())
+		lis.c.Log("recv an unexpected header from", conn.RemoteAddr().String(), err)
 		return
 	}
 	c = ssMultiAcceptHandler2(conn, lis, addr, n, data, dec, chs)
@@ -295,10 +295,12 @@ func ssAcceptHandler(conn Conn, lis *listener) (c Conn) {
 	defer utils.PutBuf(buf)
 	n, err := conn.Read(buf)
 	if err != nil || n < lis.c.Ivlen+2 {
+		lis.c.Log("recv an unexpected header from", conn.RemoteAddr().String(), ":", err, buf[:n], n)
 		return
 	}
 	dec, err := utils.NewDecrypter(lis.c.Method, lis.c.Password, buf[:lis.c.Ivlen])
 	if err != nil {
+		lis.c.Log(err)
 		return
 	}
 	dbuf := utils.GetBuf(buffersize)
@@ -467,25 +469,34 @@ func GetShadowAcceptor(args map[string]interface{}) Acceptor {
 	defer func() { CheckConfig(lis.c) }()
 	if len(password) != 0 {
 		lis.c.SSProxy = true
-		if method != "multi" && len(method) != 0 {
-			lis.c.Backends = []*Config{
-				&Config{Method: method, Password: password},
-			}
-		} else {
-			lis.c.Backends = []*Config{
-				&Config{Method: "chacha20", Password: password},
-				&Config{Method: "chacha20-ietf", Password: password},
-				&Config{Method: "aes-128-cfb", Password: password},
-				&Config{Method: "aes-192-cfb", Password: password},
-				&Config{Method: "aes-256-cfb", Password: password},
-				&Config{Method: "salsa20", Password: password},
-				&Config{Method: "rc4-md5", Password: password},
-				&Config{Method: "plain", Password: password},
-			}
-		}
+		lis.c.Backends = getConfigs(method, password)
 	}
 	return func(conn net.Conn) net.Conn {
 		return socksAcceptor(newTCPConn2(conn, lis.c), &lis)
+	}
+}
+
+func getConfigs(method, password string) []*Config {
+	cfgs := getConfigs0(method, password)
+	for _, cfg := range cfgs {
+		CheckBasicConfig(cfg)
+	}
+	return cfgs
+}
+
+func getConfigs0(method, password string) []*Config {
+	if method != "multi" && len(method) != 0 {
+		return []*Config{
+			&Config{Method: method, Password: password},
+		}
+	} else {
+		return []*Config{
+			&Config{Method: "aes-128-cfb", Password: password},
+			&Config{Method: "aes-192-cfb", Password: password},
+			&Config{Method: "aes-256-cfb", Password: password},
+			&Config{Method: "salsa20", Password: password},
+			&Config{Method: "rc4-md5", Password: password},
+		}
 	}
 }
 
@@ -508,9 +519,11 @@ func socksAcceptor(conn Conn, lis *listener) (c Conn) {
 			}
 			rbuf := utils.GetBuf(buffersize)
 			defer utils.PutBuf(rbuf)
-			addr, data, dec, chs, sserr := ParseAddrWithMultipleBackends(buf[:n], rbuf, lis.c.Backends)
+			addr, data, dec, chs, sserr := ParseAddrWithMultipleBackends(buf[:n], rbuf, getConfigs(lis.c.Method, lis.c.Password))
 			if sserr == nil {
 				c = ssMultiAcceptHandler2(conn, lis, addr, n, data, dec, chs)
+			} else {
+				lis.c.Log("receive invalid header from", conn.RemoteAddr().String(), "errinfo", sserr)
 			}
 		}()
 	}

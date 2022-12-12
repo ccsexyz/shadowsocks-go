@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/ccsexyz/utils"
+	"golang.org/x/net/proxy"
 )
 
 type DialOptions struct {
@@ -26,17 +27,40 @@ var (
 	errNoBackends    = fmt.Errorf("no available backends")
 )
 
+func dialSocks5WithOptions(opt *DialOptions) (conn Conn, err error) {
+	var rawConn net.Conn
+	var dialer proxy.Dialer
+
+	c := opt.C
+
+	dialer, err = proxy.SOCKS5("tcp", c.Remoteaddr, nil, proxy.Direct)
+	if err != nil {
+		return
+	}
+
+	rawConn, err = dialer.Dial("tcp", opt.Target)
+	if err != nil {
+		return
+	}
+
+	conn = newTCPConn(&utils.UtilsConn{Conn: rawConn}, c)
+	return
+}
+
 func dialSSWithOptions(opt *DialOptions) (conn Conn, err error) {
+	c := opt.C
+	if c.Mux {
+		return DialMux(opt.Target, c)
+	}
+	if c.Method == "socks5" {
+		return dialSocks5WithOptions(opt)
+	}
 	defer func() {
 		if err != nil && conn != nil {
 			conn.Close()
 			conn = nil
 		}
 	}()
-	c := opt.C
-	if c.Mux {
-		return DialMux(opt.Target, c)
-	}
 	if len(c.Backends) != 0 {
 		die := make(chan bool)
 		num := len(c.Backends)

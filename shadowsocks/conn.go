@@ -94,6 +94,20 @@ func debugAcceptHandler(conn Conn, lis *listener) (c Conn) {
 	return
 }
 
+func encrypt_buf(enc utils.Encrypter, b []byte) {
+	l := len(b)
+	b2 := make([]byte, l)
+	copy(b2, b)
+	enc.Encrypt(b, b2)
+}
+
+func decrypt_buf(dec utils.Decrypter, b []byte, src []byte) {
+	l := len(src)
+	b2 := make([]byte, l)
+	copy(b2, src)
+	dec.Decrypt(b, b2)
+}
+
 type SsConn struct {
 	Conn
 	enc        utils.Encrypter
@@ -169,21 +183,21 @@ func (c *SsConn) Read(b []byte) (n int, err error) {
 		if n == 0 {
 			return c.Read(b)
 		}
-		c.dec.Decrypt(b[:n], b[off:n+off])
+		decrypt_buf(c.dec, b[:n], b[off:n+off])
 		return
 	}
 	if c.decnum+n >= c.partencnum {
 		m := c.partencnum - c.decnum
 		if off == 0 {
-			c.dec.Decrypt(b[:m], b[:m])
+			decrypt_buf(c.dec, b[:m], b[:m])
 		} else {
-			c.dec.Decrypt(b[:m], b[off:off+m])
+			decrypt_buf(c.dec, b[:m], b[off:off+m])
 			copy(b[m:], b[off+m:off+n])
 		}
 		c.reqdec = false
 	} else {
 		c.decnum += n
-		c.dec.Decrypt(b[:n], b[off:n+off])
+		decrypt_buf(c.dec, b[:n], b[off:n+off])
 	}
 	return
 }
@@ -209,16 +223,16 @@ func (c *SsConn) Write(b []byte) (n int, err error) {
 		bufs = append(bufs, c.enc.GetIV())
 	}
 	if !c.partenc {
-		c.enc.Encrypt(b, b)
+		encrypt_buf(c.enc, b)
 	} else {
 		if c.reqenc {
 			if c.encnum+len(b) >= c.partencnum {
 				m := c.partencnum - c.encnum
-				c.enc.Encrypt(b[:m], b[:m])
+				encrypt_buf(c.enc, b[:m])
 				c.reqenc = false
 			} else {
 				c.encnum += len(b)
-				c.enc.Encrypt(b, b)
+				encrypt_buf(c.enc, b)
 			}
 		}
 	}
@@ -246,16 +260,16 @@ func (c *SsConn) WriteBuffers(b [][]byte) (n int, err error) {
 	for it := 0; it < len(b); it++ {
 		buf := b[it]
 		if !c.partenc {
-			c.enc.Encrypt(buf, buf)
+			encrypt_buf(c.enc, buf)
 		} else {
 			if c.reqenc {
 				if c.encnum+len(buf) >= c.partencnum {
 					m := c.partencnum - c.encnum
-					c.enc.Encrypt(buf[:m], buf[:m])
+					encrypt_buf(c.enc, buf[:m])
 					c.reqenc = false
 				} else {
 					c.encnum += len(buf)
-					c.enc.Encrypt(buf, buf)
+					encrypt_buf(c.enc, buf)
 				}
 			}
 		}

@@ -13,7 +13,7 @@ func ssproxyHandler(conn ss.Conn, c *ss.Config) {
 	defer conn.Close()
 	C, err := ss.GetSsConn(conn)
 	if err != nil {
-		return
+		c.LogD(err)
 	}
 	target := GetDstOfConn(conn)
 	if len(target) == 0 {
@@ -23,6 +23,7 @@ func ssproxyHandler(conn ss.Conn, c *ss.Config) {
 	buf := utils.GetBuf(1024)
 	n, err := conn.Read(buf)
 	if err != nil {
+		c.Log(err)
 		utils.PutBuf(buf)
 		return
 	}
@@ -33,10 +34,13 @@ func ssproxyHandler(conn ss.Conn, c *ss.Config) {
 	})
 	utils.PutBuf(buf)
 	if err != nil {
+		c.Log(err)
 		return
 	}
 	defer rconn.Close()
-	C.Xu0s() // FIXME
+	if C != nil {
+		C.Xu0s() // FIXME
+	}
 	c.Log("proxy", target, "from", conn.RemoteAddr(), "->", conn.LocalAddr(),
 		"to", rconn.LocalAddr(), "->", rconn.RemoteAddr())
 	// lim, err := ss.GetLimitConn(conn)

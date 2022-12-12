@@ -1,3 +1,4 @@
+//go:build faketcp
 // +build faketcp
 
 package ss

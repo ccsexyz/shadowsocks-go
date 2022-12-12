@@ -1,3 +1,4 @@
+//go:build !bloom
 // +build !bloom
 
 package ss

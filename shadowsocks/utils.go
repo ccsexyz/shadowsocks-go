@@ -486,6 +486,8 @@ func GetInnerConn(conn net.Conn) (c net.Conn, err error) {
 		c = i.Conn
 	case *LimitConn:
 		c = i.Conn
+	case *statConn:
+		c = i.Conn
 	}
 	return
 }

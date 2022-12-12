@@ -1,9 +1,10 @@
+//go:build bloom
 // +build bloom
 
 package ss
 
 import (
-	"github.com/willf/bloom"
+	"github.com/bits-and-blooms/bloom"
 )
 
 type bloomFilter struct {
