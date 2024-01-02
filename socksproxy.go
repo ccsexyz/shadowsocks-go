@@ -1,8 +1,8 @@
 package main
 
 import (
-	"github.com/ccsexyz/shadowsocks-go/shadowsocks"
-	"github.com/ccsexyz/utils"
+	"github.com/ccsexyz/shadowsocks-go/internal/utils"
+	ss "github.com/ccsexyz/shadowsocks-go/shadowsocks"
 )
 
 func RunSocksProxyServer(c *ss.Config) {

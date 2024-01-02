@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ccsexyz/utils"
+	"github.com/ccsexyz/shadowsocks-go/internal/utils"
 	"golang.org/x/net/proxy"
 )
 

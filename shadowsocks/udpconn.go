@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ccsexyz/shadowsocks-go/internal/utils"
 	"github.com/ccsexyz/shadowsocks-go/redir"
-	"github.com/ccsexyz/utils"
 )
 
 // Note: UDPConn will drop any packet that is longer than 1500

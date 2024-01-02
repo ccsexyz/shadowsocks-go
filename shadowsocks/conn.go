@@ -6,7 +6,7 @@ import (
 	"net"
 	"time"
 
-	"github.com/ccsexyz/utils"
+	"github.com/ccsexyz/shadowsocks-go/internal/utils"
 )
 
 type Conn interface {

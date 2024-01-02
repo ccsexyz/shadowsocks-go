@@ -8,7 +8,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/ccsexyz/utils"
+	"github.com/ccsexyz/shadowsocks-go/internal/utils"
 )
 
 var services sync.Map

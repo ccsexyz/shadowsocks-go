@@ -3,8 +3,8 @@ package main
 import (
 	"net"
 
-	"github.com/ccsexyz/shadowsocks-go/shadowsocks"
-	"github.com/ccsexyz/utils"
+	"github.com/ccsexyz/shadowsocks-go/internal/utils"
+	ss "github.com/ccsexyz/shadowsocks-go/shadowsocks"
 )
 
 func getCreateFuncOfUDPTunServer(c *ss.Config) func(*utils.SubConn) (net.Conn, net.Conn, error) {
