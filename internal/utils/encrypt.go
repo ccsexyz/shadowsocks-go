@@ -133,7 +133,7 @@ func NewAESCFBEncrypter(key, iv []byte) (enc Encrypter, err error) {
 }
 
 func NewChaCha20Encrypter(key, iv []byte) (enc Encrypter, err error) {
-	stream, err := chacha20.NewCipher(key, iv)
+	stream, err := chacha20.NewCipher(iv, key)
 	if err != nil {
 		return
 	}
@@ -186,7 +186,7 @@ func NewAESCFBDecrypter(key, iv []byte) (dec Decrypter, err error) {
 }
 
 func NewChaCha20Decrypter(key, iv []byte) (dec Decrypter, err error) {
-	stream, err := chacha20.NewCipher(key, iv)
+	stream, err := chacha20.NewCipher(iv, key)
 	if err != nil {
 		return
 	}
