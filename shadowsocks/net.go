@@ -239,7 +239,7 @@ func ListenMultiSS(service string, c *Config) (lis net.Listener, err error) {
 }
 
 func ssMultiAcceptHandler2(conn Conn, lis *listener, addr *SockAddr, n int,
-	data []byte, dec utils.Decrypter, chs *Config) (c Conn) {
+	data []byte, dec utils.CipherStream, chs *Config) (c Conn) {
 	if chs.Ivlen != 0 && !lis.c.Safe {
 		var exists bool
 		if addr.ts {
@@ -253,14 +253,13 @@ func ssMultiAcceptHandler2(conn Conn, lis *listener, addr *SockAddr, n int,
 		}
 	}
 
-	ssConn := NewSsConn(conn, lis.c)
-	ssConn.dec = dec
-	ssConn.c = chs
-	if addr.partEncLen > 0 {
-		ssConn.partenc = true
-		ssConn.partencnum = addr.partEncLen
-		ssConn.decnum = n - chs.Ivlen - len(data)
+	enc, err := utils.NewEncrypter(chs.Method, chs.Password)
+	if err != nil {
+		lis.c.Log("create encrypter failed", err, "method", chs.Method, "from", conn.RemoteAddr().String())
+		return
 	}
+
+	ssConn := &SsConn{Conn: conn, dec: dec, enc: enc, c: chs}
 	conn = ssConn
 	if len(data) != 0 {
 		conn = &RemainConn{Conn: ssConn, remain: data}
@@ -279,14 +278,12 @@ func ssMultiAcceptHandler(conn Conn, lis *listener) (c Conn) {
 		return
 	}
 
-	rbuf := utils.GetBuf(buffersize)
-	defer utils.PutBuf(rbuf)
-	addr, data, dec, chs, err := ParseAddrWithMultipleBackends(buf[:n], rbuf, lis.c.Backends)
+	ctx, err := ParseAddrWithMultipleBackends(buf[:n], lis.c.Backends)
 	if err != nil {
 		lis.c.Log("recv an unexpected header from", conn.RemoteAddr().String(), err)
 		return
 	}
-	c = ssMultiAcceptHandler2(conn, lis, addr, n, data, dec, chs)
+	c = ssMultiAcceptHandler2(conn, lis, ctx.addr, n, ctx.data, ctx.dec, ctx.chs)
 	return
 }
 
@@ -294,21 +291,35 @@ func ssAcceptHandler(conn Conn, lis *listener) (c Conn) {
 	buf := utils.GetBuf(buffersize)
 	defer utils.PutBuf(buf)
 	n, err := conn.Read(buf)
-	if err != nil || n < lis.c.Ivlen+2 {
-		lis.c.Log("recv an unexpected header from", conn.RemoteAddr().String(), ":", err, buf[:n], n)
+	defer func() {
+		if err != nil {
+			lis.c.Log("recv an unexpected header from", conn.RemoteAddr().String(), err, buf[:n], n)
+		}
+	}()
+	if err != nil {
 		return
 	}
-	dec, err := utils.NewDecrypter(lis.c.Method, lis.c.Password, buf[:lis.c.Ivlen])
+	if n < lis.c.Ivlen+2 {
+		err = io.ErrShortBuffer
+		return
+	}
+	dec, err := utils.NewDecrypter(lis.c.Method, lis.c.Password)
 	if err != nil {
 		lis.c.Log(err)
 		return
 	}
+	_, err = dec.Write(buf[:n])
+	if err != nil {
+		return
+	}
 	dbuf := utils.GetBuf(buffersize)
 	defer utils.PutBuf(dbuf)
-	dec.Decrypt(dbuf, buf[lis.c.Ivlen:n])
-	addr, data, err := ParseAddr(dbuf[:n-lis.c.Ivlen])
+	dn, err := dec.Read(dbuf)
 	if err != nil {
-		lis.c.Log("recv an unexpected header from", conn.RemoteAddr().String(), " : ", err, buf[:n], n)
+		return
+	}
+	addr, data, err := ParseAddr(dbuf[:dn])
+	if err != nil {
 		return
 	}
 	if lis.c.Ivlen != 0 && !lis.c.Safe {
@@ -323,13 +334,11 @@ func ssAcceptHandler(conn Conn, lis *listener) (c Conn) {
 			return
 		}
 	}
-	ssConn := NewSsConn(conn, lis.c)
-	if addr.partEncLen > 0 {
-		ssConn.partenc = true
-		ssConn.partencnum = addr.partEncLen
-		ssConn.decnum = n - lis.c.Ivlen - len(data)
+	enc, err := utils.NewEncrypter(lis.c.Method, lis.c.Password)
+	if err != nil {
+		return
 	}
-	ssConn.dec = dec
+	ssConn := &SsConn{Conn: conn, dec: dec, enc: enc, c: lis.c}
 	if !addr.nop {
 		ssConn.Xu1s()
 	}
@@ -519,9 +528,9 @@ func socksAcceptor(conn Conn, lis *listener) (c Conn) {
 			}
 			rbuf := utils.GetBuf(buffersize)
 			defer utils.PutBuf(rbuf)
-			addr, data, dec, chs, sserr := ParseAddrWithMultipleBackends(buf[:n], rbuf, getConfigs(lis.c.Method, lis.c.Password))
+			ctx, sserr := ParseAddrWithMultipleBackends(buf[:n], getConfigs(lis.c.Method, lis.c.Password))
 			if sserr == nil {
-				c = ssMultiAcceptHandler2(conn, lis, addr, n, data, dec, chs)
+				c = ssMultiAcceptHandler2(conn, lis, ctx.addr, n, ctx.data, ctx.dec, ctx.chs)
 			} else {
 				lis.c.Log("receive invalid header from", conn.RemoteAddr().String(), "errinfo", sserr)
 			}

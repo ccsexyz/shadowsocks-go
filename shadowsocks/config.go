@@ -38,8 +38,6 @@ type Config struct {
 	Limit          int       `json:"limit"`
 	LimitPerConn   int       `json:"limitperconn"`
 	LogHTTP        bool      `json:"loghttp"`
-	PartEncHTTPS   bool      `json:"partenchttps"`
-	PartEnc        bool      `json:"partenc"`
 	Timeout        int       `json:"timeout"`
 	FilterCapacity int       `json:"filtcap"`
 	AutoProxy      bool      `json:"autoproxy"`
@@ -296,9 +294,6 @@ func CheckConfig(c *Config) {
 		}
 		if c.LogHTTP {
 			v.LogHTTP = true
-		}
-		if c.PartEncHTTPS {
-			v.PartEncHTTPS = true
 		}
 		if v.Timeout == 0 {
 			v.Timeout = c.Timeout

@@ -94,32 +94,12 @@ func debugAcceptHandler(conn Conn, lis *listener) (c Conn) {
 	return
 }
 
-func encrypt_buf(enc utils.Encrypter, b []byte) {
-	l := len(b)
-	b2 := make([]byte, l)
-	copy(b2, b)
-	enc.Encrypt(b, b2)
-}
-
-func decrypt_buf(dec utils.Decrypter, b []byte, src []byte) {
-	l := len(src)
-	b2 := make([]byte, l)
-	copy(b2, src)
-	dec.Decrypt(b, b2)
-}
-
 type SsConn struct {
 	Conn
-	enc        utils.Encrypter
-	dec        utils.Decrypter
-	c          *Config
-	xu1s       bool
-	reqenc     bool
-	encnum     int
-	reqdec     bool
-	decnum     int
-	partenc    bool
-	partencnum int
+	enc  utils.CipherStream
+	dec  utils.CipherStream
+	c    *Config
+	xu1s bool
 }
 
 func (c *SsConn) GetConfig() *Config {
@@ -137,15 +117,6 @@ func (c *SsConn) Close() error {
 	return c.Conn.Close()
 }
 
-func NewSsConn(conn Conn, c *Config) *SsConn {
-	return &SsConn{
-		Conn:   conn,
-		c:      c,
-		reqdec: true,
-		reqenc: true,
-	}
-}
-
 func (c *SsConn) Xu1s() {
 	c.xu1s = true
 }
@@ -155,131 +126,72 @@ func (c *SsConn) Xu0s() {
 }
 
 func (c *SsConn) Read(b []byte) (n int, err error) {
-	if c.partenc && !c.reqdec {
-		c.dec = nil
-		return c.Conn.Read(b)
-	}
-	if len(b) < c.c.Ivlen {
-		err = io.ErrShortBuffer
+	n, err = c.dec.Read(b)
+	if n > 0 {
 		return
 	}
-	off := 0
-	if c.dec == nil {
-		n, err = io.ReadAtLeast(c.Conn, b, c.c.Ivlen)
-		if err == nil {
-			c.dec, err = utils.NewDecrypter(c.c.Method, c.c.Password, b[:c.c.Ivlen])
-			if err == nil {
-				off = c.c.Ivlen
-				n -= off
-			}
-		}
-	} else {
-		n, err = c.Conn.Read(b)
-	}
+
+RETRY:
+	n, err = c.Conn.Read(b)
 	if err != nil {
 		return
 	}
-	if !c.partenc {
-		if n == 0 {
-			return c.Read(b)
-		}
-		decrypt_buf(c.dec, b[:n], b[off:n+off])
+
+	_, err = c.dec.Write(b[:n])
+	if err != nil {
 		return
 	}
-	if c.decnum+n >= c.partencnum {
-		m := c.partencnum - c.decnum
-		if off == 0 {
-			decrypt_buf(c.dec, b[:m], b[:m])
-		} else {
-			decrypt_buf(c.dec, b[:m], b[off:off+m])
-			copy(b[m:], b[off+m:off+n])
-		}
-		c.reqdec = false
-	} else {
-		c.decnum += n
-		decrypt_buf(c.dec, b[:n], b[off:n+off])
-	}
-	return
-}
 
-func (c *SsConn) initEncrypter() (err error) {
-	if c.enc == nil {
-		c.enc, err = utils.NewEncrypter(c.c.Method, c.c.Password)
+	n, err = c.dec.Read(b)
+	if err != nil {
+		if err == io.EOF {
+			goto RETRY
+		}
+		return
 	}
+
 	return
 }
 
 func (c *SsConn) Write(b []byte) (n int, err error) {
-	if c.partenc && !c.reqenc {
-		c.enc = nil
-		return c.Conn.Write(b)
-	}
-	bufs := make([][]byte, 0, 2)
-	if c.enc == nil {
-		c.enc, err = utils.NewEncrypter(c.c.Method, c.c.Password)
-		if err != nil {
-			return
-		}
-		bufs = append(bufs, c.enc.GetIV())
-	}
-	if !c.partenc {
-		encrypt_buf(c.enc, b)
-	} else {
-		if c.reqenc {
-			if c.encnum+len(b) >= c.partencnum {
-				m := c.partencnum - c.encnum
-				encrypt_buf(c.enc, b[:m])
-				c.reqenc = false
-			} else {
-				c.encnum += len(b)
-				encrypt_buf(c.enc, b)
-			}
-		}
-	}
-	bufs = append(bufs, b)
-	_, err = c.Conn.WriteBuffers(bufs)
-	if err == nil {
-		n = len(b)
-	}
-	return
+	return c.WriteBuffers([][]byte{b})
 }
 
-func (c *SsConn) WriteBuffers(b [][]byte) (n int, err error) {
-	if c.partenc && !c.reqenc {
-		c.enc = nil
-		return c.Conn.WriteBuffers(b)
-	}
-	bufs := make([][]byte, 0, len(b)+1)
-	if c.enc == nil {
-		c.enc, err = utils.NewEncrypter(c.c.Method, c.c.Password)
+func (c *SsConn) WriteBuffers(bufs [][]byte) (n int, err error) {
+	defer func() {
+		if err != nil {
+			n = 0
+		}
+	}()
+
+	for _, b := range bufs {
+		var n2 int
+		n2, err = c.enc.Write(b)
 		if err != nil {
 			return
 		}
-		bufs = append(bufs, c.enc.GetIV())
+		n += n2
 	}
-	for it := 0; it < len(b); it++ {
-		buf := b[it]
-		if !c.partenc {
-			encrypt_buf(c.enc, buf)
-		} else {
-			if c.reqenc {
-				if c.encnum+len(buf) >= c.partencnum {
-					m := c.partencnum - c.encnum
-					encrypt_buf(c.enc, buf[:m])
-					c.reqenc = false
-				} else {
-					c.encnum += len(buf)
-					encrypt_buf(c.enc, buf)
-				}
+
+	wbufs := make([][]byte, 0, len(bufs)+1)
+	for _, b := range bufs {
+		n2, err2 := c.enc.Read(b)
+		if err2 != nil {
+			if err2 != io.EOF {
+				err = err2
+				return
 			}
 		}
-		bufs = append(bufs, buf)
-		n += len(b[it])
+		wbufs = append(wbufs, b[:n2])
 	}
-	_, err = c.Conn.WriteBuffers(bufs)
+
+	b, err := io.ReadAll(c.enc)
 	if err != nil {
-		n = 0
+		return
 	}
+	wbufs = append(wbufs, b)
+
+	_, err = c.Conn.WriteBuffers(wbufs)
 	return
 }
 

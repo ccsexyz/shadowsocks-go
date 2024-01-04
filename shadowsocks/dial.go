@@ -17,7 +17,6 @@ type DialOptions struct {
 	RawHeader []byte
 	Data      []byte
 	C         *Config
-	PartEnc   bool
 	Target    string
 	Timeout   int
 }
@@ -118,15 +117,6 @@ func dialSSWithOptions(opt *DialOptions) (conn Conn, err error) {
 			return
 		}
 	}
-	if c.PartEnc {
-		opt.PartEnc = true
-	}
-	if c.PartEncHTTPS && !opt.PartEnc && len(opt.Data) > 0 {
-		ok, _, _ := utils.ParseTLSClientHelloMsg(opt.Data)
-		if ok {
-			opt.PartEnc = true
-		}
-	}
 	if c.Obfs {
 		conn, err = DialObfs(c.Remoteaddr, c)
 	} else {
@@ -150,7 +140,15 @@ func dialSSWithOptions(opt *DialOptions) (conn Conn, err error) {
 			Rlimiters: limiters,
 		}
 	}
-	C := NewSsConn(conn, c)
+	dec, err := utils.NewDecrypter(c.Method, c.Password)
+	if err != nil {
+		return
+	}
+	enc, err := utils.NewEncrypter(c.Method, c.Password)
+	if err != nil {
+		return
+	}
+	C := &SsConn{Conn: conn, enc: enc, dec: dec, c: c}
 	conn = C
 	if c.Nonop {
 		conn = &RemainConn{
@@ -160,11 +158,6 @@ func dialSSWithOptions(opt *DialOptions) (conn Conn, err error) {
 	} else {
 		header := make([]byte, 512)
 		headerLen := 0
-		if opt.PartEnc {
-			C.partenc = true
-			C.partencnum = 16384
-			headerLen += copy(header[headerLen:], []byte{typePartEnc, 0x10})
-		}
 		noplen := rand.Intn(4)
 		noplen += int(crc32.Checksum(header, c.crctbl) % (128 - (lenTs + 5)))
 		headerLen += copy(header[headerLen:], []byte{typeNop, byte(noplen)})
@@ -200,9 +193,6 @@ func DialSSWithOptions(opt *DialOptions) (conn Conn, err error) {
 		ok, _, msg := utils.ParseTLSClientHelloMsg(opt.Data)
 		if ok {
 			if len(msg.ServerName) != 0 {
-				if c.PartEncHTTPS {
-					opt.PartEnc = true
-				}
 				if strings.ContainsRune(msg.ServerName, ':') {
 					opt.Target = msg.ServerName
 				} else {
