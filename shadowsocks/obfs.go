@@ -12,7 +12,7 @@ import (
 	"crypto/tls"
 	"encoding/binary"
 
-	"github.com/ccsexyz/utils"
+	"github.com/ccsexyz/shadowsocks-go/internal/utils"
 )
 
 const (

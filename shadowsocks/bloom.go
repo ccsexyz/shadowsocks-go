@@ -4,7 +4,7 @@
 package ss
 
 import (
-	"github.com/bits-and-blooms/bloom"
+	"github.com/bits-and-blooms/bloom/v3"
 )
 
 type bloomFilter struct {

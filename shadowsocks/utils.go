@@ -5,13 +5,14 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"strconv"
 	"sync"
 	"time"
 
-	"github.com/ccsexyz/utils"
+	"github.com/ccsexyz/shadowsocks-go/internal/utils"
 )
 
 const (
@@ -33,8 +34,6 @@ const (
 	typeMux                = 0x6D
 	typeTs                 = 0x74 // timestamp
 	typeNop                = 0x90 // [nop 1 byte] [noplen 1 byte (< 128)] [zero data, noplen byte]
-	typePartEnc            = 0x37 // [partEnc 1 byte] [partLen 1 byte] [partLen * 1024 bytes data]
-	typePartEncHTTPS       = 0x38
 	lenIPv4                = 4
 	lenIPv6                = 16
 	lenTs                  = 8
@@ -100,161 +99,56 @@ func GetHeader(host string, port int) (buf []byte, err error) {
 	return
 }
 
-func ParseAddrWithMultipleBackends(b, buf []byte, configs []*Config) (addr *SockAddr, data []byte, dec utils.Decrypter, chs *Config, err error) {
-	addr = &SockAddr{}
-	defer func() {
-		if chs != nil {
-			err = nil
-			data = DupBuffer(data)
-			addr.header = DupBuffer(addr.header)
-		} else {
-			if err == nil {
-				err = errInvalidHeader
-			}
-			addr = nil
-			data = nil
-			dec = nil
-		}
-	}()
-	n := len(b)
-	if n < 1 {
-		return
-	}
-	var candidates []*Config
-outer:
-	for _, config := range configs {
-		if n < config.Ivlen+4 {
-			continue
-		}
-		dec, err = utils.NewDecrypter(config.Method, config.Password, b[:config.Ivlen])
+type parseContext struct {
+	data []byte
+	addr *SockAddr
+	dec  utils.CipherStream
+	chs  *Config
+}
+
+func ParseAddrWithMultipleBackends(b []byte, configs []*Config) (*parseContext, error) {
+	ctxs := make([]*parseContext, 0, len(configs))
+
+	for _, cfg := range configs {
+		dec, err := utils.NewDecrypter(cfg.Method, cfg.Password)
 		if err != nil {
 			continue
 		}
-		dec.Decrypt(buf, b[config.Ivlen:config.Ivlen+1])
-		off := config.Ivlen + 1
-		nop := false
-		atyp := buf[0]
-	lo:
-		for {
-			switch atyp {
-			default:
-				break lo
-			case typeNop:
-				dec.Decrypt(buf, b[off:off+1])
-				noplen := int(buf[0])
-				if noplen >= 128 || n < off+noplen+1+1 {
-					continue outer
-				}
-				off++
-				dec.Decrypt(buf, b[off:off+noplen])
-				for _, v := range buf[:noplen] {
-					if v != 0 {
-						continue outer
-					}
-				}
-				off += noplen
-				nop = true
-				dec.Decrypt(buf, b[off:off+1])
-				atyp = buf[0]
-				off++
-			case typeTs:
-				if n < off+lenTs+1 {
-					continue outer
-				}
-				dec.Decrypt(buf, b[off:off+lenTs])
-				ts := binary.BigEndian.Uint64(buf[:lenTs])
-				if !checkTimestamp(int64(ts)) {
-					continue outer
-				}
-				off += lenTs
-				dec.Decrypt(buf, b[off:off+1])
-				atyp = buf[0]
-				off++
-				addr.ts = true
-			case typePartEnc:
-				if n < off+2 {
-					continue outer
-				}
-				dec.Decrypt(buf, b[off:off+2])
-				addr.partEncLen = int(buf[0]) * 1024
-				atyp = buf[1]
-				buf[0] = buf[1]
-				off += 2
-			}
-		}
-		addr.nop = nop
-		var port int
-		switch atyp {
-		default:
+
+		_, err = dec.Write(b)
+		if err != nil {
 			continue
-		case typeMux:
-			if !nop {
-				continue
-			}
-			chs = config
-			dec.Decrypt(buf, b[off:])
-			data = buf[:len(b)-off]
-			addr.header = []byte{atyp}
-			return
-		case typeDm:
-			if off+1 >= n {
-				continue
-			}
-			dec.Decrypt(buf[1:2], b[off:off+1])
-			off++
-			dmlen := int(buf[1])
-			if off+dmlen+2 > n {
-				continue
-			}
-			dec.Decrypt(buf[2:2+dmlen+2], b[off:off+dmlen+2])
-			for _, v := range buf[2 : 2+dmlen] {
-				if !((v >= 'A' && v <= 'Z') || (v >= 'a' && v <= 'z') || (v >= '0' && v <= '9') || v == '.' || v == '-' || v == '_') {
-					continue outer
-				}
-			}
-			addr.header = buf[:2+dmlen+2]
-			off += dmlen + 2
-			if n > off {
-				dec.Decrypt(buf[2+dmlen+2:], b[off:])
-				data = buf[2+dmlen+2 : 2+dmlen+2+len(b[off:])]
-			}
-			chs = config
-			return
-		case typeIPv6:
-			if nop || n < off+lenIPv6+2 {
-				continue
-			}
-			dec.Decrypt(buf[1:lenIPv6+2+1], b[off:off+lenIPv6+2])
-			off += lenIPv6 + 2
-			port = int(binary.BigEndian.Uint16(buf[lenIPv6+1:]))
-			addr.header = buf[:lenIPv6+2+1]
-		case typeIPv4:
-			if nop || n < off+lenIPv4+2 {
-				continue
-			}
-			dec.Decrypt(buf[1:lenIPv4+2+1], b[off:off+lenIPv4+2])
-			off += lenIPv4 + 2
-			port = int(binary.BigEndian.Uint16(buf[lenIPv4+1:]))
-			addr.header = buf[:lenIPv4+2+1]
 		}
+
+		buf, err := io.ReadAll(dec)
+		if err != nil {
+			continue
+		}
+
+		addr, data, err := ParseAddr(buf)
+		if err != nil {
+			continue
+		}
+
+		ctx := new(parseContext)
+		ctx.data = data
+		ctx.addr = addr
+		ctx.dec = dec
+		ctx.chs = cfg
+
+		port := addr.PortNum()
 		if port == 80 || port == 443 || port == 22 || port == 53 || port == 8080 {
-			dec.Decrypt(buf[off:], b[off:])
-			data = buf[off:len(b)]
-			chs = config
-			return
+			return ctx, nil
 		}
-		candidates = append(candidates, config)
+
+		ctxs = append(ctxs, ctx)
 	}
-	if len(candidates) != 0 {
-		chs = candidates[0]
-		dec, err = utils.NewDecrypter(chs.Method, chs.Password, b[:chs.Ivlen])
-		if err != nil {
-			return
-		}
-		dec.Decrypt(buf, b[chs.Ivlen:])
-		addr, data, err = ParseAddr(buf)
+
+	if len(ctxs) == 0 {
+		return nil, errInvalidHeader
 	}
-	return
+
+	return ctxs[0], nil
 }
 
 func checkTimestamp(ts int64) (ok bool) {
@@ -311,14 +205,6 @@ l:
 			n = len(b)
 			atyp = b[0]
 			addr.ts = true
-		case typePartEnc:
-			if n < 3 {
-				return
-			}
-			addr.partEncLen = int(b[1]) * 1024
-			b = b[2:]
-			n = len(b)
-			atyp = b[0]
 		}
 	}
 	var header []byte
@@ -585,10 +471,9 @@ type Addr interface {
 }
 
 type SockAddr struct {
-	header     []byte
-	partEncLen int
-	nop        bool
-	ts         bool
+	header []byte
+	nop    bool
+	ts     bool
 }
 
 func (s *SockAddr) String() string {
@@ -610,6 +495,10 @@ func (s *SockAddr) Host() string {
 }
 
 func (s *SockAddr) Port() string {
+	return strconv.Itoa(s.PortNum())
+}
+
+func (s *SockAddr) PortNum() int {
 	var off int
 	b := s.header
 	switch b[0] {
@@ -620,9 +509,9 @@ func (s *SockAddr) Port() string {
 	case typeIPv6:
 		off = lenIPv6 + 1
 	case typeMux:
-		return strconv.Itoa(muxport)
+		return muxport
 	}
-	return strconv.Itoa(int(binary.BigEndian.Uint16(b[off:])))
+	return int(binary.BigEndian.Uint16(b[off:]))
 }
 
 func (s *SockAddr) Header() []byte {

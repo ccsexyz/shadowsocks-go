@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ccsexyz/shadowsocks-go/shadowsocks"
-	"github.com/ccsexyz/utils"
+	"github.com/ccsexyz/shadowsocks-go/internal/utils"
+	ss "github.com/ccsexyz/shadowsocks-go/shadowsocks"
 	"github.com/fsnotify/fsnotify"
 )
 
@@ -37,8 +37,6 @@ func main() {
 	flag.BoolVar(&c.Debug, "debug", false, "show debug log")
 	flag.StringVar(&pprofaddr, "pprof", "", "the pprof listen address")
 	flag.IntVar(&c.Timeout, "timeout", 0, "set the timeout of tcp connection")
-	flag.BoolVar(&c.PartEncHTTPS, "partenchttps", false, "partially encrypt https traffic")
-	flag.BoolVar(&c.PartEnc, "partenc", false, "partially encrypt traffic")
 	flag.BoolVar(&c.Safe, "safe", false, "runs under safe mode, server won't validate iv if safe is enabled")
 	flag.BoolVar(&c.MITM, "mitm", false, "enable MITM-based http/https proxy")
 	flag.IntVar(&c.DataShard, "ds", 0, "set datashard - fec")

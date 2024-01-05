@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ccsexyz/mux"
+	"github.com/ccsexyz/shadowsocks-go/internal/mux"
 )
 
 func init() {

@@ -4,7 +4,7 @@
 package ss
 
 import (
-	"github.com/ccsexyz/utils"
+	"github.com/ccsexyz/shadowsocks-go/internal/utils"
 	"github.com/go-redis/redis"
 )
 

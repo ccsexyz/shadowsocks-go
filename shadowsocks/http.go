@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ccsexyz/utils"
+	"github.com/ccsexyz/shadowsocks-go/internal/utils"
 )
 
 // copy from stackoverflow

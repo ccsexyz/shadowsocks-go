@@ -6,10 +6,8 @@ package ss
 import (
 	"net"
 
-	"github.com/ccsexyz/kcp-go-raw"
-
-	"github.com/ccsexyz/rawcon"
-	"github.com/ccsexyz/utils"
+	"github.com/ccsexyz/shadowsocks-go/internal/rawcon"
+	"github.com/ccsexyz/shadowsocks-go/internal/utils"
 )
 
 func listenUDP(c *Config) (net.PacketConn, error) {

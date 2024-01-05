@@ -6,7 +6,7 @@ package ss
 import (
 	"net"
 
-	"github.com/ccsexyz/utils"
+	"github.com/ccsexyz/shadowsocks-go/internal/utils"
 )
 
 func listenUDP(c *Config) (net.PacketConn, error) {
