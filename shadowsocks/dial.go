@@ -48,9 +48,6 @@ func dialSocks5WithOptions(opt *DialOptions) (conn Conn, err error) {
 
 func dialSSWithOptions(opt *DialOptions) (conn Conn, err error) {
 	c := opt.C
-	if c.Mux {
-		return DialMux(opt.Target, c)
-	}
 	if c.Method == "socks5" {
 		return dialSocks5WithOptions(opt)
 	}

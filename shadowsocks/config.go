@@ -33,8 +33,6 @@ type Config struct {
 	ObfsMethod     string    `json:"obfsmethod"`
 	ObfsHost       []string  `json:"obfshost"`
 	ObfsAlive      bool      `json:"obfsalive"`
-	Mux            bool      `json:"mux"`
-	MuxLimit       int       `json:"muxlimit"`
 	Limit          int       `json:"limit"`
 	LimitPerConn   int       `json:"limitperconn"`
 	LogHTTP        bool      `json:"loghttp"`
@@ -45,8 +43,6 @@ type Config struct {
 	BlackList      string    `json:"blacklist"`
 	DumpList       bool      `json:"dumplist"`
 	ChnList        string    `json:"chnlist"`
-	RedisAddr      string    `json:"redisaddr"`
-	RedisKey       string    `json:"rediskey"`
 	UseMul         bool      `json:"usemul"`
 	UseUDP         bool      `json:"useudp"`
 	MulConn        int       `json:"mulconn"`
@@ -65,7 +61,6 @@ type Config struct {
 	Any            interface{}
 	Die            chan bool
 	pool           *ConnPool
-	muxDialer      *MuxDialer
 	closers        []cb
 	tcpFilterLock  sync.Mutex
 	tcpFilterOnce  sync.Once
@@ -75,7 +70,6 @@ type Config struct {
 	tcpIvChecker   ivChecker
 	autoProxyCtx   *autoProxy
 	chnListCtx     *chnRouteList
-	redisFilter    bytesFilter
 	crctbl         *crc32.Table
 	disable        bool
 	stat           *statServer
@@ -119,9 +113,6 @@ func (c *Config) Close() error {
 	if c.pool != nil {
 		c.pool.Close()
 	}
-	if c.redisFilter != nil {
-		c.redisFilter.Close()
-	}
 	for _, f := range c.closers {
 		f()
 	}
@@ -132,13 +123,6 @@ func initBloomFilter(c *Config, f *bytesFilter) {
 	*f = newBloomFilter(c.FilterCapacity, defaultFilterFalseRate)
 }
 
-func (c *Config) redisFilterTestAndAdd(b []byte) bool {
-	if c.Ivlen == 0 || c.redisFilter == nil {
-		return false
-	}
-	return c.redisFilter.TestAndAdd(b)
-}
-
 func (c *Config) udpFilterTestAndAdd(b []byte) bool {
 	if c.Ivlen == 0 {
 		return false
@@ -146,9 +130,7 @@ func (c *Config) udpFilterTestAndAdd(b []byte) bool {
 	c.udpFilterOnce.Do(func() {
 		initBloomFilter(c, &c.udpFilter)
 	})
-	ok1 := c.udpFilter.TestAndAdd(b)
-	ok2 := c.redisFilterTestAndAdd(b)
-	return ok1 || ok2
+	return c.udpFilter.TestAndAdd(b)
 }
 
 func (c *Config) tcpFilterTestAndAdd(b []byte) bool {
@@ -161,8 +143,7 @@ func (c *Config) tcpFilterTestAndAdd(b []byte) bool {
 	c.tcpFilterLock.Lock()
 	ok1 := c.tcpFilter.TestAndAdd(b)
 	c.tcpFilterLock.Unlock()
-	ok2 := c.redisFilterTestAndAdd(b)
-	return ok1 || ok2
+	return ok1
 }
 
 func CheckLogFile(c *Config) {
@@ -205,11 +186,6 @@ func CheckBasicConfig(c *Config) {
 	}
 	if c.Limit != 0 {
 		c.limiters = append(c.limiters, NewLimiter(c.Limit))
-	}
-	if c.Type == "local" {
-		if c.Mux {
-			c.muxDialer = &MuxDialer{}
-		}
 	}
 	if c.Timeout == 0 {
 		c.Timeout = defaultTimeout
@@ -324,9 +300,6 @@ func CheckConfig(c *Config) {
 			v.limiters = append(v.limiters, c.limiters...)
 		}
 		v.stat = c.stat
-	}
-	if len(c.RedisAddr) != 0 {
-		c.redisFilter = newRedisFilter(c.RedisAddr, c.RedisKey, 0)
 	}
 }
 

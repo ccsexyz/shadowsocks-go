@@ -29,7 +29,6 @@ func main() {
 	flag.StringVar(&c.Password, "p", "you need a password", "password")
 	flag.BoolVar(&c.Nonop, "nonop", false, "enable this to be compatiable with official ss servers(client only)")
 	flag.BoolVar(&c.UDPRelay, "udprelay", false, "relay udp packets")
-	flag.BoolVar(&c.Mux, "mux", false, "use mux to reduce the number of connections")
 	flag.StringVar(&c.Nickname, "name", "", "nickname for logging")
 	flag.BoolVar(&c.Obfs, "obfs", false, "enable obfs mode")
 	flag.StringVar(&c.LogFile, "log", "", "set the path of logfile")
