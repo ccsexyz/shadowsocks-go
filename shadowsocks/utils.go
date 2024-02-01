@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/ccsexyz/shadowsocks-go/internal/utils"
 )
@@ -159,6 +160,13 @@ func checkTimestamp(ts int64) (ok bool) {
 	return (ts - nts) <= 4
 }
 
+// isAllowedInHost returns true if b is allowed in host.
+// Host = IP | Domain
+// IP = ipv4 | ipv6
+func isAllowedInHost(b byte) bool {
+	return unicode.IsLetter(rune(b)) || unicode.IsDigit(rune(b)) || b == '.' || b == '-' || b == '_' || b == ':' || b == '[' || b == ']'
+}
+
 func ParseAddr(b []byte) (addr *SockAddr, data []byte, err error) {
 	err = errInvalidHeader
 	addr = &SockAddr{}
@@ -239,7 +247,7 @@ l:
 			return
 		}
 		for _, v := range b[2 : 2+dmlen] {
-			if !((v >= 'A' && v <= 'Z') || (v >= 'a' && v <= 'z') || (v >= '0' && v <= '9') || v == '.' || v == '-' || v == '_') {
+			if !isAllowedInHost(v) {
 				return
 			}
 		}
