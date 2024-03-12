@@ -272,7 +272,7 @@ func (root *DomainRoot) Put(host string) {
 	}
 	reverse(domains)
 	node := root.node
-	for it, domain := range domains {
+	for _, domain := range domains {
 		if len(domain) == 0 {
 			continue
 		}
@@ -286,10 +286,6 @@ func (root *DomainRoot) Put(host string) {
 		v, ok := node.nodes[domain]
 		if ok {
 			if v.any {
-				return
-			}
-			if len(v.nodes) > 10 && it > 0 {
-				v.markAny()
 				return
 			}
 			node = v
