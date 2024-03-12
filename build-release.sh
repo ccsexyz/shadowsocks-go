@@ -14,7 +14,7 @@ TAGS="bloom"
 
 OSES=(linux darwin windows freebsd)
 # ARCHS=(amd64 386)
-ARCHS=(amd64)
+ARCHS=(amd64 arm64)
 
 function build_release() {
 	for os in ${OSES[@]}; do
