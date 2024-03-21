@@ -23,6 +23,7 @@ type Config struct {
 	Method         string    `json:"method"`
 	Password       string    `json:"password"`
 	Nonop          bool      `json:"nonop"`
+	AllowHTTP      bool      `json:"allow_http"`
 	UDPRelay       bool      `json:"udprelay"`
 	Backend        *Config   `json:"backend"`
 	Backends       []*Config `json:"backends"`
@@ -57,6 +58,7 @@ type Config struct {
 	Dlogger        *log.Logger
 	Logger         *log.Logger
 	logfile        *os.File
+	TargetMap      map[string]string `json:"target_map"`
 	Ivlen          int
 	Any            interface{}
 	Die            chan bool

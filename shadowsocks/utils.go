@@ -289,12 +289,18 @@ func Pipe(c1, c2 net.Conn, c *Config) {
 				src.SetReadDeadline(time.Now().Add(time.Duration(timeout) * time.Second))
 			}
 			n, err = src.Read(buf)
+			if err != nil {
+				c.LogD("pipe read error:", err, "from", src.RemoteAddr())
+			}
 			if n > 0 || err == nil {
 				if timeout > 0 {
 					dst.SetWriteDeadline(time.Now().Add(time.Duration(timeout) * time.Second))
 					alive.Set(true)
 				}
 				_, err = dst.Write(buf[:n])
+				if err != nil {
+					c.LogD("pipe write error:", err, "to", dst.RemoteAddr())
+				}
 			}
 			if err != nil {
 				ne, ok := err.(net.Error)
@@ -541,6 +547,10 @@ func (d *DstAddr) Port() string {
 }
 
 func (d *DstAddr) String() string {
+	if len(d.port) == 0 {
+		return d.host
+	}
+
 	return net.JoinHostPort(d.Host(), d.Port())
 }
 

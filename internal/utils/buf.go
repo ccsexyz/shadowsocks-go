@@ -59,3 +59,17 @@ func CopyBuffer(b []byte) []byte {
 	copy(b2, b)
 	return b2
 }
+
+func CopyBuffers(bufs [][]byte) []byte {
+	length := 0
+	for _, b := range bufs {
+		length += len(b)
+	}
+	ret := GetBuf(length)
+	n := 0
+	for _, b := range bufs {
+		copy(ret[n:], b)
+		n += len(b)
+	}
+	return ret
+}

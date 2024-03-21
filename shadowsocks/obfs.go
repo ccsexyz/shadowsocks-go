@@ -6,6 +6,8 @@ import (
 	"io"
 	"math/rand"
 	"net"
+	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -13,6 +15,7 @@ import (
 	"encoding/binary"
 
 	"github.com/ccsexyz/shadowsocks-go/internal/utils"
+	"github.com/gorilla/websocket"
 )
 
 const (
@@ -514,7 +517,6 @@ func (conn *SimpleTLSConn) WriteBuffers(b [][]byte) (n int, err error) {
 	conn.wlock.Lock()
 	defer conn.wlock.Unlock()
 	return conn.writeBuffersInLock(b)
-	return
 }
 
 func DialObfs(target string, c *Config) (conn Conn, err error) {
@@ -523,6 +525,15 @@ func DialObfs(target string, c *Config) (conn Conn, err error) {
 			conn.Close()
 		}
 	}()
+
+	if c.ObfsMethod == "wstunnel" {
+		var host string
+		if len(c.ObfsHost) > 0 {
+			host = c.ObfsHost[rand.Intn(len(c.ObfsHost))]
+		}
+		return DialWsConn(target, host, c)
+	}
+
 	if c.pool != nil {
 		conn, err = c.pool.GetNonblock()
 	}
@@ -665,4 +676,102 @@ func obfsAcceptHandler(conn Conn, lis *listener) (c Conn) {
 	obfsconn.pool = lis.c.pool
 	c = obfsconn
 	return
+}
+
+type wsConn struct {
+	*websocket.Conn
+	buf []byte
+	rem []byte
+}
+
+func (c *wsConn) Read(b []byte) (n int, err error) {
+	if len(c.rem) > 0 {
+		n = copy(b, c.rem)
+		c.rem = c.rem[n:]
+		if len(c.rem) == 0 {
+			utils.PutBuf(c.buf)
+			c.buf = nil
+			c.rem = nil
+		}
+		return
+	}
+
+	t, msg, err := c.Conn.ReadMessage()
+	if err != nil {
+		return
+	} else if t != websocket.BinaryMessage {
+		err = fmt.Errorf("unexpected websocket message type %v", t)
+		return
+	}
+
+	n = copy(b, msg)
+	if n < len(msg) {
+		c.buf = utils.CopyBuffer(msg[n:])
+		c.rem = c.buf
+	}
+	return
+}
+
+func (c *wsConn) Write(b []byte) (n int, err error) {
+	err = c.Conn.WriteMessage(websocket.BinaryMessage, b)
+	if err == nil {
+		n = len(b)
+	}
+	return
+}
+
+func (c *wsConn) WriteBuffers(bufs [][]byte) (n int, err error) {
+	var b []byte
+
+	nbufs := len(bufs)
+	if nbufs > 1 {
+		b = utils.CopyBuffers(bufs)
+		defer utils.PutBuf(b)
+	} else if nbufs == 1 {
+		b = bufs[0]
+	}
+
+	return c.Write(b)
+}
+
+func (c *wsConn) Close() error {
+	err := c.Conn.Close()
+	if c.buf != nil {
+		utils.PutBuf(c.buf)
+		c.buf = nil
+	}
+	return err
+}
+
+func (c *wsConn) SetDeadline(t time.Time) error {
+	err := c.Conn.SetReadDeadline(t)
+	if err == nil {
+		err = c.Conn.SetWriteDeadline(t)
+	}
+	return err
+}
+
+func DialWsConn(address, host string, cfg *cfg) (Conn, error) {
+	d := websocket.Dialer{
+		ReadBufferSize:  10240,
+		WriteBufferSize: 10240,
+		Subprotocols:    []string{"0.0.1"},
+	}
+
+	reqHeader := make(http.Header)
+
+	if len(host) > 0 {
+		reqHeader.Add("Host", host)
+	}
+
+	if !strings.HasPrefix(address, "ws://") && !strings.HasPrefix(address, "wss://") {
+		address = "ws://" + address
+	}
+
+	conn, _, err := d.Dial(address, reqHeader)
+	if err != nil {
+		return nil, err
+	}
+
+	return newTCPConn(&wsConn{Conn: conn}, cfg), nil
 }

@@ -16,6 +16,7 @@ require (
 )
 
 require (
+	github.com/gorilla/websocket v1.5.1 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.6 // indirect
 	golang.org/x/sys v0.15.0 // indirect
 )

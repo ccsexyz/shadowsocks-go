@@ -1,9 +1,11 @@
 package utils
 
 import (
+	"context"
 	"io"
 	"log"
 	"net"
+	"net/http"
 	"sync"
 	"time"
 
@@ -230,4 +232,70 @@ func (listener *SubUDPListener) handleNewConn(conn *SubConn) {
 
 func (listener *SubUDPListener) runServer() {
 	listener.ctx.runUDPServer(listener.conn, listener.handleNewConn)
+}
+
+var httpProxyTransport = &http.Transport{
+	DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+		itarget := ctx.Value("target")
+		if itarget != nil {
+			target, ok := itarget.(string)
+			if ok {
+				addr = target
+			}
+		}
+		var dialer net.Dialer
+		return dialer.DialContext(ctx, network, addr)
+	},
+}
+
+func rejectRedirect(req *http.Request, via []*http.Request) error {
+	return http.ErrUseLastResponse
+}
+
+func getRequestURL(r *http.Request) string {
+	return "http://" + r.Host + r.URL.String()
+}
+
+func HttpProxyTo(w http.ResponseWriter, r *http.Request, target string) {
+	r2, err := http.NewRequest(r.Method, getRequestURL(r), r.Body)
+	if err != nil {
+		writeErrorPage(w, err)
+		return
+	}
+	r2 = r2.WithContext(context.WithValue(context.Background(), "target", target))
+	for key, values := range r.Header {
+		for _, value := range values {
+			r2.Header.Add(key, value)
+		}
+	}
+	hc := new(http.Client)
+	hc.CheckRedirect = rejectRedirect
+	hc.Transport = httpProxyTransport
+
+	resp, err := hc.Do(r2)
+	if err != nil {
+		writeErrorPage(w, err)
+		return
+	}
+	defer resp.Body.Close()
+
+	for key, values := range resp.Header {
+		for _, value := range values {
+			w.Header().Add(key, value)
+		}
+	}
+
+	w.WriteHeader(resp.StatusCode)
+
+	_, err = io.Copy(w, resp.Body)
+	if err != nil {
+		log.Println(err)
+	}
+}
+
+func writeErrorPage(w http.ResponseWriter, err error) {
+	if err != nil {
+		w.Header().Set("X-Error-Info", err.Error())
+	}
+	w.WriteHeader(http.StatusGatewayTimeout)
 }

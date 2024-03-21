@@ -14,6 +14,7 @@ type Conn interface {
 	GetCfg() *Config
 	SetDst(Addr)
 	GetDst() Addr
+	GetHost() string
 }
 
 type cfg = Config
@@ -27,15 +28,24 @@ func (ctx *cfgCtx) GetCfg() *Config {
 }
 
 type dstCtx struct {
-	dst Addr
+	dst  Addr
+	host string
 }
 
 func (ctx *dstCtx) SetDst(dst Addr) {
 	ctx.dst = dst
 }
 
+func (ctx *dstCtx) SetHost(host string) {
+	ctx.host = host
+}
+
 func (ctx *dstCtx) GetDst() Addr {
 	return ctx.dst
+}
+
+func (ctx *dstCtx) GetHost() string {
+	return ctx.host
 }
 
 type TCPConn struct {

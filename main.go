@@ -42,6 +42,7 @@ func main() {
 	flag.IntVar(&c.ParityShard, "ps", 0, "set parityshard - fec")
 	flag.StringVar(&c.ObfsMethod, "om", "", "set the method for obfs(http/websocket/tls)")
 	flag.BoolVar(&c.SSProxy, "ssproxy", false, "enable ss proxy for local server")
+	flag.BoolVar(&c.AllowHTTP, "allow_http", false, "allow http wstunel connection")
 	flag.Parse()
 
 	if len(os.Args) == 1 {
@@ -137,9 +138,6 @@ func main() {
 			return
 		}
 		time.Sleep(time.Second)
-		for _, c := range configs {
-			c.Close()
-		}
 	}
 }
 
@@ -201,5 +199,8 @@ func runServer(c *ss.Config) {
 		}
 		c.Log("run udp tunnel at", c.Localaddr, "to", c.Remoteaddr)
 		RunUDPTunServer(c)
+	case "wstunnel":
+		c.Log("run wstunnel server at", c.Localaddr, "with method", c.Method)
+		RunWstunnelRemoteServer(c)
 	}
 }

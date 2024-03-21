@@ -2,8 +2,9 @@ package main
 
 import (
 	"net"
+	"strings"
 
-	"github.com/ccsexyz/shadowsocks-go/shadowsocks"
+	ss "github.com/ccsexyz/shadowsocks-go/shadowsocks"
 )
 
 func RunMultiTCPRemoteServer(c *ss.Config) {
@@ -11,6 +12,10 @@ func RunMultiTCPRemoteServer(c *ss.Config) {
 }
 
 func RunTCPRemoteServer(c *ss.Config) {
+	RunTCPServer(c.Localaddr, c, ss.ListenSS, tcpRemoteHandler)
+}
+
+func RunWstunnelRemoteServer(c *ss.Config) {
 	RunTCPServer(c.Localaddr, c, ss.ListenSS, tcpRemoteHandler)
 }
 
@@ -28,7 +33,12 @@ func tcpRemoteHandler(conn ss.Conn, c *ss.Config) {
 		c.LogD("target length is 0")
 		return
 	}
-	rconn, err := net.Dial("tcp", target)
+	var rconn net.Conn
+	if strings.HasPrefix(target, "ws://") || strings.HasPrefix(target, "wss://") {
+		rconn, err = ss.DialWsConn(target, conn.GetHost(), c)
+	} else {
+		rconn, err = net.Dial("tcp", target)
+	}
 	if err != nil {
 		c.Log(err)
 		return

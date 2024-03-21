@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"sort"
 	"strconv"
 	"strings"
@@ -13,7 +14,29 @@ import (
 
 	"github.com/ccsexyz/shadowsocks-go/internal/utils"
 	"github.com/ccsexyz/shadowsocks-go/redir"
+	"github.com/gorilla/websocket"
 )
+
+type chListener struct {
+	ch   chan net.Conn
+	addr net.Addr
+}
+
+func (cl *chListener) Accept() (net.Conn, error) {
+	conn, ok := <-cl.ch
+	if !ok {
+		return nil, fmt.Errorf("channel closed")
+	}
+	return conn, nil
+}
+
+func (cl *chListener) Addr() net.Addr {
+	return cl.addr
+}
+
+func (cl *chListener) Close() error {
+	return nil
+}
 
 type listenHandler func(Conn, *listener) Conn
 
@@ -23,6 +46,8 @@ type listener struct {
 	die      chan bool
 	connch   chan Conn
 	errch    chan error
+	httpch   chan net.Conn
+	httpsrv  *http.Server
 	handlers []listenHandler
 }
 
@@ -33,14 +58,83 @@ func NewListener(lis *net.TCPListener, c *Config, handlers []listenHandler) *lis
 		handlers:    handlers,
 		die:         make(chan bool),
 		connch:      make(chan Conn, 32),
+		httpch:      make(chan net.Conn, 32),
 		errch:       make(chan error, 1),
+	}
+	if c.Type == "wstunnel" {
+		l.httpsrv = &http.Server{Handler: l}
+		go func() {
+			err := l.httpsrv.Serve(&chListener{ch: l.httpch, addr: lis.Addr()})
+			if err != nil {
+				l.errch <- err
+			}
+		}()
 	}
 	go l.acceptor()
 	return l
 }
 
+func checkUpgrade(r *http.Request) bool {
+	upgrade := strings.ToLower(r.Header.Get("Upgrade"))
+	return upgrade == "websocket"
+}
+
+func (lis *listener) checkProto(r *http.Request) bool {
+	if lis.c.AllowHTTP {
+		return true
+	}
+	proto := strings.ToLower(r.Header.Get("X-Forwarded-Proto"))
+	return proto == "https"
+}
+
+func (lis *listener) getTargetByHost(host string) string {
+	target, _ := lis.c.TargetMap[host]
+	return target
+}
+
+var upgrader = websocket.Upgrader{
+	ReadBufferSize:  10240,
+	WriteBufferSize: 10240,
+	CheckOrigin:     func(r *http.Request) bool { return true },
+}
+
+func (lis *listener) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if !checkUpgrade(r) || !lis.checkProto(r) {
+		if target := lis.getTargetByHost("http_proxy_to"); len(target) != 0 {
+			utils.HttpProxyTo(w, r, target)
+		} else {
+			w.WriteHeader(http.StatusForbidden)
+		}
+		return
+	}
+
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		lis.c.Log(err)
+		return
+	}
+
+	wConn := &wsConn{Conn: conn}
+	tConn := newTCPConn(wConn, lis.c)
+
+	target := lis.getTargetByHost(r.Host)
+	if len(target) > 0 {
+		tConn.SetDst(&DstAddr{host: target})
+		tConn.SetHost(r.Host)
+		select {
+		case <-lis.die:
+			tConn.Close()
+		case lis.connch <- tConn:
+		}
+		return
+	}
+
+	go lis.handleNewConn(tConn)
+}
+
 func (lis *listener) acceptor() {
 	defer lis.Close()
+	isWstunnel := lis.c.Type == "wstunnel"
 	for {
 		conn, err := lis.TCPListener.AcceptTCP()
 		if err != nil {
@@ -53,6 +147,10 @@ func (lis *listener) acceptor() {
 			}
 			lis.errch <- err
 			return
+		}
+		if isWstunnel {
+			lis.httpch <- conn
+			continue
 		}
 		go lis.handleNewConn(newTCPConn(utils.NewConn(conn), lis.c))
 	}
@@ -83,6 +181,9 @@ func (lis *listener) Close() error {
 	case <-lis.die:
 	default:
 		close(lis.die)
+	}
+	if lis.httpsrv != nil {
+		lis.httpsrv.Close()
 	}
 	return lis.TCPListener.Close()
 }
