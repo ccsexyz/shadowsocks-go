@@ -46,6 +46,7 @@ type Config struct {
 	ChnList        string    `json:"chnlist"`
 	UseMul         bool      `json:"usemul"`
 	UseUDP         bool      `json:"useudp"`
+	Direct         bool      `json:"direct"`
 	MulConn        int       `json:"mulconn"`
 	FakeTCPAddr    string    `json:"faketcpaddr"`
 	Safe           bool      `json:"safe"`

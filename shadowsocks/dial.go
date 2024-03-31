@@ -224,7 +224,9 @@ func DialSSWithOptions(opt *DialOptions) (conn Conn, err error) {
 
 	ip = net.ParseIP(host)
 
-	if ip != nil && c.chnListCtx != nil {
+	if c.Direct {
+		direct = true
+	} else if ip != nil && c.chnListCtx != nil {
 		if c.chnListCtx.testIP(ip) {
 			c.LogD("host", host, "hit chn route")
 			direct = true
