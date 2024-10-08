@@ -11,6 +11,7 @@ VERSION=`date -u +%Y%m%d`
 LDFLAGS="-s -w"
 GCFLAGS=""
 TAGS="bloom"
+BUILD_DIR="release_build"
 
 OSES=(linux darwin windows freebsd)
 # ARCHS=(amd64 386)
@@ -47,8 +48,8 @@ function build_release() {
 
 PWD=`pwd`
 
-rm -rf build
-mkdir build
-cd build
+rm -rf $BUILD_DIR
+mkdir $BUILD_DIR
+cd $BUILD_DIR
 build_release
 cd $PWD
