@@ -569,11 +569,7 @@ func SliceCopy(b []byte) []byte {
 }
 
 func DialTCP(address string, cfg *cfg) (*TCPConn, error) {
-	raddr, err := net.ResolveTCPAddr("tcp", address)
-	if err != nil {
-		return nil, err
-	}
-	tconn, err := utils.DialTCP("tcp", nil, raddr)
+	tconn, err := utils.DialTCP("tcp", address)
 	if err != nil {
 		return nil, err
 	}

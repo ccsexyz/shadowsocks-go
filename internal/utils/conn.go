@@ -129,11 +129,13 @@ func (conn *UtilsConn) WriteBuffers(bufs [][]byte) (n int, err error) {
 }
 
 // DialTCP calls net.DialTCP and returns *UtilsConn
-func DialTCP(network string, laddr, raddr *net.TCPAddr) (conn *UtilsConn, err error) {
-	netconn, err := net.DialTCP(network, laddr, raddr)
-	if err == nil {
-		conn = &UtilsConn{Conn: netconn}
+func DialTCP(network string, address string) (conn *UtilsConn, err error) {
+	netconn, err := net.Dial(network, address)
+	if err != nil {
+		return
 	}
+
+	conn = &UtilsConn{Conn: netconn}
 	return
 }
 
