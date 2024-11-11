@@ -37,7 +37,7 @@ func tcpRemoteHandler(conn ss.Conn, c *ss.Config) {
 	if strings.HasPrefix(target, "ws://") || strings.HasPrefix(target, "wss://") {
 		rconn, err = ss.DialWsConn(target, conn.GetHost(), c)
 	} else {
-		rconn, err = net.Dial("tcp", target)
+		rconn, err = ss.DialTCP(target, c)
 	}
 	if err != nil {
 		c.Log(err)

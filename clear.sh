@@ -2,4 +2,4 @@
 
 rm -rf ./shadowsocks-*
 rm -rf ./shadowsocks_*
-rm -rf build
+rm -rf release_build

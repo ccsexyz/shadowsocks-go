@@ -2,6 +2,7 @@ package ss
 
 import (
 	"bufio"
+	"context"
 	"crypto/rand"
 	"encoding/binary"
 	"fmt"
@@ -568,11 +569,47 @@ func SliceCopy(b []byte) []byte {
 	return c
 }
 
-func DialTCP(address string, cfg *cfg) (*TCPConn, error) {
-	tconn, err := utils.DialTCP("tcp", address)
-	if err != nil {
-		return nil, err
+func isAddrDualStack(address string) bool {
+	host, _, err := net.SplitHostPort(address)
+	if err == nil {
+		ips, err := net.LookupIP(host)
+		if err == nil {
+			var hasV4, hasV6 bool
+
+			for _, ip := range ips {
+				if ip.To4() != nil {
+					hasV4 = true
+				} else if ip.To16() != nil {
+					hasV6 = true
+				}
+
+				if hasV4 && hasV6 {
+					return true
+				}
+			}
+		}
 	}
+
+	return false
+}
+
+func DialTCP(address string, cfg *cfg) (*TCPConn, error) {
+	var err error
+	var tconn *utils.UtilsConn
+
+	if cfg.PreferIPv4 && isAddrDualStack(address) {
+		ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+		defer cancel()
+		tconn, _ = utils.DialTCP("tcp4", address, ctx)
+	}
+
+	if tconn == nil {
+		tconn, err = utils.DialTCP("tcp", address, context.Background())
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	return newTCPConn(tconn, cfg), nil
 }
 

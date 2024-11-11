@@ -34,6 +34,7 @@ type Config struct {
 	ObfsMethod     string    `json:"obfsmethod"`
 	ObfsHost       []string  `json:"obfshost"`
 	ObfsAlive      bool      `json:"obfsalive"`
+	PreferIPv4     bool      `json:"prefer_ipv4"`
 	Limit          int       `json:"limit"`
 	LimitPerConn   int       `json:"limitperconn"`
 	LogHTTP        bool      `json:"loghttp"`
@@ -276,6 +277,9 @@ func CheckConfig(c *Config) {
 		}
 		if v.Timeout == 0 {
 			v.Timeout = c.Timeout
+		}
+		if c.PreferIPv4 {
+			v.PreferIPv4 = true
 		}
 		if c.autoProxyCtx != nil {
 			v.autoProxyCtx = c.autoProxyCtx

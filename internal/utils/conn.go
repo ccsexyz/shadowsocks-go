@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -129,8 +130,9 @@ func (conn *UtilsConn) WriteBuffers(bufs [][]byte) (n int, err error) {
 }
 
 // DialTCP calls net.DialTCP and returns *UtilsConn
-func DialTCP(network string, address string) (conn *UtilsConn, err error) {
-	netconn, err := net.Dial(network, address)
+func DialTCP(network string, address string, ctx context.Context) (conn *UtilsConn, err error) {
+	var d net.Dialer
+	netconn, err := d.DialContext(ctx, network, address)
 	if err != nil {
 		return
 	}
