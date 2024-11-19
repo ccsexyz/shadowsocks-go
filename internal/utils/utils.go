@@ -13,7 +13,7 @@ import (
 	"unsafe"
 )
 
-const defaultMethod = "aes-256-cfb"
+const defaultMethod = "aes-128-gcm"
 
 func PutRandomBytes(b []byte) {
 	binary.Read(rand.Reader, binary.BigEndian, b)

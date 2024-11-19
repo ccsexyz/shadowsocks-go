@@ -13,12 +13,6 @@ import (
 
 	"golang.org/x/crypto/chacha20poly1305"
 	"golang.org/x/crypto/hkdf"
-	"golang.org/x/crypto/salsa20/salsa"
-
-	"crypto/rc4"
-
-	"github.com/aead/chacha20"
-	"github.com/aead/chacha20/chacha"
 )
 
 const CipherBlockLen = 8192
@@ -140,53 +134,6 @@ func (b *baseCipherStream) GetIV() []byte {
 	return b.iv
 }
 
-type Salsa20CipherStream struct {
-	baseCipherStream
-
-	key     [32]byte
-	counter uint64
-}
-
-func (s *Salsa20CipherStream) writeData(p []byte) (n int, err error) {
-	var ivb [16]byte
-	copy(ivb[:8], s.iv[:8])
-	binary.LittleEndian.PutUint64(ivb[8:], s.counter/64)
-
-	padLen := int(s.counter % 64)
-	if padLen == 0 {
-		b := GetCipherBlock()
-		defer PutCipherBlock(b)
-		dst := b.b[:len(p)]
-
-		salsa.XORKeyStream(dst, p, &ivb, &s.key)
-		s.counter += uint64(len(p))
-		n, err = s.b.Write(dst)
-		return
-	}
-
-	var srcbuf [64]byte
-	var dstbuf [64]byte
-	n = copy(srcbuf[padLen:], p)
-	salsa.XORKeyStream(dstbuf[:], srcbuf[:], &ivb, &s.key)
-	s.counter += uint64(n)
-
-	n, err = s.b.Write(dstbuf[padLen : padLen+n])
-	if err != nil {
-		return
-	}
-
-	if len(p) > n {
-		var n2 int
-		n2, err = s.writeData(p[n:])
-		if err != nil {
-			return
-		}
-		n += n2
-	}
-
-	return
-}
-
 // copy from https://github.com/riobard/go-shadowsocks2/blob/master/core/cipher.go
 // key-derivation function from original Shadowsocks
 func kdf(password string, keyLen int) []byte {
@@ -202,173 +149,12 @@ func kdf(password string, keyLen int) []byte {
 	return b[:keyLen]
 }
 
-type streamCreater interface {
-	NewStream(iv []byte) (cipher.Stream, error)
-}
-
-type XORCipherStream struct {
-	baseCipherStream
-	stream  cipher.Stream
-	creater streamCreater
-}
-
-func (x *XORCipherStream) writeData(p []byte) (n int, err error) {
-	b := GetCipherBlock()
-	defer PutCipherBlock(b)
-
-	if x.stream == nil {
-		if x.creater == nil {
-			panic("creater is nil")
-		}
-
-		x.stream, err = x.creater.NewStream(x.iv)
-		if err != nil {
-			return
-		}
-	}
-
-	dst := b.b[:len(p)]
-	x.stream.XORKeyStream(dst, p)
-	n, err = x.b.Write(dst)
-	return
-}
-
-func newEncryptXORCipherStream(iv []byte, stream cipher.Stream) *XORCipherStream {
-	x := new(XORCipherStream)
-	x.initEncrypter(iv, x)
-	x.stream = stream
-	return x
-}
-
-func newDecryptXORCipherStream(ivLen int, creater streamCreater) *XORCipherStream {
-	x := new(XORCipherStream)
-	x.initDecrypter(ivLen, x)
-	x.creater = creater
-	return x
-}
-
-func NewAESCFBEncrypter(key, iv []byte) (rw CipherStream, err error) {
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return
-	}
-
-	rw = newEncryptXORCipherStream(iv, cipher.NewCFBEncrypter(block, iv))
-	return
-}
-
-func NewChaCha20Encrypter(key, iv []byte) (rw CipherStream, err error) {
-	stream, err := chacha20.NewCipher(iv, key)
-	if err != nil {
-		return
-	}
-
-	rw = newEncryptXORCipherStream(iv, stream)
-	return
-}
-
-func NewAESCTREncrypter(key, iv []byte) (rw CipherStream, err error) {
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return
-	}
-
-	rw = newEncryptXORCipherStream(iv, cipher.NewCTR(block, iv))
-	return
-}
-
-func NewRC4MD5Encrypter(key, iv []byte) (rw CipherStream, err error) {
-	stream, err := newRC4MD5Stream(key, iv)
-	if err != nil {
-		return
-	}
-
-	rw = newEncryptXORCipherStream(iv, stream)
-	return
-}
-
-type blockStreamCreater struct {
-	block  cipher.Block
-	create func(cipher.Block, []byte) cipher.Stream
-}
-
-func (b *blockStreamCreater) NewStream(iv []byte) (cipher.Stream, error) {
-	return b.create(b.block, iv), nil
-}
-
-func NewAESCFBDecrypter(key []byte, ivLen int) (rw CipherStream, err error) {
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return
-	}
-
-	rw = newDecryptXORCipherStream(ivLen, &blockStreamCreater{block, cipher.NewCFBDecrypter})
-	return
-}
-
-type chacha20StreamCreater struct {
-	key []byte
-}
-
-func (c *chacha20StreamCreater) NewStream(iv []byte) (cipher.Stream, error) {
-	return chacha20.NewCipher(iv, c.key)
-}
-
-func NewChaCha20Decrypter(key []byte, ivLen int) (rw CipherStream, err error) {
-	rw = newDecryptXORCipherStream(ivLen, &chacha20StreamCreater{key: CopyBuffer(key)})
-	return
-}
-
-func NewAESCTRDecrypter(key []byte, ivLen int) (rw CipherStream, err error) {
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return
-	}
-
-	rw = newDecryptXORCipherStream(ivLen, &blockStreamCreater{block, cipher.NewCTR})
-	return
-}
-
-type rc4md5StreamCreater struct {
-	key []byte
-}
-
-func (r *rc4md5StreamCreater) NewStream(iv []byte) (cipher.Stream, error) {
-	return newRC4MD5Stream(r.key, iv)
-}
-
-func NewRC4MD5Decrypter(key []byte, ivLen int) (rw CipherStream, err error) {
-	rw = newDecryptXORCipherStream(ivLen, &rc4md5StreamCreater{key: CopyBuffer(key)})
-	return
-}
-
-func newRC4MD5Stream(key, iv []byte) (cipher.Stream, error) {
-	m := md5.New()
-	m.Write(key)
-	m.Write(iv)
-	return rc4.NewCipher(m.Sum(nil))
-}
-
 func NewPlainEncrypter(_, _ []byte) (CipherStream, error) {
 	return &PlainCipherStream{}, nil
 }
 
 func NewPlainDecrypter(_ []byte, _ int) (CipherStream, error) {
 	return &PlainCipherStream{}, nil
-}
-
-func NewSalsa20Encrypter(key, iv []byte) (CipherStream, error) {
-	s := new(Salsa20CipherStream)
-	copy(s.key[:], key)
-	s.initEncrypter(iv, s)
-	return s, nil
-}
-
-func NewSalsa20Decrypter(key []byte, ivLen int) (CipherStream, error) {
-	s := new(Salsa20CipherStream)
-	copy(s.key[:], key)
-	s.initDecrypter(ivLen, s)
-	return s, nil
 }
 
 var cipherMethod = map[string]struct {
@@ -380,17 +166,7 @@ var cipherMethod = map[string]struct {
 	"aes-128-gcm":      {16, 16, NewAESGCMEncrypter, NewAESGCMDecrypter},
 	"aes-192-gcm":      {24, 24, NewAESGCMEncrypter, NewAESGCMDecrypter},
 	"aes-256-gcm":      {32, 32, NewAESGCMEncrypter, NewAESGCMDecrypter},
-	"aes-128-ctr":      {16, 16, NewAESCTREncrypter, NewAESCTRDecrypter},
-	"aes-192-ctr":      {24, 16, NewAESCTREncrypter, NewAESCTRDecrypter},
-	"aes-256-ctr":      {32, 16, NewAESCTREncrypter, NewAESCTRDecrypter},
-	"aes-128-cfb":      {16, 16, NewAESCFBEncrypter, NewAESCFBDecrypter},
-	"aes-192-cfb":      {24, 16, NewAESCFBEncrypter, NewAESCFBDecrypter},
-	"aes-256-cfb":      {32, 16, NewAESCFBEncrypter, NewAESCFBDecrypter},
-	"chacha20":         {32, 8, NewChaCha20Encrypter, NewChaCha20Decrypter},
-	"chacha20-ietf":    {32, 12, NewChaCha20Encrypter, NewChaCha20Decrypter},
 	"chacha20poly1305": {32, 32, NewChacha20Poly1305Encrypter, NewChacha20Poly1305Decrypter},
-	"rc4-md5":          {16, 16, NewRC4MD5Encrypter, NewRC4MD5Decrypter},
-	"salsa20":          {32, 8, NewSalsa20Encrypter, NewSalsa20Decrypter},
 	"plain":            {0, 0, NewPlainEncrypter, NewPlainDecrypter},
 }
 
@@ -443,40 +219,6 @@ func GetIvLen(method string) int {
 }
 
 var initialVector = []byte{167, 115, 79, 156, 18, 172, 27, 1, 164, 21, 242, 193, 252, 120, 230, 107}
-
-type chacha20BlockCrypt struct {
-	cipherPool sync.Pool
-}
-
-func NewChaCha20BlockCrypt(key []byte) (*chacha20BlockCrypt, error) {
-	if _, err := chacha.NewCipher(initialVector[:8], key, 20); err != nil {
-		return nil, err
-	}
-
-	c := new(chacha20BlockCrypt)
-
-	c.cipherPool.New = func() interface{} {
-		ciph, _ := chacha.NewCipher(initialVector[:8], key, 20)
-		return ciph
-	}
-
-	return c, nil
-}
-
-func (c *chacha20BlockCrypt) Encrypt(dst, src []byte) {
-	enc := c.cipherPool.Get().(*chacha.Cipher)
-	defer c.cipherPool.Put(enc)
-	enc.SetCounter(binary.LittleEndian.Uint64(src[:8]))
-	enc.XORKeyStream(dst[8:], src[8:])
-	copy(dst[:8], src[:8])
-}
-func (c *chacha20BlockCrypt) Decrypt(dst, src []byte) {
-	dec := c.cipherPool.Get().(*chacha.Cipher)
-	defer c.cipherPool.Put(dec)
-	dec.SetCounter(binary.LittleEndian.Uint64(src[:8]))
-	dec.XORKeyStream(dst[8:], src[8:])
-	copy(dst[:8], src[:8])
-}
 
 type ssAEADNonce [32]byte
 

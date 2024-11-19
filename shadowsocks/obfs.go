@@ -415,21 +415,18 @@ type SimpleTLSConn struct {
 	wlock     sync.Mutex
 }
 
-func (conn *SimpleTLSConn) cliHandshake(b []byte) (err error) {
-	var buf []byte
-	if len(b) < buffersize {
-		buf = utils.GetBuf(buffersize)
-		defer utils.PutBuf(buf)
-	} else {
-		buf = b
-	}
+func (conn *SimpleTLSConn) cliHandshake() (err error) {
+	frame := make([]byte, 5)
+
 	for it := 0; it < 2; it++ {
-		_, err = io.ReadFull(conn.Conn, buf[:5])
+		_, err = io.ReadFull(conn.Conn, frame)
 		if err != nil {
 			return
 		}
-		frameLen := int(binary.BigEndian.Uint16(buf[3:5]))
-		_, err = io.ReadFull(conn.Conn, buf[:frameLen])
+		frameLen := int(binary.BigEndian.Uint16(frame[3:5]))
+
+		data := make([]byte, frameLen)
+		_, err = io.ReadFull(conn.Conn, data)
 		if err != nil {
 			return
 		}
@@ -440,7 +437,7 @@ func (conn *SimpleTLSConn) cliHandshake(b []byte) (err error) {
 func (conn *SimpleTLSConn) Read(b []byte) (n int, err error) {
 	if conn.cliresp {
 		conn.cliresp = false
-		err = conn.cliHandshake(b)
+		err = conn.cliHandshake()
 		if err != nil {
 			return
 		}

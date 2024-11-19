@@ -521,7 +521,13 @@ func httpProxyAcceptor(conn Conn, lis *listener) (c Conn) {
 		return
 	}
 	dst := string(hosts[0])
-	it = strings.Index(dst, ":")
+	var portSep string
+	if dst[0] == '[' {
+		portSep = "]:"
+	} else {
+		portSep = ":"
+	}
+	it = strings.Index(dst, portSep)
 	if it < 0 {
 		dst = dst + ":80"
 	}
@@ -601,11 +607,10 @@ func getConfigs0(method, password string) []*Config {
 		}
 	} else {
 		return []*Config{
-			&Config{Method: "aes-128-cfb", Password: password},
-			&Config{Method: "aes-192-cfb", Password: password},
-			&Config{Method: "aes-256-cfb", Password: password},
-			&Config{Method: "salsa20", Password: password},
-			&Config{Method: "rc4-md5", Password: password},
+			&Config{Method: "aes-128-gcm", Password: password},
+			&Config{Method: "aes-192-gcm", Password: password},
+			&Config{Method: "aes-256-gcm", Password: password},
+			&Config{Method: "chacha20poly1305", Password: password},
 		}
 	}
 }

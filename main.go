@@ -25,7 +25,7 @@ func main() {
 	flag.StringVar(&c.Localaddr, "l", "", "local listen address")
 	flag.StringVar(&target, "t", "", "target address(for tcptun and udptun)")
 	flag.StringVar(&configfile, "c", "", "the configuration file path")
-	flag.StringVar(&c.Method, "m", "aes-256-cfb", "crypt method")
+	flag.StringVar(&c.Method, "m", "aes-128-gcm", "crypt method")
 	flag.StringVar(&c.Password, "p", "you need a password", "password")
 	flag.BoolVar(&c.Nonop, "nonop", false, "enable this to be compatiable with official ss servers(client only)")
 	flag.BoolVar(&c.UDPRelay, "udprelay", false, "relay udp packets")
@@ -43,6 +43,7 @@ func main() {
 	flag.StringVar(&c.ObfsMethod, "om", "", "set the method for obfs(http/websocket/tls)")
 	flag.BoolVar(&c.SSProxy, "ssproxy", false, "enable ss proxy for local server")
 	flag.BoolVar(&c.AllowHTTP, "allow_http", false, "allow http wstunel connection")
+	flag.Int64Var(&ss.IvExpireSecond, "iv_expire_second", 30, "specifies the expiration time for IVs in the checker, in seconds")
 	flag.Parse()
 
 	if len(os.Args) == 1 {

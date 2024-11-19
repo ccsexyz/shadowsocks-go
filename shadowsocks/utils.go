@@ -15,10 +15,11 @@ import (
 	"unicode"
 
 	"github.com/ccsexyz/shadowsocks-go/internal/utils"
+	"golang.org/x/exp/constraints"
 )
 
 const (
-	defaultMethod          = "aes-256-cfb"
+	defaultMethod          = "aes-128-gcm"
 	defaultPassword        = "secret"
 	defaultTimeout         = 65
 	buffersize             = 8192
@@ -138,11 +139,6 @@ func ParseAddrWithMultipleBackends(b []byte, configs []*Config) (*parseContext, 
 		ctx.dec = dec
 		ctx.chs = cfg
 
-		port := addr.PortNum()
-		if port == 80 || port == 443 || port == 22 || port == 53 || port == 8080 {
-			return ctx, nil
-		}
-
 		ctxs = append(ctxs, ctx)
 	}
 
@@ -153,12 +149,16 @@ func ParseAddrWithMultipleBackends(b []byte, configs []*Config) (*parseContext, 
 	return ctxs[0], nil
 }
 
+func abs[T constraints.Signed | constraints.Float](x T) T {
+	if x < 0 {
+		return -x
+	}
+	return x
+}
+
 func checkTimestamp(ts int64) (ok bool) {
 	nts := time.Now().Unix()
-	if nts >= ts {
-		return (nts - ts) <= 4
-	}
-	return (ts - nts) <= 4
+	return abs(nts-ts) <= IvExpireSecond
 }
 
 // isAllowedInHost returns true if b is allowed in host.
@@ -633,12 +633,12 @@ func (c *ivChecker) check(iv string) bool {
 	c.once.Do(func() {
 		c.ivs1 = make(map[string]bool)
 		c.ivs2 = make(map[string]bool)
-		c.expires = time.Now().Add(time.Second * 10)
+		c.expires = time.Now().Add(time.Second * time.Duration(IvExpireSecond) * 3)
 	})
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	if time.Now().After(c.expires) {
-		c.expires = time.Now().Add(time.Second * 10)
+		c.expires = time.Now().Add(time.Second * time.Duration(IvExpireSecond) * 3)
 		c.ivs1 = c.ivs2
 		c.ivs2 = make(map[string]bool)
 	}
