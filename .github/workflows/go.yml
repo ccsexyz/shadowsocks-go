@@ -1,0 +1,43 @@
+# This workflow will build a golang project
+# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-go
+
+name: Go
+
+on:
+  push:
+    branches: [ "master" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.23'
+
+    - name: Build
+      run: |
+        echo '```' >> buildlogs
+        ./build-release.sh 2>&1 | tee -a buildlogs
+        echo '```' >> buildlogs
+
+    - name: Run Python script to delete old pre-releases
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        pip3 install requests
+        python3 .github/workflows/delete_old_pre_releases.py
+      
+    - name: Create Release
+      uses: softprops/action-gh-release@v2
+      with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          tag_name: v${{ github.run_number }}
+          name: "Pre-release v${{ github.run_number }}"
+          prerelease: true
+          files: release_build/*.tar.gz
+          body_path: buildlogs
+          draft: false
