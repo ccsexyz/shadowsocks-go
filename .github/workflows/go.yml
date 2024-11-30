@@ -19,4 +19,22 @@ jobs:
         go-version: '1.23'
 
     - name: Build
-      run: ./build-release.sh
+      run: ./build-release.sh 2>&1 | tee buildlogs
+
+    - name: Run Python script to delete old pre-releases
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        pip3 install requests
+        python3 .github/workflows/delete_old_pre_releases.py
+      
+    - name: Create Release
+      uses: softprops/action-gh-release@v2
+      with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          tag_name: v${{ github.run_number }}
+          name: "Pre-release v${{ github.run_number }}"
+          prerelease: true
+          files: release_build/*.tar.gz
+          body_path: buildlogs
+          draft: false
