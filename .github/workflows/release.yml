@@ -1,11 +1,12 @@
 # This workflow will build a golang project
 # For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-go
 
-name: Go
+name: Release
 
 on:
   push:
-    branches: [ "master" ]
+    tags:
+      - "*"
 
 jobs:
   build:
@@ -20,3 +21,10 @@ jobs:
 
     - name: Build
       run: ./build-release.sh
+      
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: release_build/*.tar.gz
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
