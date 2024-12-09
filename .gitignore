@@ -31,3 +31,5 @@ shadowsocks_*
 shadowsocks-*
 
 *.patch
+
+publish.sh

@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -270,6 +271,20 @@ func DupBuffer(b []byte) (b2 []byte) {
 	return
 }
 
+// IsTimeoutError checks if the error is a timeout error.
+func IsTimeoutError(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, os.ErrDeadlineExceeded) {
+		return true
+	}
+
+	ne, ok := err.(net.Error)
+	if ok && ne != nil && ne.Timeout() {
+		return true
+	}
+
+	return false
+}
+
 func Pipe(c1, c2 net.Conn, c *Config) {
 	defer c1.Close()
 	defer c2.Close()
@@ -291,7 +306,7 @@ func Pipe(c1, c2 net.Conn, c *Config) {
 			}
 			n, err = src.Read(buf)
 			if err != nil {
-				c.LogD("pipe read error:", err, "from", src.RemoteAddr())
+				c.LogD("pipe read error:", err, "from", src.RemoteAddr(), "to", src.LocalAddr())
 			}
 			if n > 0 || err == nil {
 				if timeout > 0 {
@@ -300,17 +315,13 @@ func Pipe(c1, c2 net.Conn, c *Config) {
 				}
 				_, err = dst.Write(buf[:n])
 				if err != nil {
-					c.LogD("pipe write error:", err, "to", dst.RemoteAddr())
+					c.LogD("pipe write error:", err, "from", src.LocalAddr(), "to", dst.RemoteAddr())
 				}
 			}
-			if err != nil {
-				ne, ok := err.(net.Error)
-				if ok && ne.Timeout() {
-					if alive.Test() {
-						alive.Set(false)
-						err = nil
-					}
-				}
+			if err != nil && IsTimeoutError(err) && alive.Test() {
+				alive.Set(false)
+				c.LogD("pipe read error:", err, "from", src.RemoteAddr(), "to", src.LocalAddr())
+				err = nil
 			}
 		}
 	}

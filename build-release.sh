@@ -10,7 +10,7 @@ fi
 VERSION=`date -u +%Y%m%d`
 LDFLAGS="-s -w"
 GCFLAGS=""
-TAGS="bloom"
+TAGS="bloom goprof"
 BUILD_DIR="release_build"
 
 OSES=(linux darwin windows freebsd)

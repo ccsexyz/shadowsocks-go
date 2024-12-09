@@ -114,7 +114,7 @@ func (lis *listener) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	wConn := &wsConn{Conn: conn}
+	wConn := newWsConn(conn)
 	tConn := newTCPConn(wConn, lis.c)
 
 	target := lis.getTargetByHost(r.Host)

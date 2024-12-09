@@ -7,6 +7,7 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -677,36 +678,87 @@ func obfsAcceptHandler(conn Conn, lis *listener) (c Conn) {
 
 type wsConn struct {
 	*websocket.Conn
-	buf []byte
-	rem []byte
+	buf          []byte
+	bufCh        chan []byte
+	errCh        chan error
+	readDeadline time.Time
 }
 
+func newWsConn(conn *websocket.Conn) *wsConn {
+	wsconn := &wsConn{
+		Conn:  conn,
+		bufCh: make(chan []byte, 16),
+		errCh: make(chan error, 1),
+	}
+	go wsconn.readLoop()
+	return wsconn
+}
+
+func (c *wsConn) readLoop() {
+	var t int
+	var msg []byte
+	var err error
+	defer func() {
+		if err != nil {
+			c.errCh <- err
+		}
+	}()
+
+	for {
+		t, msg, err = c.Conn.ReadMessage()
+		if err != nil {
+			break
+		} else if t != websocket.BinaryMessage {
+			err = fmt.Errorf("unexpected websocket message type %v", t)
+			break
+		}
+
+		c.bufCh <- msg
+	}
+}
+
+// Read reads data from the connection. It blocks until there is at least one byte of data available, or an error occurs.
 func (c *wsConn) Read(b []byte) (n int, err error) {
-	if len(c.rem) > 0 {
-		n = copy(b, c.rem)
-		c.rem = c.rem[n:]
-		if len(c.rem) == 0 {
-			utils.PutBuf(c.buf)
+	if len(c.buf) > 0 {
+		n = copy(b, c.buf)
+		c.buf = c.buf[n:]
+		if len(c.buf) == 0 {
 			c.buf = nil
-			c.rem = nil
 		}
 		return
 	}
 
-	t, msg, err := c.Conn.ReadMessage()
-	if err != nil {
-		return
-	} else if t != websocket.BinaryMessage {
-		err = fmt.Errorf("unexpected websocket message type %v", t)
-		return
+	var timerCh <-chan time.Time
+
+	if !c.readDeadline.IsZero() {
+		now := time.Now()
+		if now.After(c.readDeadline) {
+			err = os.ErrDeadlineExceeded
+			return
+		}
+
+		t := time.NewTimer(c.readDeadline.Sub(now))
+		defer t.Stop()
+
+		timerCh = t.C
 	}
 
-	n = copy(b, msg)
-	if n < len(msg) {
-		c.buf = utils.CopyBuffer(msg[n:])
-		c.rem = c.buf
+	select {
+	case err = <-c.errCh:
+		return
+
+	case <-timerCh:
+		err = os.ErrDeadlineExceeded
+		return
+
+	case buf := <-c.bufCh:
+		n = copy(b, buf)
+		buf = buf[n:]
+		if len(buf) > 0 {
+			c.buf = buf
+		}
+		return
 	}
-	return
 }
 
 func (c *wsConn) Write(b []byte) (n int, err error) {
@@ -733,19 +785,17 @@ func (c *wsConn) WriteBuffers(bufs [][]byte) (n int, err error) {
 
 func (c *wsConn) Close() error {
 	err := c.Conn.Close()
-	if c.buf != nil {
-		utils.PutBuf(c.buf)
-		c.buf = nil
-	}
 	return err
 }
 
+func (c *wsConn) SetReadDeadline(t time.Time) error {
+	c.readDeadline = t
+	return nil
+}
+
 func (c *wsConn) SetDeadline(t time.Time) error {
-	err := c.Conn.SetReadDeadline(t)
-	if err == nil {
-		err = c.Conn.SetWriteDeadline(t)
-	}
-	return err
+	c.SetReadDeadline(t)
+	return c.Conn.SetWriteDeadline(t)
 }
 
 func DialWsConn(address, host string, cfg *cfg) (Conn, error) {
@@ -770,5 +820,5 @@ func DialWsConn(address, host string, cfg *cfg) (Conn, error) {
 		return nil, err
 	}
 
-	return newTCPConn(&wsConn{Conn: conn}, cfg), nil
+	return newTCPConn(newWsConn(conn), cfg), nil
 }
