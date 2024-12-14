@@ -13,12 +13,12 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/klauspost/reedsolomon v1.12.4
 	github.com/pkg/errors v0.9.1
-	golang.org/x/crypto v0.29.0
+	golang.org/x/crypto v0.31.0
 	golang.org/x/exp v0.0.0-20241108190413-2d47ceb2692f
 	golang.org/x/net v0.31.0
 )
 
 require (
 	github.com/klauspost/cpuid/v2 v2.2.9 // indirect
-	golang.org/x/sys v0.27.0 // indirect
+	golang.org/x/sys v0.28.0 // indirect
 )
