@@ -15,24 +15,24 @@ import (
 	"golang.org/x/crypto/hkdf"
 )
 
-const CipherBlockLen = 8192
+const cipherBlockLen = 8192
 const aeadSizeMask = 0x3FFF
 
-type CipherBlock struct {
-	b [CipherBlockLen]byte
+type cipherMemBlock struct {
+	b [cipherBlockLen]byte
 }
 
 var cipherBlockPool = sync.Pool{
 	New: func() interface{} {
-		return &CipherBlock{}
+		return &cipherMemBlock{}
 	},
 }
 
-func GetCipherBlock() *CipherBlock {
-	return cipherBlockPool.Get().(*CipherBlock)
+func getCipherMemBlock() *cipherMemBlock {
+	return cipherBlockPool.Get().(*cipherMemBlock)
 }
 
-func PutCipherBlock(b *CipherBlock) {
+func putCipherMemBlock(b *cipherMemBlock) {
 	cipherBlockPool.Put(b)
 }
 
@@ -98,8 +98,8 @@ func (b *baseCipherStream) Write(p []byte) (n int, err error) {
 
 	for len(p) > 0 {
 		p2 := p
-		if len(p2) > CipherBlockLen {
-			p2 = p2[:CipherBlockLen]
+		if len(p2) > cipherBlockLen {
+			p2 = p2[:cipherBlockLen]
 		}
 		p = p[len(p2):]
 
@@ -158,16 +158,17 @@ func NewPlainDecrypter(_ []byte, _ int) (CipherStream, error) {
 }
 
 var cipherMethod = map[string]struct {
-	keylen       int
-	ivlen        int
-	newEncrypter func(key, iv []byte) (CipherStream, error)
-	newDecrypter func(key []byte, ivLen int) (CipherStream, error)
+	keylen         int
+	ivlen          int
+	newEncrypter   func(key, iv []byte) (CipherStream, error)
+	newDecrypter   func(key []byte, ivLen int) (CipherStream, error)
+	newCipherBlock func(key []byte, ivLen int) (CipherBlock, error)
 }{
-	"aes-128-gcm":      {16, 16, NewAESGCMEncrypter, NewAESGCMDecrypter},
-	"aes-192-gcm":      {24, 24, NewAESGCMEncrypter, NewAESGCMDecrypter},
-	"aes-256-gcm":      {32, 32, NewAESGCMEncrypter, NewAESGCMDecrypter},
-	"chacha20poly1305": {32, 32, NewChacha20Poly1305Encrypter, NewChacha20Poly1305Decrypter},
-	"plain":            {0, 0, NewPlainEncrypter, NewPlainDecrypter},
+	"aes-128-gcm":      {16, 16, NewAESGCMEncrypter, NewAESGCMDecrypter, NewAESGCMCipherBlock},
+	"aes-192-gcm":      {24, 24, NewAESGCMEncrypter, NewAESGCMDecrypter, NewAESGCMCipherBlock},
+	"aes-256-gcm":      {32, 32, NewAESGCMEncrypter, NewAESGCMDecrypter, NewAESGCMCipherBlock},
+	"chacha20poly1305": {32, 32, NewChacha20Poly1305Encrypter, NewChacha20Poly1305Decrypter, NewChaCha20Poly1305CipherBlock},
+	"plain":            {0, 0, NewPlainEncrypter, NewPlainDecrypter, NewPlainCipherBlock},
 }
 
 func IsAEAD(method string) bool {
@@ -262,8 +263,8 @@ type AEADEncryptCipherStream struct {
 }
 
 func (a *AEADEncryptCipherStream) writeData(p []byte) (n int, err error) {
-	b := GetCipherBlock()
-	defer PutCipherBlock(b)
+	b := getCipherMemBlock()
+	defer putCipherMemBlock(b)
 	dst := b.b[:]
 
 	if a.crypt.AEAD == nil {
@@ -338,8 +339,8 @@ func (a *AEADDecryptCipherStream) Read(p []byte) (n int, err error) {
 		return
 	}
 
-	b := GetCipherBlock()
-	defer PutCipherBlock(b)
+	b := getCipherMemBlock()
+	defer putCipherMemBlock(b)
 
 RETRY:
 	if a.tagLen == 0 {
@@ -371,7 +372,7 @@ RETRY:
 	}
 
 	var data []byte
-	if expected > CipherBlockLen {
+	if expected > cipherBlockLen {
 		data = make([]byte, expected)
 	} else {
 		data = b.b[:expected]
@@ -470,4 +471,117 @@ func NewChacha20Poly1305Decrypter(key []byte, ivLen int) (CipherStream, error) {
 	a.initDecrypter(ivLen, a)
 	a.creater = &chacha20poly1305AEADCreater{key}
 	return a, nil
+}
+
+var zeroBuf [1024]byte
+
+func EnsureCopy(dst, src []byte) []byte {
+	if len(src) > len(dst) {
+		dst = make([]byte, len(src))
+	}
+
+	copy(dst, src)
+
+	if len(src) < len(dst) {
+		dst = dst[:len(src)]
+	}
+
+	return dst
+}
+
+type CipherBlock interface {
+	Encrypt(dst, src []byte) (ciphertext []byte, iv []byte, err error)
+
+	Decrypt(dst, src []byte) (plaintext []byte, iv []byte, err error)
+}
+
+type PlainCipherBlock struct {
+}
+
+func (p *PlainCipherBlock) Encrypt(dst, src []byte) ([]byte, []byte, error) {
+	return EnsureCopy(dst, src), nil, nil
+}
+
+func (p *PlainCipherBlock) Decrypt(dst, src []byte) ([]byte, []byte, error) {
+	return EnsureCopy(dst, src), nil, nil
+}
+
+type AEADCipherBlock struct {
+	creater aeadCreater
+	ivlen   int
+}
+
+func (a *AEADCipherBlock) Decrypt(dst, src []byte) (plaintext []byte, iv []byte, err error) {
+	if len(src) < a.ivlen {
+		err = io.ErrShortBuffer
+		return
+	}
+
+	iv = src[:a.ivlen]
+	src = src[a.ivlen:]
+
+	aead, err := a.creater.NewAEAD(iv)
+	if err != nil {
+		return
+	}
+
+	if len(src) < aead.Overhead() {
+		err = io.ErrShortBuffer
+		return
+	}
+
+	plaintext, err = aead.Open(dst[:0], zeroBuf[:aead.NonceSize()], src, nil)
+	return
+}
+
+func (a *AEADCipherBlock) Encrypt(dst, src []byte) (ciphertext []byte, iv []byte, err error) {
+	if len(dst) < a.ivlen {
+		dst = make([]byte, a.ivlen, a.ivlen+len(src)+128)
+	}
+
+	PutRandomBytes(dst[:a.ivlen])
+	iv = dst[:a.ivlen]
+
+	aead, err := a.creater.NewAEAD(iv)
+	if err != nil {
+		return
+	}
+
+	b2 := aead.Seal(dst[a.ivlen:a.ivlen], zeroBuf[:aead.NonceSize()], src, nil)
+	ciphertext = dst[:a.ivlen+len(b2)]
+	return
+}
+
+func NewAESGCMCipherBlock(key []byte, ivlen int) (CipherBlock, error) {
+	return &AEADCipherBlock{
+		creater: &aesAEADCreater{key},
+		ivlen:   ivlen,
+	}, nil
+}
+
+func NewChaCha20Poly1305CipherBlock(key []byte, ivlen int) (CipherBlock, error) {
+	return &AEADCipherBlock{
+		creater: &chacha20poly1305AEADCreater{key},
+		ivlen:   ivlen,
+	}, nil
+}
+
+func NewPlainCipherBlock([]byte, int) (CipherBlock, error) {
+	return &PlainCipherBlock{}, nil
+}
+
+func NewCipherBlock(method, password string) (cb CipherBlock, err error) {
+	if password == "" && method != "plain" {
+		err = fmt.Errorf("password cannot be empty")
+		return
+	}
+
+	m, ok := cipherMethod[method]
+	if !ok {
+		m, _ = cipherMethod[defaultMethod]
+	}
+
+	key := kdf(password, m.keylen)
+	cb, err = m.newCipherBlock(key, m.ivlen)
+	return
 }

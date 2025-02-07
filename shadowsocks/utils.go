@@ -104,10 +104,50 @@ func GetHeader(host string, port int) (buf []byte, err error) {
 }
 
 type parseContext struct {
+	iv   []byte
 	data []byte
 	addr *SockAddr
 	dec  utils.CipherStream
+	cb   utils.CipherBlock
 	chs  *Config
+}
+
+func ParseAddrWithMultipleBackendsForUDP(b []byte, configs []*Config) (*parseContext, error) {
+	ctxs := make([]*parseContext, 0, len(configs))
+
+	b2 := make([]byte, len(b))
+
+	for _, cfg := range configs {
+		cb, err := utils.NewCipherBlock(cfg.Method, cfg.Password)
+		if err != nil {
+			continue
+		}
+
+		p, iv, err := cb.Decrypt(b2, b)
+		if err != nil {
+			continue
+		}
+
+		addr, data, err := ParseAddr(p)
+		if err != nil {
+			continue
+		}
+
+		ctx := new(parseContext)
+		ctx.data = data
+		ctx.addr = addr
+		ctx.cb = cb
+		ctx.chs = cfg
+		ctx.iv = iv
+
+		ctxs = append(ctxs, ctx)
+	}
+
+	if len(ctxs) == 0 {
+		return nil, errInvalidHeader
+	}
+
+	return ctxs[0], nil
 }
 
 func ParseAddrWithMultipleBackends(b []byte, configs []*Config) (*parseContext, error) {

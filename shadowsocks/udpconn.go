@@ -95,27 +95,35 @@ func (c *UDPConn) fakeReadFrom(b []byte) (int, net.Addr, error) {
 }
 
 func (c *UDPConn) readImpl(b []byte, readfrom func([]byte) (int, net.Addr, error)) (int, net.Addr, error) {
+	cb, err := utils.NewCipherBlock(c.c.Method, c.c.Password)
+	if err != nil {
+		return 0, nil, err
+	}
+
+	b2 := make([]byte, len(b))
 	for {
 		n, addr, err := readfrom(b)
 		if err != nil {
 			return 0, addr, err
 		}
-		if n < c.c.Ivlen {
-			continue
-		}
-		dec, err := utils.NewDecrypter(c.c.Method, c.c.Password)
+
+		p, iv, err := cb.Decrypt(b2, b[:n])
 		if err != nil {
+			if err == io.ErrShortBuffer {
+				continue
+			}
+
 			return 0, addr, err
 		}
-		exists := c.c.udpFilterTestAndAdd(dec.GetIV())
-		if exists {
-			continue
+
+		if len(iv) > 0 {
+			exists := c.c.udpFilterTestAndAdd(iv)
+			if exists {
+				continue
+			}
 		}
-		_, err = dec.Write(b[:n])
-		if err != nil {
-			return 0, addr, err
-		}
-		n, err = dec.Read(b)
+
+		n = copy(b, p)
 		return n, addr, err
 	}
 }
@@ -130,15 +138,11 @@ func (c *UDPConn) Read(b []byte) (n int, err error) {
 }
 
 func (c *UDPConn) WriteTo(b []byte, addr net.Addr) (n int, err error) {
-	enc, err := utils.NewEncrypter(c.c.Method, c.c.Password)
+	cb, err := utils.NewCipherBlock(c.c.Method, c.c.Password)
 	if err != nil {
 		return
 	}
-	_, err = enc.Write(b)
-	if err != nil {
-		return
-	}
-	b2, err := io.ReadAll(enc)
+	b2, _, err := cb.Encrypt(nil, b)
 	if err != nil {
 		return
 	}
@@ -192,11 +196,11 @@ func (c *MultiUDPConn) ReadFrom(b []byte) (n int, addr net.Addr, err error) {
 		}
 		v, ok := c.sessions.Load(addr.String())
 		if !ok {
-			ctx, err := ParseAddrWithMultipleBackends(b2[:n], c.c.Backends)
+			ctx, err := ParseAddrWithMultipleBackendsForUDP(b2[:n], c.c.Backends)
 			if err != nil {
 				continue
 			}
-			exists := ctx.chs.udpFilterTestAndAdd(ctx.dec.GetIV())
+			exists := ctx.chs.udpFilterTestAndAdd(ctx.iv)
 			if exists {
 				continue
 			}
@@ -207,20 +211,24 @@ func (c *MultiUDPConn) ReadFrom(b []byte) (n int, addr net.Addr, err error) {
 			n += copy(b[n:], ctx.data)
 		} else {
 			cfg := v.(*Config)
-			var dec utils.CipherStream
-			dec, err = utils.NewDecrypter(cfg.Method, cfg.Password)
+			var cb utils.CipherBlock
+			cb, err = utils.NewCipherBlock(cfg.Method, cfg.Password)
 			if err != nil {
 				return
 			}
-			_, err = dec.Write(b2[:n])
+			var p []byte
+			var iv []byte
+			p, iv, err = cb.Decrypt(b, b2[:n])
 			if err != nil {
 				return
 			}
-			exists := cfg.udpFilterTestAndAdd(dec.GetIV())
-			if exists {
-				continue
+			if len(iv) > 0 {
+				exists := cfg.udpFilterTestAndAdd(iv)
+				if exists {
+					continue
+				}
 			}
-			n, err = dec.Read(b)
+			n = copy(b, p)
 		}
 		return
 	}
@@ -237,15 +245,11 @@ func (c *MultiUDPConn) WriteTo(b []byte, addr net.Addr) (n int, err error) {
 		return
 	}
 	cfg := v.(*Config)
-	enc, err := utils.NewEncrypter(cfg.Method, cfg.Password)
+	cb, err := utils.NewCipherBlock(cfg.Method, cfg.Password)
 	if err != nil {
 		return
 	}
-	_, err = enc.Write(b)
-	if err != nil {
-		return
-	}
-	b2, err := io.ReadAll(enc)
+	b2, _, err := cb.Encrypt(nil, b)
 	if err != nil {
 		return
 	}
