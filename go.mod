@@ -15,7 +15,7 @@ require (
 	github.com/pkg/errors v0.9.1
 	golang.org/x/crypto v0.31.0
 	golang.org/x/exp v0.0.0-20241108190413-2d47ceb2692f
-	golang.org/x/net v0.31.0
+	golang.org/x/net v0.33.0
 )
 
 require (
