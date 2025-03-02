@@ -620,6 +620,26 @@ func SliceCopy(b []byte) []byte {
 	return c
 }
 
+func checkAddrType(address string) (isDomain, isV4 bool, host string, port int) {
+	host, portStr, err := net.SplitHostPort(address)
+	if err != nil {
+		return
+	}
+	port, err = strconv.Atoi(portStr)
+	if err != nil {
+		return
+	}
+
+	ip := net.ParseIP(host)
+	if ip == nil {
+		isDomain = true
+		return
+	}
+
+	isV4 = ip.To4() != nil
+	return
+}
+
 func isAddrDualStack(address string) bool {
 	host, _, err := net.SplitHostPort(address)
 	if err == nil {
@@ -648,17 +668,22 @@ func DialTCP(address string, cfg *cfg) (*TCPConn, error) {
 	var err error
 	var tconn *utils.UtilsConn
 
-	if cfg.PreferIPv4 && isAddrDualStack(address) {
+	if cfg.NoIPv4 {
+		tconn, err = utils.DialTCP("tcp6", address, context.Background())
+	} else if cfg.NoIPv6 {
+		tconn, err = utils.DialTCP("tcp4", address, context.Background())
+	} else if cfg.PreferIPv4 && isAddrDualStack(address) {
 		ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 		defer cancel()
-		tconn, _ = utils.DialTCP("tcp4", address, ctx)
+
+		tconn, err = utils.DialTCP("tcp4", address, ctx)
+		if err != nil {
+			tconn, err = utils.DialTCP("tcp", address, context.Background())
+		}
 	}
 
-	if tconn == nil {
-		tconn, err = utils.DialTCP("tcp", address, context.Background())
-		if err != nil {
-			return nil, err
-		}
+	if err != nil {
+		return nil, err
 	}
 
 	return newTCPConn(tconn, cfg), nil

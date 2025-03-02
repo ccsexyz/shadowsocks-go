@@ -35,6 +35,9 @@ type Config struct {
 	ObfsHost       []string  `json:"obfshost"`
 	ObfsAlive      bool      `json:"obfsalive"`
 	PreferIPv4     bool      `json:"prefer_ipv4"`
+	NoIPv4         bool      `json:"no_ipv4"`
+	NoIPv6         bool      `json:"no_ipv6"`
+	LocalResolve   bool      `json:"local_resolve"`
 	Limit          int       `json:"limit"`
 	LimitPerConn   int       `json:"limitperconn"`
 	LogHTTP        bool      `json:"loghttp"`
