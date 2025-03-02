@@ -620,6 +620,26 @@ func SliceCopy(b []byte) []byte {
 	return c
 }
 
+func checkAddrType(address string) (isDomain, isV4 bool, host string, port int) {
+	host, portStr, err := net.SplitHostPort(address)
+	if err != nil {
+		return
+	}
+	port, err = strconv.Atoi(portStr)
+	if err != nil {
+		return
+	}
+
+	ip := net.ParseIP(host)
+	if ip == nil {
+		isDomain = true
+		return
+	}
+
+	isV4 = ip.To4() != nil
+	return
+}
+
 func isAddrDualStack(address string) bool {
 	host, _, err := net.SplitHostPort(address)
 	if err == nil {

@@ -6,6 +6,7 @@ import (
 	"hash/crc32"
 	"math/rand"
 	"net"
+	"strconv"
 	"strings"
 	"time"
 
@@ -46,7 +47,76 @@ func dialSocks5WithOptions(opt *DialOptions) (conn Conn, err error) {
 	return
 }
 
+func checkAndModifyTarget(opt *DialOptions) (newOpt *DialOptions, err error) {
+	c := opt.C
+
+	if !c.LocalResolve {
+		return
+	}
+
+	isDomain, isV4, host, port := checkAddrType(opt.Target)
+	if !isDomain {
+		if isV4 && c.NoIPv4 {
+			err = fmt.Errorf("IPv4 is disabled")
+		} else if !isV4 && c.NoIPv6 {
+			err = fmt.Errorf("IPv6 is disabled")
+		}
+		return
+	}
+
+	ips, err := net.LookupIP(host)
+	if err != nil {
+		return
+	}
+
+	noIPv6 := c.NoIPv6
+	if c.PreferIPv4 && !noIPv6 {
+		hasV4 := false
+		hasV6 := false
+
+		addrCount := len(ips)
+		for i := 0; i < addrCount && !(hasV4 && hasV6); i++ {
+			ip := ips[i]
+			if ip.To4() != nil {
+				hasV4 = true
+			} else if ip.To16() != nil && ip.To4() == nil {
+				hasV6 = true
+			}
+		}
+
+		if hasV4 && hasV6 {
+			noIPv6 = true
+		}
+	}
+
+	for _, idx := range rand.Perm(len(ips)) {
+		ip := ips[idx]
+
+		if c.NoIPv4 && ip.To4() != nil {
+			continue
+		}
+		if noIPv6 && ip.To16() != nil && ip.To4() == nil {
+			continue
+		}
+
+		newOpt = new(DialOptions)
+		*newOpt = *opt // copy the options to avoid modifying the original one
+		newOpt.Target = net.JoinHostPort(ip.String(), strconv.Itoa(port))
+		return
+	}
+	err = fmt.Errorf("resolve %s fail, no ip found", host)
+	return
+}
+
 func dialSSWithOptions(opt *DialOptions) (conn Conn, err error) {
+	newOpt, err := checkAndModifyTarget(opt)
+	if err != nil {
+		return
+	}
+	if newOpt != nil {
+		opt = newOpt
+	}
+
 	c := opt.C
 	if c.Method == "socks5" {
 		return dialSocks5WithOptions(opt)
