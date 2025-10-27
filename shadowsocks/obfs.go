@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
-	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -553,14 +552,7 @@ func DialObfs(target string, c *Config) (conn Conn, err error) {
 	} else {
 		host = c.ObfsHost[rand.Intn(len(c.ObfsHost))]
 	}
-	_, port, err := net.SplitHostPort(c.Remoteaddr)
-	if err != nil {
-		return
-	}
 	if c.ObfsMethod == "websocket" {
-		if port != "80" {
-			host = host + port
-		}
 		conn = &SimpleHTTPConn{
 			Conn: conn,
 			host: host,
@@ -570,9 +562,6 @@ func DialObfs(target string, c *Config) (conn Conn, err error) {
 		return
 	}
 	if c.ObfsMethod == "tls" {
-		if port != "443" {
-			host = host + port
-		}
 		conn = &SimpleTLSConn{
 			Conn:    conn,
 			host:    host,
