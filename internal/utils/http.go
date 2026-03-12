@@ -178,7 +178,7 @@ func (p *HTTPHeaderParser) Read(b []byte) (ok bool, err error) {
 		it := bufslice.length
 		c := buf[it]
 		if !isValidChar(c) {
-			err = errors.Wrapf(errInvalidChar, "%u %d", c, bufslice.length)
+			err = errors.Wrapf(errInvalidChar, "%d %d", c, bufslice.length)
 			return
 		}
 		bufslice.length++
