@@ -88,7 +88,7 @@ func (lis *listener) checkProto(r *http.Request) bool {
 }
 
 func (lis *listener) getTargetByHost(host string) string {
-	target, _ := lis.c.TargetMap[host]
+	target, _ := lis.c.TargetMap[strings.ToLower(host)]
 	return target
 }
 
@@ -96,13 +96,19 @@ func (lis *listener) getHttpProxyTarget(r *http.Request) string {
 	if r != nil {
 		for key, values := range r.Header {
 			for _, value := range values {
-				tKey := strings.ToLower(fmt.Sprintf("%s %s", key, value))
+				tKey := fmt.Sprintf("%s %s", key, value)
 
 				target := lis.getTargetByHost(tKey)
 				if len(target) > 0 {
 					return target
 				}
 			}
+		}
+
+		uriKey := fmt.Sprintf("%s %s", r.Method, r.RequestURI)
+		target := lis.getTargetByHost(uriKey)
+		if len(target) > 0 {
+			return target
 		}
 	}
 
