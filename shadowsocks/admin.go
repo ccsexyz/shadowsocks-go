@@ -75,13 +75,13 @@ func sampleTraffic() {
 		trafficHistory.buf = newBuf
 	}
 	for i, c := range cfgs {
-		if c.stat != nil {
-			rr, wr, cr := c.stat.Snap()
+		if c.getStat() != nil {
+			rr, wr, cr := c.getStat().Snap()
 			trafficHistory.buf[base+i] = trafficSample{
 				readRate:  rr,
 				writRate:  wr,
 				connRate:  cr,
-				connCount: atomic.LoadInt32(&c.stat.connections),
+				connCount: atomic.LoadInt32(&c.getStat().connections),
 			}
 		}
 	}
@@ -179,17 +179,17 @@ func buildConfigSummary(i int, c *Config, numConfigs int) configSummary {
 		Type:       c.Type,
 		LocalAddr:  c.Localaddr,
 		RemoteAddr: c.Remoteaddr,
-		Disabled:   c.disable,
+		Disabled:   c.isDisabled(),
 		AutoProxy:  c.AutoProxy,
 		LogHTTP:    c.LogHTTP,
 		Method:     c.Method,
 	}
-	if c.stat != nil {
-		s.Connections = atomic.LoadInt32(&c.stat.connections)
-		s.TotalConnections = atomic.LoadInt64(&c.stat.totalConnections)
-		s.PeakConnections = atomic.LoadInt32(&c.stat.peakConnections)
-		s.TotalReadBytes = atomic.LoadInt64(&c.stat.totalReadBytes)
-		s.TotalWritBytes = atomic.LoadInt64(&c.stat.totalWritBytes)
+	if c.getStat() != nil {
+		s.Connections = atomic.LoadInt32(&c.getStat().connections)
+		s.TotalConnections = atomic.LoadInt64(&c.getStat().totalConnections)
+		s.PeakConnections = atomic.LoadInt32(&c.getStat().peakConnections)
+		s.TotalReadBytes = atomic.LoadInt64(&c.getStat().totalReadBytes)
+		s.TotalWritBytes = atomic.LoadInt64(&c.getStat().totalWritBytes)
 	}
 	// read latest rates from traffic history
 	trafficHistory.mu.Lock()
@@ -211,13 +211,13 @@ func buildConfigSummary(i int, c *Config, numConfigs int) configSummary {
 		bs := backendSummary{
 			Nickname:   b.Nickname,
 			RemoteAddr: b.Remoteaddr,
-			Disabled:   b.disable,
+			Disabled:   b.isDisabled(),
 			Method:     b.Method,
 		}
-		if b.stat != nil {
-			bs.Connections = atomic.LoadInt32(&b.stat.connections)
-			bs.TotalReadBytes = atomic.LoadInt64(&b.stat.totalReadBytes)
-			bs.TotalWritBytes = atomic.LoadInt64(&b.stat.totalWritBytes)
+		if b.getStat() != nil {
+			bs.Connections = atomic.LoadInt32(&b.getStat().connections)
+			bs.TotalReadBytes = atomic.LoadInt64(&b.getStat().totalReadBytes)
+			bs.TotalWritBytes = atomic.LoadInt64(&b.getStat().totalWritBytes)
 		}
 		s.Backends = append(s.Backends, bs)
 	}
@@ -355,7 +355,7 @@ func handleToggleConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid body", http.StatusBadRequest)
 		return
 	}
-	cfgs[idx].disable = body.Disabled
+	cfgs[idx].setDisabled(body.Disabled)
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
@@ -421,7 +421,7 @@ func handleToggleBackend(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, b := range cfgs[idx].Backends {
 		if b.Nickname == nickname {
-			b.disable = body.Disabled
+			b.setDisabled(body.Disabled)
 			writeJSON(w, map[string]string{"status": "ok"})
 			return
 		}
@@ -436,10 +436,10 @@ func handleAggregateStats(w http.ResponseWriter, r *http.Request) {
 		UptimeSeconds: int64(time.Since(adminStartTime).Seconds()),
 	}
 	for _, c := range cfgs {
-		if c.stat != nil {
-			s.TotalConnections += atomic.LoadInt32(&c.stat.connections)
-			s.TotalReadBytes += atomic.LoadInt64(&c.stat.totalReadBytes)
-			s.TotalWritBytes += atomic.LoadInt64(&c.stat.totalWritBytes)
+		if c.getStat() != nil {
+			s.TotalConnections += atomic.LoadInt32(&c.getStat().connections)
+			s.TotalReadBytes += atomic.LoadInt64(&c.getStat().totalReadBytes)
+			s.TotalWritBytes += atomic.LoadInt64(&c.getStat().totalWritBytes)
 		}
 	}
 	writeJSON(w, s)
@@ -504,11 +504,11 @@ func handleActiveConnections(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	c := cfgs[idx]
-	if c.stat == nil || c.stat.tracker == nil {
+	if c.getStat() == nil || c.getStat().tracker == nil {
 		writeJSON(w, []interface{}{})
 		return
 	}
-	writeJSON(w, c.stat.tracker.Active())
+	writeJSON(w, c.getStat().tracker.Active())
 }
 
 func handleGetConnection(w http.ResponseWriter, r *http.Request) {
@@ -530,18 +530,18 @@ func handleGetConnection(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	c := cfgs[idx]
-	if c.stat == nil || c.stat.tracker == nil {
+	if c.getStat() == nil || c.getStat().tracker == nil {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
 	// search active first, then history
-	for _, rec := range c.stat.tracker.Active() {
+	for _, rec := range c.getStat().tracker.Active() {
 		if rec.ID == cid {
 			writeJSON(w, rec)
 			return
 		}
 	}
-	for _, rec := range c.stat.tracker.History() {
+	for _, rec := range c.getStat().tracker.History() {
 		if rec.ID == cid {
 			writeJSON(w, rec)
 			return
@@ -563,11 +563,11 @@ func handleConnectionHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	c := cfgs[idx]
-	if c.stat == nil || c.stat.tracker == nil {
+	if c.getStat() == nil || c.getStat().tracker == nil {
 		writeJSON(w, []interface{}{})
 		return
 	}
-	writeJSON(w, c.stat.tracker.History())
+	writeJSON(w, c.getStat().tracker.History())
 }
 
 func handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
@@ -673,12 +673,12 @@ func handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 			if v, e := toInt(val); e == nil && v >= 0 {
 				c.Limit = v
 				// update all limiters
-				for _, l := range c.limiters {
+				for _, l := range c.getLimiters() {
 					l.SetLimit(v)
 				}
 				// also update backend limiters
 				for _, b := range c.Backends {
-					for _, l := range b.limiters {
+					for _, l := range b.getLimiters() {
 						l.SetLimit(v)
 					}
 				}
@@ -866,22 +866,22 @@ func handleAddBackend(w http.ResponseWriter, r *http.Request) {
 	if b.Password == "" {
 		b.Password = c.Password
 	}
-	b.Die = c.Die
-	b.stat = &statServer{}
-	b.pool = c.pool
+	b.initRuntime().Die = c.DieChan()
+	b.setStat(&statServer{})
+	b.setPool(c.getPool())
 	b.LogHTTP = c.LogHTTP
 	b.Timeout = c.Timeout
 	b.PreferIPv4 = c.PreferIPv4
 	b.Obfs = c.Obfs
 	b.ObfsHost = append([]string{}, c.ObfsHost...)
-	b.autoProxyCtx = c.autoProxyCtx
+	b.setAutoProxyCtx(c.getAutoProxyCtx())
 	CheckLogFile(b)
 	CheckBasicConfig(b)
 	if c.LimitPerConn != 0 {
 		b.LimitPerConn = c.LimitPerConn
 	}
-	if len(c.limiters) != 0 {
-		b.limiters = append(b.limiters, c.limiters...)
+	if parentLimiters := c.getLimiters(); len(parentLimiters) != 0 {
+		b.initRuntime().limiters = append(b.initRuntime().limiters, parentLimiters...)
 	}
 	c.Backends = append(c.Backends, b)
 	writeJSON(w, map[string]interface{}{"status": "ok", "index": len(c.Backends) - 1})

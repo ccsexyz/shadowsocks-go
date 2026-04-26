@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"math/rand/v2"
-	"sync"
 	"time"
 
 	"github.com/ccsexyz/shadowsocks-go/crypto"
@@ -18,229 +17,6 @@ const (
 
 	aead2022TimestampDiff = 30
 )
-
-type Aead2022Conn struct {
-	Conn
-	readCipher  *crypto.TcpCipher2022
-	writeCipher *crypto.TcpCipher2022
-	buf         []byte
-	method      string
-	psk         []byte
-	once        sync.Once
-	rerr        error
-
-	svSalt  []byte
-	cliSalt []byte
-
-	rlbuf []byte
-	rdbuf []byte
-	wlbuf []byte
-	wdbuf []byte
-}
-
-func newAead2022Conn(conn Conn, readCipher, writeCipher *crypto.TcpCipher2022) *Aead2022Conn {
-	return &Aead2022Conn{
-		Conn:        conn,
-		readCipher:  readCipher,
-		writeCipher: writeCipher,
-	}
-}
-
-func newServerAead2022Conn(conn Conn, readCipher *crypto.TcpCipher2022, method string, psk, svSalt, cliSalt []byte) *Aead2022Conn {
-	return &Aead2022Conn{
-		Conn:       conn,
-		readCipher: readCipher,
-		method:     method,
-		psk:        psk,
-		svSalt:     svSalt,
-		cliSalt:    cliSalt,
-	}
-}
-
-func newClientAead2022Conn(conn Conn, writeCipher *crypto.TcpCipher2022, method string, psk []byte) *Aead2022Conn {
-	return &Aead2022Conn{
-		Conn:        conn,
-		writeCipher: writeCipher,
-		method:      method,
-		psk:         psk,
-	}
-}
-
-func (c *Aead2022Conn) doServerHandshake() error {
-	svSalt := make([]byte, len(c.psk))
-	_, err := io.ReadFull(c.Conn, svSalt)
-	if err != nil {
-		return fmt.Errorf("read server salt: %w", err)
-	}
-	svCiph, err := crypto.NewTcpCipher2022(c.method, c.psk, svSalt)
-	if err != nil {
-		return err
-	}
-	hdrLen := 1 + 8 + len(c.psk) + 2 + svCiph.Overhead()
-	svBuf := make([]byte, hdrLen)
-	_, err = io.ReadFull(c.Conn, svBuf)
-	if err != nil {
-		return fmt.Errorf("read server header: %w", err)
-	}
-	svBuf, ok := svCiph.DecryptPacket(svBuf)
-	if !ok {
-		return fmt.Errorf("decrypt server header failed")
-	}
-	if svBuf[0] != aead2022ServerType {
-		return fmt.Errorf("unexpected server stream type: %d", svBuf[0])
-	}
-	dataLen := int(binary.BigEndian.Uint16(svBuf[1+8+len(c.psk):]))
-	if dataLen > 0 {
-		dataBuf := make([]byte, dataLen+svCiph.Overhead())
-		_, err = io.ReadFull(c.Conn, dataBuf)
-		if err != nil {
-			return fmt.Errorf("read initial server data: %w", err)
-		}
-		dataBuf, ok = svCiph.DecryptPacket(dataBuf)
-		if !ok {
-			return fmt.Errorf("decrypt initial server data failed")
-		}
-		c.buf = dataBuf[:dataLen]
-	} else {
-		tagBuf := make([]byte, svCiph.Overhead())
-		_, err = io.ReadFull(c.Conn, tagBuf)
-		if err != nil {
-			return fmt.Errorf("read empty server data tag: %w", err)
-		}
-		tagBuf, ok = svCiph.DecryptPacket(tagBuf)
-		if !ok {
-			return fmt.Errorf("decrypt empty server data failed")
-		}
-	}
-	c.readCipher = svCiph
-	return nil
-}
-
-func (c *Aead2022Conn) Read(b []byte) (n int, err error) {
-	if c.readCipher == nil {
-		c.once.Do(func() {
-			c.rerr = c.doServerHandshake()
-		})
-		if c.rerr != nil {
-			return 0, c.rerr
-		}
-	}
-	if len(c.buf) > 0 {
-		n = copy(b, c.buf)
-		c.buf = c.buf[n:]
-		if len(c.buf) == 0 {
-			c.buf = nil
-		}
-		return n, nil
-	}
-
-	lbLen := 2 + c.readCipher.Overhead()
-	if cap(c.rlbuf) < lbLen {
-		c.rlbuf = make([]byte, lbLen)
-	}
-	lb := c.rlbuf[:lbLen]
-	_, err = io.ReadFull(c.Conn, lb)
-	if err != nil {
-		return 0, err
-	}
-	var ok bool
-	lb, ok = c.readCipher.DecryptPacket(lb)
-	if !ok {
-		return 0, fmt.Errorf("decrypt length failed")
-	}
-	length := int(binary.BigEndian.Uint16(lb[:2]))
-
-	dataLen := length + c.readCipher.Overhead()
-	if cap(c.rdbuf) < dataLen {
-		c.rdbuf = make([]byte, dataLen)
-	}
-	data := c.rdbuf[:dataLen]
-	_, err = io.ReadFull(c.Conn, data)
-	if err != nil {
-		return 0, err
-	}
-	data, ok = c.readCipher.DecryptPacket(data)
-	if !ok {
-		return 0, fmt.Errorf("decrypt data failed")
-	}
-	plain := data[:length]
-
-	n = copy(b, plain)
-	if n < len(plain) {
-		c.buf = plain[n:]
-	}
-	return n, nil
-}
-func (c *Aead2022Conn) Write(b []byte) (n int, err error) {
-	if c.svSalt != nil {
-		chunk := b
-		if len(chunk) > 0xFFFF {
-			chunk = chunk[:0xFFFF]
-		}
-		b = b[len(chunk):]
-
-		svCiph, cerr := crypto.NewTcpCipher2022(c.method, c.psk, c.svSalt)
-		if cerr != nil {
-			return 0, cerr
-		}
-		svHdr := make([]byte, 1+8+len(c.cliSalt)+2)
-		svHdr[0] = aead2022ServerType
-		binary.BigEndian.PutUint64(svHdr[1:9], uint64(time.Now().Unix()))
-		copy(svHdr[9:9+len(c.cliSalt)], c.cliSalt)
-		binary.BigEndian.PutUint16(svHdr[9+len(c.cliSalt):11+len(c.cliSalt)], uint16(len(chunk)))
-		svHdr = svCiph.EncryptPacket(svHdr)
-
-		data := make([]byte, len(chunk), len(chunk)+svCiph.Overhead())
-		copy(data, chunk)
-		data = svCiph.EncryptPacket(data)
-
-		resp := make([]byte, len(c.svSalt)+len(svHdr)+len(data))
-		copy(resp, c.svSalt)
-		copy(resp[len(c.svSalt):], svHdr)
-		copy(resp[len(c.svSalt)+len(svHdr):], data)
-		_, err = c.Conn.Write(resp)
-		if err != nil {
-			return 0, err
-		}
-
-		c.writeCipher = svCiph
-		c.svSalt = nil
-		c.cliSalt = nil
-		n = len(chunk)
-	}
-
-	for len(b) > 0 {
-		chunk := b
-		if len(chunk) > 0xFFFF {
-			chunk = chunk[:0xFFFF]
-		}
-		b = b[len(chunk):]
-
-		overhead := c.writeCipher.Overhead()
-		lbLen := 2 + overhead
-		if cap(c.wlbuf) < lbLen {
-			c.wlbuf = make([]byte, lbLen)
-		}
-		lb := c.wlbuf[:2:lbLen]
-		binary.BigEndian.PutUint16(lb[:2], uint16(len(chunk)))
-		lb = c.writeCipher.EncryptPacket(lb)
-
-		dataLen := len(chunk) + overhead
-		if cap(c.wdbuf) < dataLen {
-			c.wdbuf = make([]byte, dataLen)
-		}
-		data := c.wdbuf[:len(chunk):dataLen]
-		copy(data, chunk)
-		data = c.writeCipher.EncryptPacket(data)
-
-		_, err = c.Conn.WriteBuffers([][]byte{lb, data})
-		if err != nil {
-			return n, err
-		}
-		n += len(chunk)
-	}
-	return
-}
 
 func buildAead2022Header(cipher *crypto.TcpCipher2022, salt []byte, addr Addr, data []byte) []byte {
 	ah := addr.Header()
@@ -379,7 +155,7 @@ func ss2022AcceptHandler(conn Conn, lis *listener) AcceptResult {
 	data := rest[2+padSize:]
 
 	svSalt := utils.GetRandomBytes(saltLen)
-	ssConn := newServerAead2022Conn(conn, ciph, lis.c.Method, psk, svSalt, salt)
+	ssConn := newCryptoConn(conn, newServerAead2022Codec(lis.c.Method, psk, svSalt, salt, ciph))
 	conn.SetDst(addr)
 
 	if len(data) > 0 {
@@ -391,7 +167,7 @@ func ss2022AcceptHandler(conn Conn, lis *listener) AcceptResult {
 func ss2022Dial(opt *DialOptions) (conn Conn, err error) {
 	c := opt.C
 
-	var tconn *TCPConn
+	var tconn *BaseConn
 	if c.Obfs {
 		conn, err = DialObfs(c.Remoteaddr, c)
 	} else {
@@ -443,7 +219,7 @@ func ss2022Dial(opt *DialOptions) (conn Conn, err error) {
 	c.Log("ss2022Dial: header sent")
 	opt.Data = nil
 
-	ssConn := newClientAead2022Conn(conn, ciph, c.Method, psk)
+	ssConn := newCryptoConn(conn, newClientAead2022Codec(c.Method, psk, ciph))
 	return ssConn, nil
 }
 

@@ -89,26 +89,6 @@ type Conn interface {
 	WriteBuffers([][]byte) (int, error)
 }
 
-// CopyConn implements Conn
-type CopyConn struct {
-	net.Conn
-}
-
-// WriteBuffers directly copy all buffers into a larger buf and send it
-func (conn *CopyConn) WriteBuffers(bufs [][]byte) (n int, err error) {
-	for _, v := range bufs {
-		n += len(v)
-	}
-	buf := GetBuf(n)
-	defer PutBuf(buf)
-	n = 0
-	for _, v := range bufs {
-		n += copy(buf[n:], v)
-	}
-	n, err = conn.Conn.Write(buf)
-	return
-}
-
 // UtilsConn is a net.Conn that implement the interface Conn
 type UtilsConn struct {
 	net.Conn

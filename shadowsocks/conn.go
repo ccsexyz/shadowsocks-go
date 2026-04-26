@@ -1,12 +1,8 @@
 package ss
 
 import (
-	"io"
-	"math/rand/v2"
 	"net"
-	"time"
 
-	"github.com/ccsexyz/shadowsocks-go/crypto"
 	"github.com/ccsexyz/shadowsocks-go/internal/utils"
 )
 
@@ -41,198 +37,28 @@ type Unwrapper interface {
 
 type cfg = Config
 
-type cfgCtx struct {
-	c *Config
-}
-
-func (ctx *cfgCtx) GetCfg() *Config {
-	return ctx.c
-}
-
-type dstCtx struct {
+// BaseConn wraps a raw net.Conn with WriteBuffers support and connection metadata.
+type BaseConn struct {
+	net.Conn
+	cfg  *Config
 	dst  Addr
 	host string
 }
 
-func (ctx *dstCtx) SetDst(dst Addr) {
-	ctx.dst = dst
+func (c *BaseConn) GetCfg() *Config     { return c.cfg }
+func (c *BaseConn) SetDst(dst Addr)     { c.dst = dst }
+func (c *BaseConn) SetHost(host string) { c.host = host }
+func (c *BaseConn) GetDst() Addr        { return c.dst }
+func (c *BaseConn) GetHost() string     { return c.host }
+
+func (c *BaseConn) WriteBuffers(bufs [][]byte) (n int, err error) {
+	buffers := net.Buffers(bufs)
+	n64, err := buffers.WriteTo(c.Conn)
+	return int(n64), err
 }
 
-func (ctx *dstCtx) SetHost(host string) {
-	ctx.host = host
-}
-
-func (ctx *dstCtx) GetDst() Addr {
-	return ctx.dst
-}
-
-func (ctx *dstCtx) GetHost() string {
-	return ctx.host
-}
-
-type TCPConn struct {
-	utils.Conn
-	cfgCtx
-	dstCtx
-}
-
-func newTCPConn(conn utils.Conn, cfg *cfg) *TCPConn {
-	return &TCPConn{
-		Conn: conn,
-		cfgCtx: cfgCtx{
-			c: cfg,
-		},
-	}
-}
-
-func newTCPConn2(conn net.Conn, cfg *cfg) *TCPConn {
-	return newTCPConn(utils.NewConn(conn), cfg)
-}
-
-type DebugConn struct {
-	Conn
-	c *Config
-}
-
-func (c *DebugConn) Unwrap() net.Conn { return c.Conn }
-
-func NewDebugConn(conn Conn, c *Config) *DebugConn {
-	return &DebugConn{Conn: conn, c: c}
-}
-
-func (c *DebugConn) Read(b []byte) (n int, err error) {
-	n, err = c.Conn.Read(b)
-	if err == nil && n > 0 {
-		c.c.LogD("read", n, "bytes from", c.RemoteAddr(), b[:n])
-	}
-	return
-}
-
-func (c *DebugConn) Write(b []byte) (n int, err error) {
-	n, err = c.Conn.Write(b)
-	if err == nil && n > 0 {
-		c.c.LogD("write", n, "bytes to", c.RemoteAddr(), "from", c.LocalAddr(), b[:n])
-	}
-	return
-}
-
-func debugAcceptHandler(conn Conn, lis *listener) (c Conn) {
-	if lis.c.Debug {
-		c = &DebugConn{
-			Conn: conn,
-			c:    lis.c,
-		}
-	} else {
-		c = conn
-	}
-	return
-}
-
-type SsConn struct {
-	Conn
-	enc        crypto.CipherStream
-	dec        crypto.CipherStream
-	c          *Config
-	deferClose bool
-}
-
-func (c *SsConn) Unwrap() net.Conn { return c.Conn }
-
-func (c *SsConn) GetConfig() *Config {
-	return c.c
-}
-
-func (c *SsConn) Close() error {
-	if c.deferClose {
-		go func() {
-			time.Sleep(time.Duration(rand.Int()%64+8) * time.Second)
-			c.Conn.Close()
-		}()
-		return nil
-	}
-	return c.Conn.Close()
-}
-
-func (c *SsConn) DeferClose() {
-	c.deferClose = true
-}
-
-func (c *SsConn) CancelDeferClose() {
-	c.deferClose = false
-}
-
-func (c *SsConn) Read(b []byte) (n int, err error) {
-	n, err = c.dec.Read(b)
-	if n > 0 {
-		return
-	}
-
-RETRY:
-	n, err = c.Conn.Read(b)
-	if err != nil {
-		return
-	}
-
-	_, err = c.dec.Write(b[:n])
-	if err != nil {
-		return
-	}
-
-	n, err = c.dec.Read(b)
-	if err != nil {
-		if err == io.EOF {
-			goto RETRY
-		}
-		return
-	}
-
-	return
-}
-
-func (c *SsConn) Write(b []byte) (n int, err error) {
-	return c.WriteBuffers([][]byte{b})
-}
-
-func (c *SsConn) WriteBuffers(bufs [][]byte) (n int, err error) {
-	defer func() {
-		if err != nil {
-			n = 0
-		}
-	}()
-
-	for _, b := range bufs {
-		var n2 int
-		n2, err = c.enc.Write(b)
-		if err != nil {
-			return
-		}
-		n += n2
-	}
-
-	wbufs := make([][]byte, 0, len(bufs)+1)
-	for _, b := range bufs {
-		n2, err2 := c.enc.Read(b)
-		if err2 != nil {
-			if err2 != io.EOF {
-				err = err2
-				return
-			}
-		}
-		wbufs = append(wbufs, b[:n2])
-	}
-
-	rem := utils.GetBuf(buffersize)
-	n3, err3 := c.enc.Read(rem)
-	if err3 != nil && err3 != io.EOF {
-		utils.PutBuf(rem)
-		err = err3
-		return
-	}
-	wbufs = append(wbufs, rem[:n3])
-
-	_, err = c.Conn.WriteBuffers(wbufs)
-	utils.PutBuf(rem)
-	return
+func newBaseConn(conn net.Conn, cfg *cfg) *BaseConn {
+	return &BaseConn{Conn: conn, cfg: cfg}
 }
 
 type LimitConn struct {
@@ -273,15 +99,19 @@ func (c *LimitConn) WriteBuffers(b [][]byte) (n int, err error) {
 	return
 }
 
-func limitAcceptHandler(conn Conn, lis *listener) AcceptResult {
-	limiters := make([]*Limiter, len(lis.c.limiters))
-	copy(limiters, lis.c.limiters)
-	if lis.c.LimitPerConn != 0 {
-		limiters = append(limiters, NewLimiter(lis.c.LimitPerConn))
+func buildLimiters(c *Config) []*Limiter {
+	limiters := make([]*Limiter, len(c.getLimiters()))
+	copy(limiters, c.getLimiters())
+	if c.LimitPerConn != 0 {
+		limiters = append(limiters, NewLimiter(c.LimitPerConn))
 	}
+	return limiters
+}
+
+func limitAcceptHandler(conn Conn, lis *listener) AcceptResult {
 	return AcceptResult{AcceptContinue, &LimitConn{
 		Conn:      GetConn(conn),
-		Rlimiters: limiters,
+		Rlimiters: buildLimiters(lis.c),
 	}}
 }
 

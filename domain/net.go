@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net"
 	"os"
-	"strconv"
 	"time"
 )
 
@@ -36,13 +35,4 @@ func CheckConn(conn net.Conn) bool {
 		return true
 	}
 	return false
-}
-
-func SplitHostAndPort(hostport string) (host string, port int, err error) {
-	host, portStr, err := net.SplitHostPort(hostport)
-	if err != nil {
-		return
-	}
-	port, err = strconv.Atoi(portStr)
-	return
 }

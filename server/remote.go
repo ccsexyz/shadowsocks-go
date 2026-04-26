@@ -11,7 +11,7 @@ import (
 func RunMultiTCPRemoteServer(c *ss.Config) {
 	for _, v := range c.Backends {
 		hits := 0
-		v.Any = &hits
+		v.InitRuntime().Any = &hits
 	}
 	handlers := []ss.AcceptHandler{ss.LimitHandler}
 	if c.Obfs {

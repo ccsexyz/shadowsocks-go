@@ -69,6 +69,40 @@ type ProxyConfig struct {
 	MITM      bool   `json:"mitm"`
 }
 
+// runtime holds all live state for a Config. It is never JSON-serialized.
+type runtime struct {
+	limiters      []*Limiter
+	Vlogger       *log.Logger
+	Dlogger       *log.Logger
+	Logger        *log.Logger
+	logfile       *os.File
+	Any           interface{}
+	Die           chan bool
+	pool          *ConnPool
+	closers       []cb
+	tcpFilterLock sync.Mutex
+	tcpFilterOnce sync.Once
+	tcpFilter     bytesFilter
+	udpFilterOnce sync.Once
+	udpFilter     bytesFilter
+	tcpIvChecker  ivChecker
+	autoProxyCtx  *autoProxy
+	chnListCtx    *chnRouteList
+	crctbl        *crc32.Table
+	disable       bool
+	stat          *statServer
+}
+
+func newRuntime() *runtime {
+	return &runtime{Die: make(chan bool)}
+}
+
+func (rt *runtime) initStat() {
+	if rt.stat == nil {
+		rt.stat = &statServer{}
+	}
+}
+
 type Config struct {
 	Nickname       string    `json:"nickname"`
 	Verbose        bool      `json:"verbose"`
@@ -94,27 +128,143 @@ type Config struct {
 	LimitConfig
 	ProxyConfig
 
-	limiters      []*Limiter
-	Vlogger       *log.Logger
-	Dlogger       *log.Logger
-	Logger        *log.Logger
-	logfile       *os.File
-	Any           interface{}
-	Die           chan bool
-	pool          *ConnPool
-	closers       []cb
-	tcpFilterLock sync.Mutex
-	tcpFilterOnce sync.Once
-	tcpFilter     bytesFilter
-	udpFilterOnce sync.Once
-	udpFilter     bytesFilter
-	tcpIvChecker  ivChecker
-	autoProxyCtx  *autoProxy
-	chnListCtx    *chnRouteList
-	crctbl        *crc32.Table
-	disable       bool
-	stat          *statServer
+	rt *runtime
 }
+
+// initRuntime lazily initializes the runtime and returns it.
+func (c *Config) initRuntime() *runtime {
+	if c.rt == nil {
+		c.rt = newRuntime()
+	}
+	return c.rt
+}
+
+// InitRuntime is the exported version of initRuntime.
+func (c *Config) InitRuntime() *runtime { return c.initRuntime() }
+
+// Runtime accessors — all runtime state goes through these methods.
+func (c *Config) getLimiters() []*Limiter {
+	if c.rt == nil {
+		return nil
+	}
+	return c.rt.limiters
+}
+func (c *Config) addLimiter(l *Limiter) { c.initRuntime().limiters = append(c.rt.limiters, l) }
+
+func (c *Config) getLogger() *log.Logger {
+	if c.rt == nil {
+		return nil
+	}
+	return c.rt.Logger
+}
+func (c *Config) getVLogger() *log.Logger {
+	if c.rt == nil {
+		return nil
+	}
+	return c.rt.Vlogger
+}
+func (c *Config) getDLogger() *log.Logger {
+	if c.rt == nil {
+		return nil
+	}
+	return c.rt.Dlogger
+}
+
+func (c *Config) getLogFile() *os.File {
+	if c.rt == nil {
+		return nil
+	}
+	return c.rt.logfile
+}
+
+func (c *Config) getAny() interface{} {
+	if c.rt == nil {
+		return nil
+	}
+	return c.rt.Any
+}
+
+func (c *Config) DieChan() chan bool { return c.initRuntime().Die }
+
+func (c *Config) getPool() *ConnPool {
+	if c.rt == nil {
+		return nil
+	}
+	return c.rt.pool
+}
+func (c *Config) setPool(p *ConnPool) { c.initRuntime().pool = p }
+
+func (c *Config) addCloser(f cb) { c.initRuntime().closers = append(c.rt.closers, f) }
+func (c *Config) getClosers() []cb {
+	if c.rt == nil {
+		return nil
+	}
+	return c.rt.closers
+}
+
+func (c *Config) getTCPFilter() bytesFilter {
+	if c.rt == nil {
+		return nil
+	}
+	return c.rt.tcpFilter
+}
+func (c *Config) getTCPFilterLock() *sync.Mutex { return &c.initRuntime().tcpFilterLock }
+func (c *Config) getTCPFilterOnce() *sync.Once  { return &c.initRuntime().tcpFilterOnce }
+func (c *Config) setTCPFilter(f bytesFilter)    { c.initRuntime().tcpFilter = f }
+
+func (c *Config) getUDPFilterOnce() *sync.Once { return &c.initRuntime().udpFilterOnce }
+func (c *Config) getUDPFilter() bytesFilter {
+	if c.rt == nil {
+		return nil
+	}
+	return c.rt.udpFilter
+}
+func (c *Config) setUDPFilter(f bytesFilter) { c.initRuntime().udpFilter = f }
+
+func (c *Config) getTCPIvChecker() *ivChecker {
+	if c.rt == nil {
+		return nil
+	}
+	return &c.rt.tcpIvChecker
+}
+
+func (c *Config) getAutoProxyCtx() *autoProxy {
+	if c.rt == nil {
+		return nil
+	}
+	return c.rt.autoProxyCtx
+}
+func (c *Config) setAutoProxyCtx(ap *autoProxy) { c.initRuntime().autoProxyCtx = ap }
+
+func (c *Config) getChnListCtx() *chnRouteList {
+	if c.rt == nil {
+		return nil
+	}
+	return c.rt.chnListCtx
+}
+func (c *Config) setChnListCtx(cl *chnRouteList) { c.initRuntime().chnListCtx = cl }
+
+func (c *Config) getCRCTable() *crc32.Table {
+	if c.rt == nil {
+		return nil
+	}
+	return c.rt.crctbl
+}
+func (c *Config) setCRCTable(t *crc32.Table) { c.initRuntime().crctbl = t }
+
+func (c *Config) isDisabled() bool {
+	if c.rt == nil {
+		return false
+	}
+	return c.rt.disable
+}
+func (c *Config) setDisabled(v bool) { c.initRuntime().disable = v }
+func (c *Config) getStat() *statServer {
+	rt := c.initRuntime()
+	rt.initStat()
+	return rt.stat
+}
+func (c *Config) setStat(s *statServer) { c.initRuntime().stat = s }
 
 func ReadConfig(path string) (configs []*Config, err error) {
 	bytes, err := os.ReadFile(path)
@@ -136,25 +286,27 @@ func ReadConfig(path string) (configs []*Config, err error) {
 }
 
 func (c *Config) Close() error {
-	c.tcpFilterLock.Lock()
+	c.getTCPFilterLock().Lock()
 	select {
-	case <-c.Die:
+	case <-c.DieChan():
 	default:
-		close(c.Die)
+		close(c.DieChan())
 	}
-	c.tcpFilterLock.Unlock()
-	if len(c.LogFile) != 0 && c.logfile != os.Stderr && c.logfile != nil {
-		c.logfile.Close()
+	c.getTCPFilterLock().Unlock()
+	lf := c.getLogFile()
+	if len(c.LogFile) != 0 && lf != os.Stderr && lf != nil {
+		lf.Close()
 	}
 	for _, bkn := range c.Backends {
-		if bkn.logfile != c.logfile && bkn.logfile != os.Stderr {
-			bkn.logfile.Close()
+		blf := bkn.getLogFile()
+		if blf != lf && blf != os.Stderr {
+			blf.Close()
 		}
 	}
-	if c.pool != nil {
-		c.pool.Close()
+	if p := c.getPool(); p != nil {
+		p.Close()
 	}
-	for _, f := range c.closers {
+	for _, f := range c.getClosers() {
 		f()
 	}
 	return nil
@@ -168,36 +320,37 @@ func (c *Config) udpFilterTestAndAdd(b []byte) bool {
 	if c.Ivlen == 0 {
 		return false
 	}
-	c.udpFilterOnce.Do(func() {
-		initBloomFilter(c, &c.udpFilter)
+	c.getUDPFilterOnce().Do(func() {
+		c.setUDPFilter(newBloomFilter(c.FilterCapacity, defaultFilterFalseRate))
 	})
-	return c.udpFilter.TestAndAdd(b)
+	return c.getUDPFilter().TestAndAdd(b)
 }
 
 func (c *Config) tcpFilterTestAndAdd(b []byte) bool {
 	if c.Ivlen == 0 {
 		return false
 	}
-	c.tcpFilterOnce.Do(func() {
-		initBloomFilter(c, &c.tcpFilter)
+	c.getTCPFilterOnce().Do(func() {
+		c.setTCPFilter(newBloomFilter(c.FilterCapacity, defaultFilterFalseRate))
 	})
-	c.tcpFilterLock.Lock()
-	ok1 := c.tcpFilter.TestAndAdd(b)
-	c.tcpFilterLock.Unlock()
+	c.getTCPFilterLock().Lock()
+	ok1 := c.getTCPFilter().TestAndAdd(b)
+	c.getTCPFilterLock().Unlock()
 	return ok1
 }
 
 func CheckLogFile(c *Config) {
+	rt := c.initRuntime()
 	if len(c.LogFile) == 0 {
-		c.logfile = os.Stderr
+		rt.logfile = os.Stderr
 		return
 	}
 	f, err := os.OpenFile(c.LogFile, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0644)
 	if err != nil {
-		c.logfile = os.Stderr
+		rt.logfile = os.Stderr
 		log.Println(err)
 	} else {
-		c.logfile = f
+		rt.logfile = f
 	}
 }
 
@@ -218,15 +371,16 @@ func CheckBasicConfig(c *Config) {
 			c.Nickname = fmt.Sprintf("%v-%v", c.Type, c.Localaddr)
 		}
 	}
-	c.Logger = log.New(c.logfile, fmt.Sprintf("[info] [%s] ", c.Nickname), log.Lshortfile|log.Ldate|log.Ltime|log.Lmicroseconds)
+	rt := c.initRuntime()
+	rt.Logger = log.New(rt.logfile, fmt.Sprintf("[info] [%s] ", c.Nickname), log.Lshortfile|log.Ldate|log.Ltime|log.Lmicroseconds)
 	if c.Verbose {
-		c.Vlogger = log.New(c.logfile, fmt.Sprintf("[verbose] [%s] ", c.Nickname), log.Lshortfile|log.Ldate|log.Ltime|log.Lmicroseconds)
+		rt.Vlogger = log.New(rt.logfile, fmt.Sprintf("[verbose] [%s] ", c.Nickname), log.Lshortfile|log.Ldate|log.Ltime|log.Lmicroseconds)
 	}
 	if c.Debug {
-		c.Dlogger = log.New(c.logfile, fmt.Sprintf("[debug] [%s] ", c.Nickname), log.Lshortfile|log.Ldate|log.Ltime|log.Lmicroseconds)
+		rt.Dlogger = log.New(rt.logfile, fmt.Sprintf("[debug] [%s] ", c.Nickname), log.Lshortfile|log.Ldate|log.Ltime|log.Lmicroseconds)
 	}
 	if c.Limit != 0 {
-		c.limiters = append(c.limiters, NewLimiter(c.Limit))
+		rt.limiters = append(rt.limiters, NewLimiter(c.Limit))
 	}
 	if c.Timeout == 0 {
 		c.Timeout = defaultTimeout
@@ -234,7 +388,7 @@ func CheckBasicConfig(c *Config) {
 	if c.FilterCapacity == 0 {
 		c.FilterCapacity = defaultFilterCapacity
 	}
-	c.crctbl = crc32.MakeTable(crc32.ChecksumIEEE(utils.StringToSlice(c.Password)))
+	rt.crctbl = crc32.MakeTable(crc32.ChecksumIEEE(utils.StringToSlice(c.Password)))
 }
 
 func CheckConfig(c *Config) {
@@ -254,38 +408,37 @@ func CheckConfig(c *Config) {
 		c.Backend = nil
 		c.Backends = nil
 	}
-	if c.Die == nil {
-		c.Die = make(chan bool)
-	}
+	c.initRuntime() // ensure Die is created
 	CheckLogFile(c)
 	CheckBasicConfig(c)
-	if c.pool == nil && c.Obfs && c.ObfsAlive && (c.Type == "server" || c.Type == "multiserver" || c.Type == "local") {
-		c.pool = NewConnPool()
+	if c.getPool() == nil && c.Obfs && c.ObfsAlive && (c.Type == "server" || c.Type == "multiserver" || c.Type == "local") {
+		c.setPool(NewConnPool())
 	}
 	if c.Backend != nil {
 		c.Backends = append(c.Backends, c.Backend)
 	}
 	if c.AutoProxy {
-		c.autoProxyCtx = newAutoProxy()
-		c.autoProxyCtx.loadByPassList(c.BlackList)
-		c.autoProxyCtx.loadPorxyList(c.ProxyList)
+		ap := newAutoProxy()
+		ap.loadByPassList(c.BlackList)
+		ap.loadPorxyList(c.ProxyList)
+		c.setAutoProxyCtx(ap)
 		if c.DumpList {
 			go c.proxyListDump()
 		}
 	}
 	if len(c.ChnList) != 0 {
-		c.chnListCtx = new(chnRouteList)
-		err := c.chnListCtx.load(c.ChnList)
+		cl := new(chnRouteList)
+		err := cl.load(c.ChnList)
 		if err != nil {
 			log.Println(err)
-			c.chnListCtx = nil
+		} else {
+			c.setChnListCtx(cl)
 		}
 	}
-	if c.stat == nil {
-		c.stat = &statServer{}
-	}
+	c.getStat() // ensure initialized
+	parentRt := c.rt
 	for _, v := range c.Backends {
-		v.Die = c.Die
+		v.initRuntime().Die = parentRt.Die
 		if len(v.Type) == 0 {
 			if len(v.Remoteaddr) != 0 {
 				v.Type = "local"
@@ -318,78 +471,79 @@ func CheckConfig(c *Config) {
 		if c.PreferIPv4 {
 			v.PreferIPv4 = true
 		}
-		if c.autoProxyCtx != nil {
-			v.autoProxyCtx = c.autoProxyCtx
+		if parentRt.autoProxyCtx != nil {
+			v.initRuntime().autoProxyCtx = parentRt.autoProxyCtx
 		}
 		if c.LogFile == v.LogFile {
-			v.logfile = c.logfile
+			v.initRuntime().logfile = parentRt.logfile
 		} else {
 			CheckLogFile(v)
-			if v.logfile == os.Stderr && c.logfile != os.Stderr {
-				v.logfile = c.logfile
+			vlf := v.getLogFile()
+			if vlf == os.Stderr && parentRt.logfile != os.Stderr {
+				v.initRuntime().logfile = parentRt.logfile
 			}
 		}
 		if v.Obfs && v.ObfsAlive {
 			if v.Type != "server" {
-				v.pool = NewConnPool()
+				v.setPool(NewConnPool())
 			} else {
-				v.pool = c.pool
+				v.setPool(c.getPool())
 			}
 		}
 		CheckBasicConfig(v)
 		if c.LimitPerConn != 0 && v.LimitPerConn == 0 {
 			v.LimitPerConn = c.LimitPerConn
 		}
-		if len(c.limiters) != 0 {
-			v.limiters = append(v.limiters, c.limiters...)
+		parentLimiters := parentRt.limiters
+		if len(parentLimiters) != 0 {
+			v.initRuntime().limiters = append(v.initRuntime().limiters, parentLimiters...)
 		}
-		if v.stat == nil {
-			v.stat = &statServer{}
-		}
+		v.getStat()
 	}
 }
 
 func (c *Config) LogV(v ...interface{}) {
-	if c.Vlogger != nil {
-		c.Vlogger.Output(2, fmt.Sprintln(v...))
+	if vl := c.getVLogger(); vl != nil {
+		vl.Output(2, fmt.Sprintln(v...))
 	}
 }
 
 func (c *Config) LogD(v ...interface{}) {
-	if c.Dlogger != nil {
-		c.Dlogger.Output(2, fmt.Sprintln(v...))
+	if dl := c.getDLogger(); dl != nil {
+		dl.Output(2, fmt.Sprintln(v...))
 	}
 }
 
 func (c *Config) Log(v ...interface{}) {
-	if c.Logger != nil {
-		c.Logger.Output(2, fmt.Sprintln(v...))
+	if l := c.getLogger(); l != nil {
+		l.Output(2, fmt.Sprintln(v...))
 	}
 }
 
 func (c *Config) CallOnClosed(f cb) {
-	c.closers = append(c.closers, f)
+	c.initRuntime().closers = append(c.rt.closers, f)
 }
 
 func (c *Config) proxyListDump() {
 	if c.BlackList == "" && c.ProxyList == "" {
 		return
 	}
-	autoProxyCtx := c.autoProxyCtx
-	if autoProxyCtx == nil {
+	ap := c.getAutoProxyCtx()
+	if ap == nil {
 		return
 	}
+	die := c.DieChan()
 	go func() {
 		ticker := time.NewTicker(time.Minute)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-ticker.C:
-			case <-c.Die:
+			case <-die:
 				return
 			}
 			if len(c.BlackList) != 0 {
-				hosts := autoProxyCtx.getByPassHosts()
+				hosts := ap.getByPassHosts()
 				if len(hosts) != 0 {
 					hoststr := strings.Join(hosts, "\n")
 					err := os.WriteFile(c.BlackList, utils.StringToSlice(hoststr), 0644)
@@ -399,7 +553,7 @@ func (c *Config) proxyListDump() {
 				}
 			}
 			if len(c.ProxyList) != 0 {
-				hosts := autoProxyCtx.getProxyHosts()
+				hosts := ap.getProxyHosts()
 				if len(hosts) != 0 {
 					hoststr := strings.Join(hosts, "\n")
 					err := os.WriteFile(c.ProxyList, utils.StringToSlice(hoststr), 0644)

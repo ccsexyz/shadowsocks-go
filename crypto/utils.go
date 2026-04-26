@@ -10,6 +10,7 @@ func PutRandomBytes(b []byte) {
 	rand.Read(b)
 }
 
+// GetRandomBytes returns a slice of n random bytes.
 func GetRandomBytes(n int) []byte {
 	if n <= 0 {
 		return nil
@@ -29,21 +30,3 @@ func EnsureCopy(dst, src []byte) []byte {
 	}
 	return dst
 }
-
-// CopyBuffer returns a copy of b.
-func CopyBuffer(b []byte) []byte {
-	if b == nil {
-		return nil
-	}
-	buf := make([]byte, len(b))
-	copy(buf, b)
-	return buf
-}
-
-// GetBuf gets a buffer with given length from pool
-func GetBuf(length int) []byte {
-	return make([]byte, length)
-}
-
-// PutBuf puts a buffer back to pool
-func PutBuf(b []byte) {}

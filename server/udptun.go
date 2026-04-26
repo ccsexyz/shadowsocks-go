@@ -18,7 +18,7 @@ func getCreateFuncOfUDPTunServer(c *ss.Config) func(*utils.SubConn) (net.Conn, n
 		defer utils.PutBuf(buf)
 		addr, err := net.ResolveUDPAddr("udp", c.Remoteaddr)
 		if err != nil {
-			c.Logger.Fatal(err)
+			c.InitRuntime().Logger.Fatal(err)
 		}
 		hdrlen := ss.PutHeader(buf, addr.IP.String(), addr.Port)
 		header := buf[:hdrlen]
@@ -31,7 +31,7 @@ func getCreateFuncOfUDPTunServer(c *ss.Config) func(*utils.SubConn) (net.Conn, n
 func RunUDPTunServer(c *ss.Config) {
 	listener, err := utils.NewUDPListener(c.Localaddr)
 	if err != nil {
-		c.Logger.Fatal(err)
+		c.InitRuntime().Logger.Fatal(err)
 	}
 	defer listener.Close()
 	RunUDPServer(listener, c, getCreateFuncOfUDPTunServer)

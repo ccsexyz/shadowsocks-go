@@ -538,11 +538,11 @@ func DialObfs(target string, c *Config) (conn Conn, err error) {
 		return DialWsConn(target, host, c)
 	}
 
-	if c.pool != nil {
-		conn, err = c.pool.GetNonblock()
+	if c.getPool() != nil {
+		conn, err = c.getPool().GetNonblock()
 	}
-	if err != nil || c.pool == nil {
-		var tconn *TCPConn
+	if err != nil || c.getPool() == nil {
+		var tconn *BaseConn
 		tconn, err = DialTCP(target, c)
 		if tconn != nil {
 			conn = tconn
@@ -581,7 +581,7 @@ func DialObfs(target string, c *Config) (conn Conn, err error) {
 	obfsconn, ok := conn.(*ObfsConn)
 	if !ok {
 		obfsconn = NewObfsConn(conn)
-		obfsconn.pool = c.pool
+		obfsconn.pool = c.getPool()
 	}
 	obfsconn.wremain = []byte(req)
 	obfsconn.resp = true
@@ -666,7 +666,7 @@ func obfsAcceptHandler(conn Conn, lis *listener) (result AcceptResult) {
 	obfsconn.remain = remain
 	obfsconn.wremain = []byte(resp)
 	obfsconn.req = true
-	obfsconn.pool = lis.c.pool
+	obfsconn.pool = lis.c.getPool()
 	result = AcceptResult{AcceptContinue, obfsconn}
 	return
 }
@@ -828,5 +828,5 @@ func DialWsConn(address, host string, cfg *cfg) (Conn, error) {
 		return nil, err
 	}
 
-	return newTCPConn(newWsConn(conn), cfg), nil
+	return newBaseConn(newWsConn(conn), cfg), nil
 }

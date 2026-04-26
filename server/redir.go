@@ -58,12 +58,12 @@ func getCreateFuncOfUDPRedirServer(c *ss.Config) func(*utils.SubConn) (net.Conn,
 func RunUDPRedirServer(c *ss.Config) {
 	listener, err := utils.NewUDPListener(c.Localaddr)
 	if err != nil {
-		c.Logger.Fatal(err)
+		c.InitRuntime().Logger.Fatal(err)
 	}
 	defer listener.Close()
 	tproxyListner, err := ss.NewUDPTProxyConn(listener)
 	if err != nil {
-		c.Logger.Fatal(err)
+		c.InitRuntime().Logger.Fatal(err)
 	}
 	RunUDPServer(tproxyListner, c, getCreateFuncOfUDPRedirServer)
 }

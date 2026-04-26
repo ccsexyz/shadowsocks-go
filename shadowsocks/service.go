@@ -60,7 +60,7 @@ func disableBackend(lis *listener, nickname string) (ok bool) {
 	}
 	for _, v := range lis.c.Backends {
 		if v.Nickname == nickname {
-			v.disable = true
+			v.setDisabled(true)
 			ok = true
 			return
 		}
@@ -74,7 +74,7 @@ func enableBackend(lis *listener, nickname string) (ok bool) {
 	}
 	for _, v := range lis.c.Backends {
 		if v.Nickname == nickname {
-			v.disable = false
+			v.setDisabled(false)
 			ok = true
 			return
 		}
@@ -173,11 +173,11 @@ func adminHandler(conn Conn, lis *listener) (result AcceptResult) {
 	if len(strs) == 2 {
 		cmd := strs[1]
 		if cmd == cmdEnable {
-			lis.c.disable = false
+			lis.c.setDisabled(false)
 		} else if cmd == cmdDisable {
-			lis.c.disable = true
+			lis.c.setDisabled(true)
 		} else if cmd == cmdStatus {
-			sendStatusPage(conn, lis.c.stat)
+			sendStatusPage(conn, lis.c.getStat())
 			return
 		} else {
 			err = errInvalidCommand

@@ -5,7 +5,9 @@ import (
 	"encoding/binary"
 	"fmt"
 	"log"
+	"os"
 	"reflect"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -14,7 +16,38 @@ const (
 	laddr = "127.0.0.1:6666"
 )
 
+func canRunRawTests(t *testing.T) bool {
+	t.Helper()
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+		t.Skip("raw socket tests only supported on darwin and linux")
+		return false
+	}
+	// Check BPF device access (darwin) or raw socket capability (linux)
+	if runtime.GOOS == "darwin" {
+		_, err := os.Stat("/dev/bpf0")
+		if os.IsNotExist(err) {
+			t.Skip("BPF device not available")
+			return false
+		}
+		// Try to open a BPF device to check permissions
+		f, err := os.OpenFile("/dev/bpf0", os.O_RDWR, 0)
+		if err != nil {
+			t.Skipf("cannot open BPF device (need root?): %v", err)
+			return false
+		}
+		f.Close()
+	}
+	if os.Getuid() != 0 {
+		t.Skip("raw socket tests require root privileges")
+		return false
+	}
+	return true
+}
+
 func TestSingleEcho(t *testing.T) {
+	if !canRunRawTests(t) {
+		return
+	}
 	log.SetFlags(log.Lshortfile | log.Ldate | log.Ltime | log.Lmicroseconds)
 
 	raw := &Raw{
@@ -88,6 +121,9 @@ func TestSingleEcho(t *testing.T) {
 }
 
 func TestMultiEcho(t *testing.T) {
+	if !canRunRawTests(t) {
+		return
+	}
 	log.SetFlags(log.Lshortfile | log.Ldate | log.Ltime | log.Lmicroseconds)
 
 	raw := &Raw{

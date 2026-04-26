@@ -60,14 +60,8 @@ func main() {
 	}
 
 	if len(pprofaddr) != 0 {
-		if utils.PprofEnabled() {
-			log.Println("run pprof http server at", pprofaddr)
-			go func() {
-				utils.RunProfileHTTPServer(pprofaddr)
-			}()
-		} else {
-			log.Println("set pprof but pprof isn't compiled")
-		}
+		log.Println("run pprof http server at", pprofaddr)
+		utils.RunProfileHTTPServer(pprofaddr)
 	}
 
 	if len(configfile) == 0 {

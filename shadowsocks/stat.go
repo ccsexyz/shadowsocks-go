@@ -118,8 +118,8 @@ func (conn *statConn) GetRecord() *ConnRecord { return conn.record }
 
 // GetTracker returns the ConnTracker for this config.
 func (c *Config) GetTracker() *ConnTracker {
-	if c.stat != nil {
-		return c.stat.tracker
+	if s := c.getStat(); s != nil {
+		return s.tracker
 	}
 	return nil
 }

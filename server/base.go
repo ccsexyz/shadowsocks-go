@@ -32,14 +32,13 @@ func RunTCPServer(address string, c *ss.Config,
 			defer wg.Done()
 			lis, err := ss.Listen(address, c, handlers)
 			if err != nil {
-				c.Logger.Fatal(err)
+				c.InitRuntime().Logger.Fatal(err)
 			}
 			defer lis.Close()
 			go func() {
-				if c.Die != nil {
-					<-c.Die
-					lis.Close()
-				}
+				die := c.DieChan()
+				<-die
+				lis.Close()
 			}()
 			for {
 				conn, err := lis.Accept()
@@ -64,11 +63,9 @@ func getDefaultUDPServerCtx() *utils.UDPServerCtx {
 
 func RunUDPServer(listener net.PacketConn, config *ss.Config, creator func(*ss.Config) func(*utils.SubConn) (net.Conn, net.Conn, error)) {
 	go func() {
-		if config.Die == nil {
-			return
-		}
+		die := config.DieChan()
 		defer listener.Close()
-		<-config.Die
+		<-die
 	}()
 	getDefaultUDPServerCtx().RunUDPServer(listener, creator(config))
 }

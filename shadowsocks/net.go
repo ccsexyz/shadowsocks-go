@@ -171,7 +171,7 @@ func (lis *listener) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	wConn := newWsConn(conn)
-	tConn := newTCPConn(wConn, lis.c)
+	tConn := newBaseConn(wConn, lis.c)
 
 	target := lis.getTargetByHost(r.Host)
 	if len(target) > 0 {
@@ -208,7 +208,7 @@ func (lis *listener) acceptor() {
 			lis.httpch <- conn
 			continue
 		}
-		go lis.handleNewConn(newTCPConn(utils.NewConn(conn), lis.c))
+		go lis.handleNewConn(newBaseConn(utils.NewConn(conn), lis.c))
 	}
 }
 
@@ -265,13 +265,13 @@ func (lis *listener) Accept() (conn net.Conn, err error) {
 			case AcceptDrop, AcceptDone:
 				continue
 			case AcceptContinue:
-				if lis.c.disable {
+				if lis.c.isDisabled() {
 					result.Conn.Close()
 					lis.c.LogD("accept: server", lis.c.Nickname, "is disabled")
 					continue
 				}
 				accepted := &AcceptedConn{
-					Conn:   newStatConn(result.Conn, lis.c.stat),
+					Conn:   newStatConn(result.Conn, lis.c.getStat()),
 					Target: result.Conn.GetDst(),
 					Config: lis.c,
 				}
@@ -296,6 +296,37 @@ func Listen(address string, c *Config, handlers []AcceptHandler) (net.Listener, 
 	return NewListener(l, c, handlers), nil
 }
 
+func (lis *listener) drainPool(handler AcceptHandler) {
+	go func() {
+		for {
+			conn, err := lis.c.getPool().Get()
+			if err != nil {
+				return
+			}
+			obfsconn, ok := conn.(*ObfsConn)
+			if !ok {
+				conn.Close()
+				return
+			}
+			obfsconn.wremain = []byte(buildHTTPResponse(""))
+			obfsconn.req = true
+			obfsconn.chunkLen = 0
+			go func(obfsconn *ObfsConn) {
+				result := handler(obfsconn, lis)
+				if result.Action != AcceptContinue {
+					return
+				}
+				select {
+				case <-lis.die:
+					obfsconn.RemainConn.Close()
+					result.Conn.Close()
+				case lis.connch <- result.Conn:
+				}
+			}(obfsconn)
+		}
+	}()
+}
+
 func ListenSS(service string, c *Config) (lis net.Listener, err error) {
 	handlers := []AcceptHandler{LimitHandler}
 	if c.Obfs {
@@ -311,40 +342,12 @@ func ListenSS(service string, c *Config) (lis net.Listener, err error) {
 		return nil, err
 	}
 	li := ltmp.(*listener)
-	if c.Obfs && c.pool != nil {
-		go func() {
-			for {
-				conn, err := c.pool.Get()
-				if err != nil {
-					return
-				}
-				obfsconn, ok := conn.(*ObfsConn)
-				if !ok {
-					conn.Close()
-					return
-				}
-				obfsconn.wremain = []byte(buildHTTPResponse(""))
-				obfsconn.req = true
-				obfsconn.chunkLen = 0
-				go func(obfsconn *ObfsConn) {
-					var result AcceptResult
-					if crypto.IsAEAD2022(li.c.Method) {
-						result = ss2022AcceptHandler(obfsconn, li)
-					} else {
-						result = ssAcceptHandler(obfsconn, li)
-					}
-					if result.Action != AcceptContinue {
-						return
-					}
-					select {
-					case <-li.die:
-						obfsconn.RemainConn.Close()
-						result.Conn.Close()
-					case li.connch <- result.Conn:
-					}
-				}(obfsconn)
-			}
-		}()
+	if c.Obfs && c.getPool() != nil {
+		handler := SSHandler
+		if crypto.IsAEAD2022(c.Method) {
+			handler = SS2022Handler
+		}
+		li.drainPool(handler)
 	}
 	lis = li
 	return
@@ -353,7 +356,7 @@ func ListenSS(service string, c *Config) (lis net.Listener, err error) {
 func ListenMultiSS(service string, c *Config) (lis net.Listener, err error) {
 	for _, v := range c.Backends {
 		hits := 0
-		v.Any = &hits
+		v.initRuntime().Any = &hits
 	}
 	handlers := []AcceptHandler{LimitHandler}
 	if c.Obfs {
@@ -365,35 +368,8 @@ func ListenMultiSS(service string, c *Config) (lis net.Listener, err error) {
 		return nil, err
 	}
 	li2 := li.(*listener)
-	if c.Obfs && c.pool != nil {
-		go func() {
-			for {
-				conn, err := c.pool.Get()
-				if err != nil {
-					return
-				}
-				obfsconn, ok := conn.(*ObfsConn)
-				if !ok {
-					conn.Close()
-					return
-				}
-				obfsconn.wremain = []byte(buildHTTPResponse(""))
-				obfsconn.req = true
-				obfsconn.chunkLen = 0
-				go func(obfsconn *ObfsConn) {
-					result := ssMultiAcceptHandler(obfsconn, li2)
-					if result.Action != AcceptContinue {
-						return
-					}
-					select {
-					case <-li2.die:
-						obfsconn.RemainConn.Close()
-						result.Conn.Close()
-					case li2.connch <- result.Conn:
-					}
-				}(obfsconn)
-			}
-		}()
+	if c.Obfs && c.getPool() != nil {
+		li2.drainPool(SSMultiHandler)
 	}
 	go backendSorter(li2)
 	lis = li
@@ -411,20 +387,20 @@ func backendSorter(lis *listener) {
 			return
 		}
 		backends := make([]*Config, len(lis.c.Backends))
-		lis.c.tcpFilterLock.Lock()
+		lis.c.getTCPFilterLock().Lock()
 		copy(backends, lis.c.Backends)
 		sort.SliceStable(backends, func(i, j int) bool {
-			ihits := *(backends[i].Any.(*int))
-			jhits := *(backends[j].Any.(*int))
+			ihits := *(backends[i].initRuntime().Any.(*int))
+			jhits := *(backends[j].initRuntime().Any.(*int))
 			return jhits < ihits
 		})
 		if i%60 == 0 {
 			for _, v := range backends {
-				*(v.Any.(*int)) /= 2
+				*(v.initRuntime().Any.(*int)) /= 2
 			}
 		}
 		lis.c.Backends = backends
-		lis.c.tcpFilterLock.Unlock()
+		lis.c.getTCPFilterLock().Unlock()
 	}
 }
 
@@ -433,7 +409,7 @@ func ssMultiAcceptHandler2(conn Conn, lis *listener, addr *SockAddr, n int,
 	if chs.Ivlen != 0 && !lis.c.Safe {
 		var exists bool
 		if addr.Ts {
-			exists = !(chs.tcpIvChecker.check(utils.SliceToString(dec.GetIV())))
+			exists = !(chs.getTCPIvChecker().check(utils.SliceToString(dec.GetIV())))
 		} else {
 			exists = chs.tcpFilterTestAndAdd(dec.GetIV())
 		}
@@ -449,7 +425,7 @@ func ssMultiAcceptHandler2(conn Conn, lis *listener, addr *SockAddr, n int,
 		return
 	}
 
-	ssConn := &SsConn{Conn: conn, dec: dec, enc: enc, c: chs}
+	ssConn := newCryptoConn(conn, newCipherStreamCodec(enc, dec))
 	conn = ssConn
 	if len(data) != 0 {
 		conn = &RemainConn{Conn: ssConn, remain: data}
@@ -509,7 +485,7 @@ func ss2022MultiAcceptHandler2(conn Conn, lis *listener, ctx *parseContext) (c C
 	}
 
 	svSalt := utils.GetRandomBytes(chs.Ivlen)
-	ssConn := newServerAead2022Conn(conn, ctx.cliCipher, chs.Method, psk, svSalt, ctx.cliSalt)
+	ssConn := newCryptoConn(conn, newServerAead2022Codec(chs.Method, psk, svSalt, ctx.cliSalt, ctx.cliCipher))
 	conn = ssConn
 	if len(ctx.data) != 0 {
 		conn = &RemainConn{Conn: ssConn, remain: ctx.data}
@@ -584,7 +560,7 @@ func ssAcceptHandler(conn Conn, lis *listener) AcceptResult {
 	if lis.c.Ivlen != 0 && !lis.c.Safe {
 		var exists bool
 		if addr.Ts {
-			exists = !(lis.c.tcpIvChecker.check(utils.SliceToString(dec.GetIV())))
+			exists = !(lis.c.getTCPIvChecker().check(utils.SliceToString(dec.GetIV())))
 		} else {
 			exists = lis.c.tcpFilterTestAndAdd(dec.GetIV())
 		}
@@ -597,7 +573,7 @@ func ssAcceptHandler(conn Conn, lis *listener) AcceptResult {
 	if err != nil {
 		return AcceptResult{AcceptReject, nil}
 	}
-	ssConn := &SsConn{Conn: conn, dec: dec, enc: enc, c: lis.c}
+	ssConn := newCryptoConn(conn, newCipherStreamCodec(enc, dec))
 	if !addr.Nop {
 		ssConn.DeferClose()
 	}
@@ -735,7 +711,7 @@ func GetShadowAcceptor(args map[string]interface{}) Acceptor {
 		lis.c.Backends = getConfigs(method, password)
 	}
 	return func(conn net.Conn) net.Conn {
-		result := socksAcceptor(newTCPConn2(conn, lis.c), &lis)
+		result := socksAcceptor(newBaseConn(conn, lis.c), &lis)
 		if result.Action == AcceptContinue {
 			return result.Conn
 		}

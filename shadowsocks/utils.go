@@ -3,7 +3,6 @@ package ss
 import (
 	"bufio"
 	"context"
-	"encoding/binary"
 	"fmt"
 	"io"
 	"net"
@@ -83,26 +82,10 @@ func CheckConn(conn net.Conn) bool {
 	return domain.CheckConn(conn)
 }
 
-func PutHeader(b []byte, host string, port int) (n int) {
-	n = len(host)
-	b[0] = typeDm
-	b[1] = byte(n)
-	copy(b[2:], []byte(host))
-	binary.BigEndian.PutUint16(b[2+n:], uint16(port))
-	n += 4
-	return
-}
-
-func GetHeader(host string, port int) (buf []byte, err error) {
-	hostlen := len(host)
-	if hostlen > 255 {
-		err = fmt.Errorf("host length can't be greater than 255")
-		return
-	}
-	buf = make([]byte, hostlen+4)
-	PutHeader(buf, host, port)
-	return
-}
+var (
+	PutHeader = domain.PutHeader
+	GetHeader = domain.GetHeader
+)
 
 type parseContext struct {
 	iv   []byte
@@ -329,21 +312,16 @@ func GetNetTCPConn(conn net.Conn) (c *net.TCPConn, err error) {
 	if err != nil {
 		return
 	}
-	ut, ok := t.Conn.(*utils.UtilsConn)
+	c, ok := t.Conn.(*net.TCPConn)
 	if !ok {
-		err = fmt.Errorf("unexpect conn with type %T", conn)
-		return
-	}
-	c, ok = ut.GetTCPConn()
-	if !ok {
-		err = fmt.Errorf("unexpect conn with type %T", conn)
+		err = fmt.Errorf("unexpected conn with type %T", conn)
 		return
 	}
 	return
 }
 
-func GetTCPConn(conn net.Conn) (c *TCPConn, err error) {
-	c, ok := conn.(*TCPConn)
+func GetTCPConn(conn net.Conn) (c *BaseConn, err error) {
+	c, ok := conn.(*BaseConn)
 	if !ok {
 		conn, err = GetInnerConn(conn)
 		if err != nil {
@@ -354,8 +332,8 @@ func GetTCPConn(conn net.Conn) (c *TCPConn, err error) {
 	return
 }
 
-func GetSsConn(conn net.Conn) (c *SsConn, err error) {
-	c, ok := conn.(*SsConn)
+func GetSsConn(conn net.Conn) (c *CryptoConn, err error) {
+	c, ok := conn.(*CryptoConn)
 	if !ok {
 		conn, err = GetInnerConn(conn)
 		if err != nil {
@@ -370,7 +348,7 @@ func GetConn(conn net.Conn) (c Conn) {
 	var ok bool
 	c, ok = conn.(Conn)
 	if !ok {
-		c = newTCPConn2(conn, nil)
+		c = newBaseConn(conn, nil)
 	}
 	return
 }
@@ -425,7 +403,7 @@ func isAddrDualStack(address string) bool {
 	return false
 }
 
-func DialTCP(address string, cfg *cfg) (*TCPConn, error) {
+func DialTCP(address string, cfg *cfg) (*BaseConn, error) {
 	var protocol string
 	dialCtx := context.Background()
 
@@ -442,16 +420,17 @@ func DialTCP(address string, cfg *cfg) (*TCPConn, error) {
 		protocol = "tcp"
 	}
 
-	tconn, err := utils.DialTCP(protocol, address, dialCtx)
+	var d net.Dialer
+	netconn, err := d.DialContext(dialCtx, protocol, address)
 
 	if err != nil && protocol == "tcp4" && !cfg.NoIPv6 && cfg.PreferIPv4 && isAddrDualStack(address) {
-		tconn, err = utils.DialTCP("tcp", address, context.Background())
+		netconn, err = d.DialContext(context.Background(), "tcp", address)
 	}
 	if err != nil {
 		return nil, err
 	}
 
-	return newTCPConn(tconn, cfg), nil
+	return newBaseConn(netconn, cfg), nil
 }
 
 func DialTCPConn(address string, cfg *cfg) (Conn, error) {

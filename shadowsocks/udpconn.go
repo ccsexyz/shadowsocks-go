@@ -18,29 +18,36 @@ import (
 type UDPConn struct {
 	net.PacketConn
 	net.Conn
-	cfgCtx
-	dstCtx
+	cfg  *Config
+	dst  Addr
+	host string
 }
+
+func (c *UDPConn) GetCfg() *Config     { return c.cfg }
+func (c *UDPConn) SetDst(dst Addr)     { c.dst = dst }
+func (c *UDPConn) SetHost(host string) { c.host = host }
+func (c *UDPConn) GetDst() Addr        { return c.dst }
+func (c *UDPConn) GetHost() string     { return c.host }
 
 func NewUDPConn1(conn utils.UDPConn, c *Config) *UDPConn {
 	return &UDPConn{
 		PacketConn: conn,
 		Conn:       conn,
-		cfgCtx:     cfgCtx{c: c},
+		cfg:        c,
 	}
 }
 
 func NewUDPConn2(conn net.Conn, c *Config) *UDPConn {
 	return &UDPConn{
-		Conn:   conn,
-		cfgCtx: cfgCtx{c: c},
+		Conn: conn,
+		cfg:  c,
 	}
 }
 
 func NewUDPConn3(conn net.PacketConn, c *Config) *UDPConn {
 	return &UDPConn{
 		PacketConn: conn,
-		cfgCtx:     cfgCtx{c: c},
+		cfg:        c,
 	}
 }
 
@@ -86,17 +93,13 @@ func (c *UDPConn) SetWriteDeadline(t time.Time) error {
 	return c.Conn.SetWriteDeadline(t)
 }
 
-func (c *UDPConn) GetCfg() *Config {
-	return c.c
-}
-
 func (c *UDPConn) fakeReadFrom(b []byte) (int, net.Addr, error) {
 	n, err := c.Conn.Read(b)
 	return n, nil, err
 }
 
 func (c *UDPConn) readImpl(b []byte, readfrom func([]byte) (int, net.Addr, error)) (int, net.Addr, error) {
-	cb, err := crypto.NewCipherBlock(c.c.Method, c.c.Password)
+	cb, err := crypto.NewCipherBlock(c.cfg.Method, c.cfg.Password)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -118,7 +121,7 @@ func (c *UDPConn) readImpl(b []byte, readfrom func([]byte) (int, net.Addr, error
 		}
 
 		if len(iv) > 0 {
-			exists := c.c.udpFilterTestAndAdd(iv)
+			exists := c.cfg.udpFilterTestAndAdd(iv)
 			if exists {
 				continue
 			}
@@ -139,7 +142,7 @@ func (c *UDPConn) Read(b []byte) (n int, err error) {
 }
 
 func (c *UDPConn) WriteTo(b []byte, addr net.Addr) (n int, err error) {
-	cb, err := crypto.NewCipherBlock(c.c.Method, c.c.Password)
+	cb, err := crypto.NewCipherBlock(c.cfg.Method, c.cfg.Password)
 	if err != nil {
 		return
 	}

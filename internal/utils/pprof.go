@@ -1,18 +1,13 @@
-//go:build goprof
-// +build goprof
-
 package utils
 
 import (
 	"log"
 	"net/http"
-
 	_ "net/http/pprof"
 )
 
-// http://wayslog.com/2016/11/09/golang-profile/
-
-// RunProfileHTTPServer run pprof http server at addr
+// RunProfileHTTPServer starts a pprof HTTP server at addr.
+// If addr is empty, it does nothing.
 func RunProfileHTTPServer(addr string) {
 	if len(addr) == 0 {
 		return
@@ -20,9 +15,4 @@ func RunProfileHTTPServer(addr string) {
 	go func() {
 		log.Fatal(http.ListenAndServe(addr, nil))
 	}()
-}
-
-// PprofEnabled returns whether pprof is enabled
-func PprofEnabled() bool {
-	return true
 }

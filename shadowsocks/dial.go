@@ -44,7 +44,7 @@ func dialSocks5WithOptions(opt *DialOptions) (conn Conn, err error) {
 		return
 	}
 
-	conn = newTCPConn(&utils.UtilsConn{Conn: rawConn}, c)
+	conn = newBaseConn(rawConn, c)
 	return
 }
 
@@ -141,7 +141,7 @@ func dialSSWithOptions(opt *DialOptions) (conn Conn, err error) {
 		errch := make(chan error, num)
 		conch := make(chan Conn)
 		for _, v := range c.Backends {
-			if v.disable {
+			if v.isDisabled() {
 				num--
 				continue
 			}
@@ -195,7 +195,7 @@ func dialSSWithOptions(opt *DialOptions) (conn Conn, err error) {
 	if c.Obfs {
 		conn, err = DialObfs(c.Remoteaddr, c)
 	} else {
-		var tconn *TCPConn
+		var tconn *BaseConn
 		tconn, err = DialTCP(c.Remoteaddr, c)
 		if tconn != nil {
 			conn = tconn
@@ -204,15 +204,10 @@ func dialSSWithOptions(opt *DialOptions) (conn Conn, err error) {
 	if err != nil {
 		return
 	}
-	if len(c.limiters) != 0 || c.LimitPerConn != 0 {
-		limiters := make([]*Limiter, len(c.limiters))
-		copy(limiters, c.limiters)
-		if c.LimitPerConn != 0 {
-			limiters = append(limiters, NewLimiter(c.LimitPerConn))
-		}
+	if len(c.getLimiters()) != 0 || c.LimitPerConn != 0 {
 		conn = &LimitConn{
 			Conn:      conn,
-			Rlimiters: limiters,
+			Rlimiters: buildLimiters(c),
 		}
 	}
 	if crypto.IsAEAD2022(c.Method) {
@@ -227,7 +222,7 @@ func dialSSWithOptions(opt *DialOptions) (conn Conn, err error) {
 	if err != nil {
 		return
 	}
-	C := &SsConn{Conn: conn, enc: enc, dec: dec, c: c}
+	C := newCryptoConn(conn, newCipherStreamCodec(enc, dec))
 	conn = C
 	if c.Nonop {
 		conn = &RemainConn{
@@ -238,7 +233,7 @@ func dialSSWithOptions(opt *DialOptions) (conn Conn, err error) {
 		header := make([]byte, 512)
 		headerLen := 0
 		noplen := rand.IntN(4)
-		noplen += int(crc32.Checksum(header, c.crctbl) % (128 - (lenTs + 5)))
+		noplen += int(crc32.Checksum(header, c.getCRCTable()) % (128 - (lenTs + 5)))
 		headerLen += copy(header[headerLen:], []byte{typeNop, byte(noplen)})
 		headerLen += noplen
 		header[headerLen] = typeTs
@@ -257,7 +252,7 @@ func DialSSWithOptions(opt *DialOptions) (conn Conn, err error) {
 	defer func() {
 		if conn != nil {
 			if err == nil && len(opt.Data) > 0 {
-				if _, ok := conn.(*Aead2022Conn); !ok {
+				if _, ok := conn.(*CryptoConn); !ok {
 					_, err = conn.Write(opt.Data)
 				}
 			}
@@ -310,8 +305,8 @@ func DialSSWithOptions(opt *DialOptions) (conn Conn, err error) {
 
 	if c.Direct {
 		direct = true
-	} else if ip != nil && c.chnListCtx != nil {
-		if c.chnListCtx.testIP(ip) {
+	} else if ip != nil && c.getChnListCtx() != nil {
+		if c.getChnListCtx().testIP(ip) {
 			c.LogD("host", host, "hit chn route")
 			direct = true
 		} else {
@@ -319,12 +314,12 @@ func DialSSWithOptions(opt *DialOptions) (conn Conn, err error) {
 			proxy = true
 		}
 	} else {
-		if c.AutoProxy == false || c.autoProxyCtx == nil {
+		if c.AutoProxy == false || c.getAutoProxyCtx() == nil {
 			proxy = true
-		} else if c.autoProxyCtx.checkIfByPass(host) {
+		} else if c.getAutoProxyCtx().checkIfByPass(host) {
 			c.LogD("host", host, "hit bypass list")
 			direct = true
-		} else if c.autoProxyCtx.checkIfProxy(host) {
+		} else if c.getAutoProxyCtx().checkIfProxy(host) {
 			c.LogD("host", host, "hit proxy list")
 			proxy = true
 		} else if host == "localhost" {
@@ -363,10 +358,10 @@ func DialSSWithOptions(opt *DialOptions) (conn Conn, err error) {
 		case conch <- rconn:
 			if ip == nil {
 				if direct {
-					c.autoProxyCtx.markHostByPass(host)
+					c.getAutoProxyCtx().markHostByPass(host)
 					c.LogD("add", host, "to bypass list")
 				} else {
-					c.autoProxyCtx.markHostNeedProxy(host)
+					c.getAutoProxyCtx().markHostNeedProxy(host)
 					c.LogD("add", host, "to proxy list")
 				}
 			}
