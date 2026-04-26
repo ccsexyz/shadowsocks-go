@@ -1,0 +1,67 @@
+[
+    {
+        "type": "local",
+        "localaddr": ":1080",
+        "remoteaddr": "server.example.com:8080",
+        "method": "aes-256-gcm",
+        "password": "your-password",
+        "adminaddr": "127.0.0.1:8090",
+        "udprelay": true,
+        "timeout": 120,
+        "verbose": true,
+        "logfile": "/var/log/ss-local.log"
+    },
+    {
+        "type": "local",
+        "localaddr": ":1081",
+        "remoteaddr": "server.example.com:8080",
+        "method": "aes-256-gcm",
+        "password": "your-password",
+        "autoproxy": true,
+        "proxylist": "/etc/shadowsocks/proxylist.txt",
+        "blacklist": "/etc/shadowsocks/blacklist.txt",
+        "chnlist": "/etc/shadowsocks/chnroute.txt",
+        "dumplist": true
+    },
+    {
+        "type": "local",
+        "localaddr": ":1082",
+        "remoteaddr": "server.example.com:8080",
+        "method": "aes-256-gcm",
+        "password": "your-password",
+        "limit": 1048576,
+        "limitperconn": 65536
+    },
+    {
+        "type": "local",
+        "localaddr": ":1083",
+        "remoteaddr": "server.example.com:8080",
+        "method": "aes-256-gcm",
+        "password": "your-password",
+        "datashard": 10,
+        "parityshard": 3
+    },
+    {
+        "type": "wstunnel",
+        "localaddr": ":8080",
+        "method": "aes-256-gcm",
+        "password": "your-password",
+        "allow_http": true,
+        "secure_origin": true,
+        "udprelay": true
+    },
+    {
+        "type": "redir",
+        "localaddr": ":12345",
+        "udprelay": true
+    },
+    {
+        "type": "local",
+        "localaddr": ":1084",
+        "remoteaddr": "server.example.com:8080",
+        "method": "aes-256-gcm",
+        "password": "your-password",
+        "usemul": true,
+        "mulconn": 4
+    }
+]

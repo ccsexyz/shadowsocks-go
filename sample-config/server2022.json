@@ -1,0 +1,6 @@
+{
+    "localaddr": ":8080",
+    "method": "2022-blake3-aes-256-gcm",
+    "password": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+    "safe": true
+}
