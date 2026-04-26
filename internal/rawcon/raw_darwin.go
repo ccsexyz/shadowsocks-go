@@ -17,7 +17,7 @@ import (
 	"syscall"
 	"time"
 
-	ran "math/rand"
+	ran "math/rand/v2"
 
 	"github.com/ccsexyz/gopacket/bsdbpf"
 	"github.com/ccsexyz/gopacket/layers"
@@ -717,7 +717,7 @@ func (r *Raw) dialRAWDummy(address string) (conn *RAWConn, err error) {
 		b := utils.GetBuf(2048)
 		defer utils.PutBuf(b)
 		utils.PutRandomBytes(b[1816:])
-		tlsLen := utils.GenTLSClientHello(b, host, b[2016:], b[1816:1816+ran.Intn(200)])
+		tlsLen := utils.GenTLSClientHello(b, host, b[2016:], b[1816:1816+ran.IntN(200)])
 		req = b[:tlsLen]
 	} else {
 		if tcpRemoteAddr.Port != 80 {
@@ -745,7 +745,7 @@ out:
 				return
 			}
 		}
-		err = conn.SetReadDeadline(time.Now().Add(time.Millisecond * time.Duration(200+int(ran.Int63()%100))))
+		err = conn.SetReadDeadline(time.Now().Add(time.Millisecond * time.Duration(200+int(ran.Int64()%100))))
 		if err != nil {
 			return
 		}
@@ -853,7 +853,7 @@ func (r *Raw) DialRAW(address string) (conn *RAWConn, err error) {
 				DstIP:    udp.RemoteAddr().(*net.UDPAddr).IP,
 				Protocol: layers.IPProtocolTCP,
 				Version:  0x4,
-				Id:       uint16(ran.Int63() % 65536),
+				Id:       uint16(ran.Int64() % 65536),
 				Flags:    layers.IPv4DontFragment,
 				TTL:      0x40,
 				TOS:      uint8(r.DSCP),
@@ -1011,7 +1011,7 @@ func (r *Raw) DialRAW(address string) (conn *RAWConn, err error) {
 		if err != nil {
 			return
 		}
-		conn.SetReadDeadline(time.Now().Add(time.Millisecond * time.Duration(500+int(ran.Int63()%500))))
+		conn.SetReadDeadline(time.Now().Add(time.Millisecond * time.Duration(500+int(ran.Int64()%500))))
 		cl, err = conn.readLayers()
 		if err != nil {
 			e, ok := err.(net.Error)
@@ -1050,7 +1050,7 @@ func (r *Raw) DialRAW(address string) (conn *RAWConn, err error) {
 		b := utils.GetBuf(2048)
 		defer utils.PutBuf(b)
 		utils.PutRandomBytes(b[1816:])
-		tlsLen := utils.GenTLSClientHello(b, host, b[2016:], b[1816:1816+ran.Intn(200)])
+		tlsLen := utils.GenTLSClientHello(b, host, b[2016:], b[1816:1816+ran.IntN(200)])
 		req = b[:tlsLen]
 	} else {
 		if conn.sport != 80 {
@@ -1077,7 +1077,7 @@ func (r *Raw) DialRAW(address string) (conn *RAWConn, err error) {
 				return
 			}
 		}
-		err = conn.SetReadDeadline(time.Now().Add(time.Millisecond * time.Duration(200+int(ran.Int63()%100))))
+		err = conn.SetReadDeadline(time.Now().Add(time.Millisecond * time.Duration(200+int(ran.Int64()%100))))
 		if err != nil {
 			return
 		}
@@ -1462,7 +1462,7 @@ func (listener *RAWListener) ReadFrom(b []byte) (n int, addr net.Addr, err error
 							info.layer.tcp.Ack += uint32(n)
 							if info.rep == nil {
 								rep := make([]byte, 2048)
-								l := ran.Intn(128)
+								l := ran.IntN(128)
 								n = utils.GenTLSServerHello(rep, l, msg.SessionId)
 								info.rep = rep[:l+n]
 							}
@@ -1516,7 +1516,7 @@ func (listener *RAWListener) ReadFrom(b []byte) (n int, addr net.Addr, err error
 				DstIP:    cl.ip4.SrcIP,
 				Protocol: layers.IPProtocolTCP,
 				Version:  0x4,
-				Id:       uint16(ran.Int63() % 65536),
+				Id:       uint16(ran.Int64() % 65536),
 				Flags:    layers.IPv4DontFragment,
 				TTL:      0x40,
 				TOS:      uint8(listener.r.DSCP),

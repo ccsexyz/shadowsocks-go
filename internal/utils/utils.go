@@ -16,7 +16,7 @@ import (
 const defaultMethod = "aes-128-gcm"
 
 func PutRandomBytes(b []byte) {
-	binary.Read(rand.Reader, binary.BigEndian, b)
+	rand.Read(b)
 }
 
 func GetRandomBytes(len int) []byte {

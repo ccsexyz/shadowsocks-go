@@ -1,4 +1,4 @@
-package main
+package server
 
 import (
 	"net"
@@ -10,8 +10,8 @@ import (
 )
 
 func RunTCPServer(address string, c *ss.Config,
-	listen func(string, *ss.Config) (net.Listener, error),
-	handler func(ss.Conn, *ss.Config)) {
+	handlers []ss.AcceptHandler,
+	handler func(*ss.AcceptedConn)) {
 	var addresses []string
 	func() {
 		addrsMap := make(map[string]bool)
@@ -30,7 +30,7 @@ func RunTCPServer(address string, c *ss.Config,
 		wg.Add(1)
 		go func(address string) {
 			defer wg.Done()
-			lis, err := listen(address, c)
+			lis, err := ss.Listen(address, c, handlers)
 			if err != nil {
 				c.Logger.Fatal(err)
 			}
@@ -46,19 +46,16 @@ func RunTCPServer(address string, c *ss.Config,
 				if err != nil {
 					return
 				}
-				go handler(conn.(ss.Conn), c)
+				ac, ok := conn.(*ss.AcceptedConn)
+				if !ok {
+					conn.Close()
+					return
+				}
+				go handler(ac)
 			}
 		}(address)
 	}
 	wg.Wait()
-}
-
-func GetDstOfConn(conn ss.Conn) string {
-	dst := conn.GetDst()
-	if dst == nil {
-		return ""
-	}
-	return dst.String()
 }
 
 func getDefaultUDPServerCtx() *utils.UDPServerCtx {

@@ -1,4 +1,4 @@
-package main
+package server
 
 import (
 	"encoding/binary"
@@ -10,7 +10,7 @@ import (
 )
 
 func RunTCPRedirServer(c *ss.Config) {
-	RunTCPServer(c.Localaddr, c, ss.ListenRedir, tcpLocalHandler)
+	RunTCPServer(c.Localaddr, c, []ss.AcceptHandler{ss.LimitHandler, ss.RedirAcceptor}, tcpLocalHandler)
 }
 
 type redirUDPLocalConn struct {

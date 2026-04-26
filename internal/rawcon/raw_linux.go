@@ -14,7 +14,7 @@ import (
 	"os/exec"
 	"strconv"
 
-	ran "math/rand"
+	ran "math/rand/v2"
 
 	"golang.org/x/net/bpf"
 	"golang.org/x/net/ipv4"
@@ -429,7 +429,7 @@ func (r *Raw) DialRAW(address string) (raw *RAWConn, err error) {
 		if err != nil {
 			return
 		}
-		err = raw.SetReadDeadline(time.Now().Add(time.Millisecond * time.Duration(500+int(ran.Int63()%500))))
+		err = raw.SetReadDeadline(time.Now().Add(time.Millisecond * time.Duration(500+int(ran.Int64()%500))))
 		if err != nil {
 			return
 		}
@@ -473,7 +473,7 @@ func (r *Raw) DialRAW(address string) (raw *RAWConn, err error) {
 		b := utils.GetBuf(2048)
 		defer utils.PutBuf(b)
 		utils.PutRandomBytes(b[1816:])
-		tlsLen := utils.GenTLSClientHello(b, host, b[2016:], b[1816:1816+ran.Intn(200)])
+		tlsLen := utils.GenTLSClientHello(b, host, b[2016:], b[1816:1816+ran.IntN(200)])
 		req = b[:tlsLen]
 	} else {
 		if uremoteaddr.Port != 80 {
@@ -500,7 +500,7 @@ func (r *Raw) DialRAW(address string) (raw *RAWConn, err error) {
 				return
 			}
 		}
-		err = raw.SetReadDeadline(time.Now().Add(time.Millisecond * time.Duration(200+int(ran.Int63()%100))))
+		err = raw.SetReadDeadline(time.Now().Add(time.Millisecond * time.Duration(200+int(ran.Int64()%100))))
 		if err != nil {
 			return
 		}
@@ -776,7 +776,7 @@ func (listener *RAWListener) doRead(b []byte) (n int, addr *net.UDPAddr, err err
 							t.ackn = tcp.seqn + uint32(n)
 							if info.rep == nil {
 								rep := make([]byte, 2048)
-								l := ran.Intn(128)
+								l := ran.IntN(128)
 								n = utils.GenTLSServerHello(rep, l, msg.SessionId)
 								info.rep = rep[:l+n]
 							}

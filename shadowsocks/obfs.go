@@ -4,7 +4,8 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"math/rand"
+	"math/rand/v2"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -40,30 +41,32 @@ type ObfsConn struct {
 	status   int
 }
 
+func (c *ObfsConn) Unwrap() net.Conn { return c.RemainConn.Conn }
+
 func (c *ObfsConn) Close() (err error) {
 	c.lock.Lock()
-	defer c.lock.Unlock()
-	c.rlock.Lock()
-	defer c.rlock.Unlock()
 	if c.destroy {
+		c.lock.Unlock()
 		return
 	}
 	c.destroy = true
 	if c.pool == nil || c.req || c.resp {
-		err = c.RemainConn.Close()
-		return
+		c.lock.Unlock()
+		return c.RemainConn.Close()
 	}
+	c.lock.Unlock()
+
 	c.wlock.Lock()
-	defer c.wlock.Unlock()
 	_, err = c.writeBuffers([][]byte{nil})
 	if err != nil {
-		err = c.RemainConn.Close()
-		return
+		c.wlock.Unlock()
+		return c.RemainConn.Close()
 	}
+	c.wlock.Unlock()
+
 	c.SetReadDeadline(time.Now())
 	c.rlock.Lock()
 	c.SetReadDeadline(time.Time{})
-	defer c.rlock.Unlock()
 	buf := utils.GetBuf(buffersize)
 	defer utils.PutBuf(buf)
 	for !c.eos {
@@ -72,11 +75,13 @@ func (c *ObfsConn) Close() (err error) {
 			if c.eos {
 				break
 			} else {
-				err = c.RemainConn.Close()
-				return
+				c.rlock.Unlock()
+				return c.RemainConn.Close()
 			}
 		}
 	}
+	c.rlock.Unlock()
+
 	err = c.pool.Put(&ObfsConn{
 		RemainConn: c.RemainConn,
 		pool:       c.pool,
@@ -273,6 +278,8 @@ type RemainConn struct {
 	remain  []byte
 	wremain []byte
 }
+
+func (c *RemainConn) Unwrap() net.Conn { return c.Conn }
 
 func DecayRemainConn(conn Conn) Conn {
 	rconn, ok := conn.(*RemainConn)
@@ -526,7 +533,7 @@ func DialObfs(target string, c *Config) (conn Conn, err error) {
 	if c.ObfsMethod == "wstunnel" {
 		var host string
 		if len(c.ObfsHost) > 0 {
-			host = c.ObfsHost[rand.Intn(len(c.ObfsHost))]
+			host = c.ObfsHost[rand.IntN(len(c.ObfsHost))]
 		}
 		return DialWsConn(target, host, c)
 	}
@@ -550,7 +557,7 @@ func DialObfs(target string, c *Config) (conn Conn, err error) {
 	} else if len(c.ObfsHost) == 1 {
 		host = c.ObfsHost[0]
 	} else {
-		host = c.ObfsHost[rand.Intn(len(c.ObfsHost))]
+		host = c.ObfsHost[rand.IntN(len(c.ObfsHost))]
 	}
 	if c.ObfsMethod == "websocket" {
 		conn = &SimpleHTTPConn{
@@ -582,9 +589,9 @@ func DialObfs(target string, c *Config) (conn Conn, err error) {
 	return
 }
 
-func obfsAcceptHandler(conn Conn, lis *listener) (c Conn) {
+func obfsAcceptHandler(conn Conn, lis *listener) (result AcceptResult) {
 	defer func() {
-		if conn != nil && c == nil {
+		if conn != nil && result.Action != AcceptContinue {
 			conn.Close()
 		}
 	}()
@@ -646,13 +653,12 @@ func obfsAcceptHandler(conn Conn, lis *listener) (c Conn) {
 				if len(cliMsg.SessionTicket) > 0 {
 					conn = &RemainConn{Conn: conn, remain: DupBuffer(cliMsg.SessionTicket)}
 				}
-				c = conn
+				result = AcceptResult{AcceptContinue, conn}
 				return
 			}
-			//log.Println(buf[:n], n, ok, cliMsg)
 		}
 	OUT:
-		c = &RemainConn{Conn: conn, remain: remain, wremain: wremain}
+		result = AcceptResult{AcceptContinue, &RemainConn{Conn: conn, remain: remain, wremain: wremain}}
 		return
 	}
 	resp := buildHTTPResponse("")
@@ -661,7 +667,7 @@ func obfsAcceptHandler(conn Conn, lis *listener) (c Conn) {
 	obfsconn.wremain = []byte(resp)
 	obfsconn.req = true
 	obfsconn.pool = lis.c.pool
-	c = obfsconn
+	result = AcceptResult{AcceptContinue, obfsconn}
 	return
 }
 
@@ -671,13 +677,16 @@ type wsConn struct {
 	bufCh        chan []byte
 	errCh        chan error
 	readDeadline time.Time
+	closeCh      chan struct{}
+	closeOnce    sync.Once
 }
 
 func newWsConn(conn *websocket.Conn) *wsConn {
 	wsconn := &wsConn{
-		Conn:  conn,
-		bufCh: make(chan []byte, 16),
-		errCh: make(chan error, 1),
+		Conn:    conn,
+		bufCh:   make(chan []byte, 16),
+		errCh:   make(chan error, 1),
+		closeCh: make(chan struct{}),
 	}
 	go wsconn.readLoop()
 	return wsconn
@@ -691,6 +700,9 @@ func (c *wsConn) readLoop() {
 		if err != nil {
 			c.errCh <- err
 		}
+		c.closeOnce.Do(func() {
+			close(c.closeCh)
+		})
 	}()
 
 	for {
@@ -702,7 +714,11 @@ func (c *wsConn) readLoop() {
 			break
 		}
 
-		c.bufCh <- msg
+		select {
+		case c.bufCh <- msg:
+		case <-c.closeCh:
+			return
+		}
 	}
 }
 
@@ -773,6 +789,9 @@ func (c *wsConn) WriteBuffers(bufs [][]byte) (n int, err error) {
 }
 
 func (c *wsConn) Close() error {
+	c.closeOnce.Do(func() {
+		close(c.closeCh)
+	})
 	err := c.Conn.Close()
 	return err
 }

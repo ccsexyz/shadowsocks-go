@@ -2,7 +2,7 @@ package utils
 
 import (
 	"log"
-	"math/rand"
+	"math/rand/v2"
 	"sync"
 	"testing"
 )
@@ -11,7 +11,7 @@ func TestBufBasicGetAndPut(t *testing.T) {
 	log.SetFlags(log.Lshortfile | log.Ldate | log.Ltime | log.Lmicroseconds)
 	f := func() {
 		for it := 0; it < 100; it++ {
-			n := rand.Intn(65536)
+			n := rand.IntN(65536)
 			b := GetBuf(n)
 			if len(b) != n {
 				t.Fail()

@@ -5,7 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-	"math/rand"
+	"math/rand/v2"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -13,6 +13,7 @@ import (
 
 	"github.com/bits-and-blooms/bitset"
 )
+
 
 // UDPConn is the union set of net.Conn and net.PacketConn
 type UDPConn interface {
@@ -631,7 +632,7 @@ AGAIN:
 	if err != nil {
 		return
 	}
-	r := rand.Intn(100)
+	r := rand.IntN(100)
 	if r < conn.rate {
 		goto AGAIN
 	}
@@ -639,7 +640,7 @@ AGAIN:
 }
 
 func (conn *RandomDropConn) Write(b []byte) (n int, err error) {
-	r := rand.Intn(100)
+	r := rand.IntN(100)
 	if r < conn.rate {
 		return len(b), nil
 	}

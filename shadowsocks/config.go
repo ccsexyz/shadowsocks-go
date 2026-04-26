@@ -4,86 +4,119 @@ import (
 	"encoding/json"
 	"fmt"
 	"hash/crc32"
-	"io/ioutil"
 	"log"
 	"os"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/ccsexyz/shadowsocks-go/crypto"
 	"github.com/ccsexyz/shadowsocks-go/internal/utils"
 )
 
+// CryptoConfig groups encryption-related configuration.
+type CryptoConfig struct {
+	Method   string `json:"method"`
+	Password string `json:"password"`
+	Nonop    bool   `json:"nonop"`
+	Safe     bool   `json:"safe"`
+	Ivlen    int
+}
+
+// ObfsConfig groups obfuscation-related configuration.
+type ObfsConfig struct {
+	Obfs       bool     `json:"obfs"`
+	ObfsMethod string   `json:"obfsmethod"`
+	ObfsHost   []string `json:"obfshost"`
+	ObfsAlive  bool     `json:"obfsalive"`
+}
+
+// NetworkConfig groups network addressing and routing configuration.
+type NetworkConfig struct {
+	Type         string   `json:"type"`
+	Localaddr    string   `json:"localaddr"`
+	Localaddrs   []string `json:"localaddrs"`
+	Remoteaddr   string   `json:"remoteaddr"`
+	Timeout      int      `json:"timeout"`
+	PreferIPv4   bool     `json:"prefer_ipv4"`
+	NoIPv4       bool     `json:"no_ipv4"`
+	NoIPv6       bool     `json:"no_ipv6"`
+	LocalResolve bool     `json:"local_resolve"`
+}
+
+// HttpConfig groups HTTP-related configuration.
+type HttpConfig struct {
+	AllowHTTP    bool              `json:"allow_http"`
+	LogHTTP      bool              `json:"loghttp"`
+	SecureOrigin bool              `json:"secure_origin"`
+	TargetMap    map[string]string `json:"target_map"`
+}
+
+// LimitConfig groups rate-limiting configuration.
+type LimitConfig struct {
+	Limit        int `json:"limit"`
+	LimitPerConn int `json:"limitperconn"`
+}
+
+// ProxyConfig groups auto-proxy and routing configuration.
+type ProxyConfig struct {
+	AutoProxy bool   `json:"autoproxy"`
+	ProxyList string `json:"proxylist"`
+	BlackList string `json:"blacklist"`
+	DumpList  bool   `json:"dumplist"`
+	ChnList   string `json:"chnlist"`
+	Direct    bool   `json:"direct"`
+	MITM      bool   `json:"mitm"`
+}
+
 type Config struct {
 	Nickname       string    `json:"nickname"`
-	Type           string    `json:"type"`
-	Localaddr      string    `json:"localaddr"`
-	Localaddrs     []string  `json:"localaddrs"`
-	Remoteaddr     string    `json:"remoteaddr"`
-	Method         string    `json:"method"`
-	Password       string    `json:"password"`
-	Nonop          bool      `json:"nonop"`
-	AllowHTTP      bool      `json:"allow_http"`
-	UDPRelay       bool      `json:"udprelay"`
-	Backend        *Config   `json:"backend"`
-	Backends       []*Config `json:"backends"`
 	Verbose        bool      `json:"verbose"`
 	Debug          bool      `json:"debug"`
 	LogFile        string    `json:"logfile"`
-	Obfs           bool      `json:"obfs"`
-	ObfsMethod     string    `json:"obfsmethod"`
-	ObfsHost       []string  `json:"obfshost"`
-	ObfsAlive      bool      `json:"obfsalive"`
-	PreferIPv4     bool      `json:"prefer_ipv4"`
-	NoIPv4         bool      `json:"no_ipv4"`
-	NoIPv6         bool      `json:"no_ipv6"`
-	LocalResolve   bool      `json:"local_resolve"`
-	Limit          int       `json:"limit"`
-	LimitPerConn   int       `json:"limitperconn"`
-	LogHTTP        bool      `json:"loghttp"`
-	Timeout        int       `json:"timeout"`
+	UDPRelay       bool      `json:"udprelay"`
 	FilterCapacity int       `json:"filtcap"`
-	AutoProxy      bool      `json:"autoproxy"`
-	ProxyList      string    `json:"proxylist"`
-	BlackList      string    `json:"blacklist"`
-	DumpList       bool      `json:"dumplist"`
-	ChnList        string    `json:"chnlist"`
+	Backend        *Config   `json:"backend"`
+	Backends       []*Config `json:"backends"`
 	UseMul         bool      `json:"usemul"`
 	UseUDP         bool      `json:"useudp"`
-	Direct         bool      `json:"direct"`
 	MulConn        int       `json:"mulconn"`
 	FakeTCPAddr    string    `json:"faketcpaddr"`
-	Safe           bool      `json:"safe"`
-	MITM           bool      `json:"mitm"`
 	DataShard      int       `json:"datashard"`
 	ParityShard    int       `json:"parityshard"`
 	SSProxy        bool      `json:"ssproxy"`
-	limiters       []*Limiter
-	Vlogger        *log.Logger
-	Dlogger        *log.Logger
-	Logger         *log.Logger
-	logfile        *os.File
-	TargetMap      map[string]string `json:"target_map"`
-	Ivlen          int
-	Any            interface{}
-	Die            chan bool
-	pool           *ConnPool
-	closers        []cb
-	tcpFilterLock  sync.Mutex
-	tcpFilterOnce  sync.Once
-	tcpFilter      bytesFilter
-	udpFilterOnce  sync.Once
-	udpFilter      bytesFilter
-	tcpIvChecker   ivChecker
-	autoProxyCtx   *autoProxy
-	chnListCtx     *chnRouteList
-	crctbl         *crc32.Table
-	disable        bool
-	stat           *statServer
+
+	CryptoConfig
+	ObfsConfig
+	NetworkConfig
+	HttpConfig
+	LimitConfig
+	ProxyConfig
+
+	limiters      []*Limiter
+	Vlogger       *log.Logger
+	Dlogger       *log.Logger
+	Logger        *log.Logger
+	logfile       *os.File
+	Any           interface{}
+	Die           chan bool
+	pool          *ConnPool
+	closers       []cb
+	tcpFilterLock sync.Mutex
+	tcpFilterOnce sync.Once
+	tcpFilter     bytesFilter
+	udpFilterOnce sync.Once
+	udpFilter     bytesFilter
+	tcpIvChecker  ivChecker
+	autoProxyCtx  *autoProxy
+	chnListCtx    *chnRouteList
+	crctbl        *crc32.Table
+	disable       bool
+	stat          *statServer
 }
 
 func ReadConfig(path string) (configs []*Config, err error) {
-	bytes, err := ioutil.ReadFile(path)
+	bytes, err := os.ReadFile(path)
 	if err != nil {
 		return
 	}
@@ -175,7 +208,7 @@ func CheckBasicConfig(c *Config) {
 		c.Method = defaultMethod
 	}
 	if c.Ivlen == 0 {
-		c.Ivlen = utils.GetIvLen(c.Method)
+		c.Ivlen = crypto.GetIvLen(c.Method)
 	}
 	if len(c.Nickname) == 0 {
 		if len(c.Localaddr) == 0 {
@@ -356,7 +389,7 @@ func (c *Config) proxyListDump() {
 				hosts := autoProxyCtx.getByPassHosts()
 				if len(hosts) != 0 {
 					hoststr := strings.Join(hosts, "\n")
-					err := ioutil.WriteFile(c.BlackList, utils.StringToSlice(hoststr), 0644)
+					err := os.WriteFile(c.BlackList, utils.StringToSlice(hoststr), 0644)
 					if err != nil {
 						c.Log(err)
 					}
@@ -366,7 +399,7 @@ func (c *Config) proxyListDump() {
 				hosts := autoProxyCtx.getProxyHosts()
 				if len(hosts) != 0 {
 					hoststr := strings.Join(hosts, "\n")
-					err := ioutil.WriteFile(c.ProxyList, utils.StringToSlice(hoststr), 0644)
+					err := os.WriteFile(c.ProxyList, utils.StringToSlice(hoststr), 0644)
 					if err != nil {
 						c.Log(err)
 					}

@@ -2,10 +2,11 @@ package ss
 
 import (
 	"io"
-	"math/rand"
+	"math/rand/v2"
 	"net"
 	"time"
 
+	"github.com/ccsexyz/shadowsocks-go/crypto"
 	"github.com/ccsexyz/shadowsocks-go/internal/utils"
 )
 
@@ -15,6 +16,27 @@ type Conn interface {
 	SetDst(Addr)
 	GetDst() Addr
 	GetHost() string
+}
+
+// AcceptedConn is the contract between the accept layer and the connection handler.
+// It embeds Conn to satisfy net.Conn directly.
+type AcceptedConn struct {
+	Conn
+	Target Addr
+	Config *Config
+}
+
+// TargetStr returns the target address as a string.
+func (ac *AcceptedConn) TargetStr() string {
+	if ac.Target == nil {
+		return ""
+	}
+	return ac.Target.String()
+}
+
+// Unwrapper provides access to the inner net.Conn for connection wrappers.
+type Unwrapper interface {
+	Unwrap() net.Conn
 }
 
 type cfg = Config
@@ -72,6 +94,8 @@ type DebugConn struct {
 	c *Config
 }
 
+func (c *DebugConn) Unwrap() net.Conn { return c.Conn }
+
 func NewDebugConn(conn Conn, c *Config) *DebugConn {
 	return &DebugConn{Conn: conn, c: c}
 }
@@ -106,18 +130,20 @@ func debugAcceptHandler(conn Conn, lis *listener) (c Conn) {
 
 type SsConn struct {
 	Conn
-	enc  utils.CipherStream
-	dec  utils.CipherStream
+	enc  crypto.CipherStream
+	dec  crypto.CipherStream
 	c    *Config
-	xu1s bool
+	deferClose bool
 }
+
+func (c *SsConn) Unwrap() net.Conn { return c.Conn }
 
 func (c *SsConn) GetConfig() *Config {
 	return c.c
 }
 
 func (c *SsConn) Close() error {
-	if c.xu1s {
+	if c.deferClose {
 		go func() {
 			time.Sleep(time.Duration(rand.Int()%64+8) * time.Second)
 			c.Conn.Close()
@@ -127,12 +153,12 @@ func (c *SsConn) Close() error {
 	return c.Conn.Close()
 }
 
-func (c *SsConn) Xu1s() {
-	c.xu1s = true
+func (c *SsConn) DeferClose() {
+	c.deferClose = true
 }
 
-func (c *SsConn) Xu0s() {
-	c.xu1s = false
+func (c *SsConn) CancelDeferClose() {
+	c.deferClose = false
 }
 
 func (c *SsConn) Read(b []byte) (n int, err error) {
@@ -195,13 +221,17 @@ func (c *SsConn) WriteBuffers(bufs [][]byte) (n int, err error) {
 		wbufs = append(wbufs, b[:n2])
 	}
 
-	b, err := io.ReadAll(c.enc)
-	if err != nil {
+	rem := utils.GetBuf(buffersize)
+	n3, err3 := c.enc.Read(rem)
+	if err3 != nil && err3 != io.EOF {
+		utils.PutBuf(rem)
+		err = err3
 		return
 	}
-	wbufs = append(wbufs, b)
+	wbufs = append(wbufs, rem[:n3])
 
 	_, err = c.Conn.WriteBuffers(wbufs)
+	utils.PutBuf(rem)
 	return
 }
 
@@ -210,6 +240,8 @@ type LimitConn struct {
 	Rlimiters []*Limiter
 	Wlimiters []*Limiter
 }
+
+func (c *LimitConn) Unwrap() net.Conn { return c.Conn }
 
 func (c *LimitConn) Read(b []byte) (n int, err error) {
 	n, err = c.Conn.Read(b)
@@ -241,17 +273,16 @@ func (c *LimitConn) WriteBuffers(b [][]byte) (n int, err error) {
 	return
 }
 
-func limitAcceptHandler(conn Conn, lis *listener) (c Conn) {
+func limitAcceptHandler(conn Conn, lis *listener) AcceptResult {
 	limiters := make([]*Limiter, len(lis.c.limiters))
 	copy(limiters, lis.c.limiters)
 	if lis.c.LimitPerConn != 0 {
 		limiters = append(limiters, NewLimiter(lis.c.LimitPerConn))
 	}
-	c = &LimitConn{
+	return AcceptResult{AcceptContinue, &LimitConn{
 		Conn:      GetConn(conn),
 		Rlimiters: limiters,
-	}
-	return
+	}}
 }
 
 type HttpLogConn struct {

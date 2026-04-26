@@ -3,55 +3,53 @@ package ss
 import (
 	"bufio"
 	"context"
-	"crypto/rand"
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"io"
 	"net"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
-	"unicode"
 
+	"github.com/ccsexyz/shadowsocks-go/domain"
+	"github.com/ccsexyz/shadowsocks-go/crypto"
 	"github.com/ccsexyz/shadowsocks-go/internal/utils"
-	"golang.org/x/exp/constraints"
 )
 
 const (
-	defaultMethod          = "aes-128-gcm"
-	defaultPassword        = "secret"
-	defaultTimeout         = 65
-	buffersize             = 8192
-	httpbuffersize         = 4096
-	verSocks4Resp          = 0
-	verSocks4              = 4
-	verSocks5              = 5
-	verSocks6              = 6
-	cmdConnect             = 1
-	cmdUDP                 = 3
-	cmdSocks4OK            = 0x5A
-	typeIPv4               = 1
-	typeDm                 = 3
-	typeIPv6               = 4
-	typeMux                = 0x6D
-	typeTs                 = 0x74 // timestamp
-	typeNop                = 0x90 // [nop 1 byte] [noplen 1 byte (< 128)] [zero data, noplen byte]
-	lenIPv4                = 4
-	lenIPv6                = 16
-	lenTs                  = 8
-	muxaddr                = "mux:12580"
-	muxhost                = "mux"
-	muxport                = 12580
-	defaultObfsHost        = "www.bing.com"
-	defaultFilterCapacity  = 100000
-	defaultFilterFalseRate = 0.00001
+	defaultMethod          = domain.DefaultMethod
+	defaultPassword        = domain.DefaultPassword
+	defaultTimeout         = domain.DefaultTimeout
+	buffersize             = domain.BufferSize
+	httpbuffersize         = domain.HTTPBufferSize
+	verSocks4Resp          = domain.VerSocks4Resp
+	verSocks4              = domain.VerSocks4
+	verSocks5              = domain.VerSocks5
+	verSocks6              = domain.VerSocks6
+	cmdConnect             = domain.CmdConnect
+	cmdUDP                 = domain.CmdUDP
+	cmdSocks4OK            = domain.CmdSocks4OK
+	typeIPv4               = domain.TypeIPv4
+	typeDm                 = domain.TypeDm
+	typeIPv6               = domain.TypeIPv6
+	typeMux                = domain.TypeMux
+	typeTs                 = domain.TypeTs // timestamp
+	typeNop                = domain.TypeNop // [nop 1 byte] [noplen 1 byte (< 128)] [zero data, noplen byte]
+	lenIPv4                = domain.LenIPv4
+	lenIPv6                = domain.LenIPv6
+	lenTs                  = domain.LenTs
+	muxaddr                = domain.MuxAddr
+	muxhost                = domain.MuxHost
+	muxport                = domain.MuxPort
+	defaultObfsHost        = domain.DefaultObfsHost
+	defaultFilterCapacity  = domain.DefaultFilterCapacity
+	defaultFilterFalseRate = domain.DefaultFilterFalseRate
 )
 
 var (
 	bufPool *sync.Pool
-	nilConn = &TCPConn{}
 )
 
 func init() {
@@ -69,17 +67,20 @@ var (
 	errDuplicatedInitVector = fmt.Errorf("receive duplicated iv")
 )
 
-func PutRandomBytes(b []byte) {
-	binary.Read(rand.Reader, binary.BigEndian, b)
+func ParseAddr(b []byte) (*domain.SockAddr, []byte, error) {
+	return domain.ParseAddr(b)
 }
 
-func GetRandomBytes(len int) []byte {
-	if len <= 0 {
-		return nil
-	}
-	data := make([]byte, len)
-	PutRandomBytes(data)
-	return data
+func DupBuffer(b []byte) []byte {
+	return domain.DupBuffer(b)
+}
+
+func IsTimeoutError(err error) bool {
+	return domain.IsTimeoutError(err)
+}
+
+func CheckConn(conn net.Conn) bool {
+	return domain.CheckConn(conn)
 }
 
 func PutHeader(b []byte, host string, port int) (n int) {
@@ -107,9 +108,12 @@ type parseContext struct {
 	iv   []byte
 	data []byte
 	addr *SockAddr
-	dec  utils.CipherStream
-	cb   utils.CipherBlock
+	dec  crypto.CipherStream
+	cb   crypto.CipherBlock
 	chs  *Config
+
+	cliCipher *crypto.TcpCipher2022
+	cliSalt   []byte
 }
 
 func ParseAddrWithMultipleBackendsForUDP(b []byte, configs []*Config) (*parseContext, error) {
@@ -118,7 +122,7 @@ func ParseAddrWithMultipleBackendsForUDP(b []byte, configs []*Config) (*parseCon
 	b2 := make([]byte, len(b))
 
 	for _, cfg := range configs {
-		cb, err := utils.NewCipherBlock(cfg.Method, cfg.Password)
+		cb, err := crypto.NewCipherBlock(cfg.Method, cfg.Password)
 		if err != nil {
 			continue
 		}
@@ -152,25 +156,39 @@ func ParseAddrWithMultipleBackendsForUDP(b []byte, configs []*Config) (*parseCon
 
 func ParseAddrWithMultipleBackends(b []byte, configs []*Config) (*parseContext, error) {
 	ctxs := make([]*parseContext, 0, len(configs))
+	var errs []string
 
-	for _, cfg := range configs {
-		dec, err := utils.NewDecrypter(cfg.Method, cfg.Password)
+	for i, cfg := range configs {
+		if crypto.IsAEAD2022(cfg.Method) {
+			ctx, err := tryDecodeAead2022(b, cfg)
+			if err != nil {
+				errs = append(errs, fmt.Sprintf("backend[%d] 2022 %s: %v", i, cfg.Method, err))
+				continue
+			}
+			ctxs = append(ctxs, ctx)
+			continue
+		}
+		dec, err := crypto.NewDecrypter(cfg.Method, cfg.Password)
 		if err != nil {
+			errs = append(errs, fmt.Sprintf("backend[%d] %s: NewDecrypter: %v", i, cfg.Method, err))
 			continue
 		}
 
 		_, err = dec.Write(b)
 		if err != nil {
+			errs = append(errs, fmt.Sprintf("backend[%d] %s: dec.Write: %v", i, cfg.Method, err))
 			continue
 		}
 
 		buf, err := io.ReadAll(dec)
 		if err != nil {
+			errs = append(errs, fmt.Sprintf("backend[%d] %s: dec.Read: %v", i, cfg.Method, err))
 			continue
 		}
 
 		addr, data, err := ParseAddr(buf)
 		if err != nil {
+			errs = append(errs, fmt.Sprintf("backend[%d] %s: ParseAddr: %v (decrypted=%d bytes: %x)", i, cfg.Method, err, len(buf), safeHeadHex(buf, 64)))
 			continue
 		}
 
@@ -184,146 +202,23 @@ func ParseAddrWithMultipleBackends(b []byte, configs []*Config) (*parseContext, 
 	}
 
 	if len(ctxs) == 0 {
-		return nil, errInvalidHeader
+		detail := strings.Join(errs, "; ")
+		return nil, fmt.Errorf("invalid header: all %d backend(s) failed: [%s] (input=%d bytes: %x)", len(configs), detail, len(b), safeHeadHex(b, 64))
 	}
 
 	return ctxs[0], nil
 }
 
-func abs[T constraints.Signed | constraints.Float](x T) T {
-	if x < 0 {
-		return -x
-	}
-	return x
-}
 
-func checkTimestamp(ts int64) (ok bool) {
-	nts := time.Now().Unix()
-	return abs(nts-ts) <= IvExpireSecond
-}
 
-// isAllowedInHost returns true if b is allowed in host.
-// Host = IP | Domain
-// IP = ipv4 | ipv6
-func isAllowedInHost(b byte) bool {
-	return unicode.IsLetter(rune(b)) || unicode.IsDigit(rune(b)) || b == '.' || b == '-' || b == '_' || b == ':' || b == '[' || b == ']'
-}
-
-func ParseAddr(b []byte) (addr *SockAddr, data []byte, err error) {
-	err = errInvalidHeader
-	addr = &SockAddr{}
-	defer func() {
-		if err != nil {
-			addr = nil
-		}
-	}()
-	n := len(b)
-	if n < 1 {
-		return
+func safeHeadHex(b []byte, n int) []byte {
+	if len(b) > n {
+		return []byte(fmt.Sprintf("%x", b[:n]))
 	}
-	var nop bool
-	atyp := b[0]
-l:
-	for {
-		switch atyp {
-		default:
-			break l
-		case typeNop:
-			noplen := int(b[1])
-			if noplen >= 128 || n < noplen+2+1 {
-				return
-			}
-			for _, v := range b[2 : noplen+2] {
-				if v != 0 {
-					return
-				}
-			}
-			b = b[noplen+2:]
-			n = len(b)
-			atyp = b[0]
-			nop = true
-			addr.nop = nop
-		case typeTs:
-			if n < lenTs+1+1 {
-				return
-			}
-			ts := binary.BigEndian.Uint64(b[1 : 1+lenTs])
-			if !checkTimestamp(int64(ts)) {
-				return
-			}
-			b = b[lenTs+1:]
-			n = len(b)
-			atyp = b[0]
-			addr.ts = true
-		}
-	}
-	var header []byte
-	switch atyp {
-	default:
-		err = fmt.Errorf("unsupported atyp value %v", atyp)
-		return
-	case typeMux:
-		if !nop {
-			return
-		}
-		header = b[:1]
-		data = b[1:]
-	case typeIPv4:
-		if nop || n < lenIPv4+2+1 {
-			return
-		}
-		header = b[:lenIPv4+2+1]
-		data = b[lenIPv4+2+1:]
-	case typeIPv6:
-		if nop || n < lenIPv6+2+1 {
-			return
-		}
-		header = b[:lenIPv6+2+1]
-		data = b[lenIPv6+2+1:]
-	case typeDm:
-		if n < 4 {
-			return
-		}
-		dmlen := int(b[1])
-		if n < dmlen+1+2+1 {
-			return
-		}
-		for _, v := range b[2 : 2+dmlen] {
-			if !isAllowedInHost(v) {
-				return
-			}
-		}
-		header = b[:2+dmlen+2]
-		data = b[2+dmlen+2:]
-	}
-	addr.header = DupBuffer(header)
-	data = DupBuffer(data)
-	err = nil
-	return
-}
-
-func DupBuffer(b []byte) (b2 []byte) {
-	l := len(b)
-	if l != 0 {
-		b2 = make([]byte, l)
-		copy(b2, b)
-	}
-	return
+	return []byte(fmt.Sprintf("%x", b))
 }
 
 // IsTimeoutError checks if the error is a timeout error.
-func IsTimeoutError(err error) bool {
-	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, os.ErrDeadlineExceeded) {
-		return true
-	}
-
-	ne, ok := err.(net.Error)
-	if ok && ne != nil && ne.Timeout() {
-		return true
-	}
-
-	return false
-}
 
 func Pipe(c1, c2 net.Conn, c *Config) {
 	defer c1.Close()
@@ -424,24 +319,11 @@ func (l *Limiter) GetTotalBytes() int64 {
 }
 
 func GetInnerConn(conn net.Conn) (c net.Conn, err error) {
-	defer func() {
-		if c == nil {
-			err = fmt.Errorf("unexpected conn with type %T", conn)
-		}
-	}()
-	switch i := conn.(type) {
-	case *SsConn:
-		c = i.Conn
-	case *DebugConn:
-		c = i.Conn
-	case *RemainConn:
-		c = i.Conn
-	case *LimitConn:
-		c = i.Conn
-	case *statConn:
-		c = i.Conn
+	u, ok := conn.(Unwrapper)
+	if !ok {
+		return nil, fmt.Errorf("unexpected conn with type %T", conn)
 	}
-	return
+	return u.Unwrap(), nil
 }
 
 func GetNetTCPConn(conn net.Conn) (c *net.TCPConn, err error) {
@@ -520,105 +402,10 @@ func GetConn(conn net.Conn) (c Conn) {
 }
 
 // CheckConn Check the Conn whether is still alive
-func CheckConn(conn net.Conn) bool {
-	if conn != nil {
-		if _, err := conn.Write([]byte{}); err == nil {
-			return true
-		}
-	}
-	return false
-}
 
-type Addr interface {
-	Host() string
-	Port() string
-	Header() []byte
-	String() string
-}
-
-type SockAddr struct {
-	header []byte
-	nop    bool
-	ts     bool
-}
-
-func (s *SockAddr) String() string {
-	return net.JoinHostPort(s.Host(), s.Port())
-}
-
-func (s *SockAddr) Host() string {
-	b := s.header
-	switch b[0] {
-	default:
-		return utils.SliceToString(b[2 : 2+int(b[1])])
-	case typeIPv4:
-		return net.IP(b[1 : lenIPv4+1]).String()
-	case typeIPv6:
-		return net.IP(b[1 : lenIPv6+1]).String()
-	case typeMux:
-		return muxhost
-	}
-}
-
-func (s *SockAddr) Port() string {
-	return strconv.Itoa(s.PortNum())
-}
-
-func (s *SockAddr) PortNum() int {
-	var off int
-	b := s.header
-	switch b[0] {
-	default:
-		off = int(b[1]) + 2
-	case typeIPv4:
-		off = lenIPv4 + 1
-	case typeIPv6:
-		off = lenIPv6 + 1
-	case typeMux:
-		return muxport
-	}
-	return int(binary.BigEndian.Uint16(b[off:]))
-}
-
-func (s *SockAddr) Header() []byte {
-	return s.header
-}
-
-type DstAddr struct {
-	host   string
-	port   string
-	header []byte
-}
-
-func (d *DstAddr) Host() string {
-	return d.host
-}
-
-func (d *DstAddr) Port() string {
-	return d.port
-}
-
-func (d *DstAddr) String() string {
-	if len(d.port) == 0 {
-		return d.host
-	}
-
-	return net.JoinHostPort(d.Host(), d.Port())
-}
-
-func (d *DstAddr) Header() []byte {
-	if d.header == nil {
-		port, _ := strconv.Atoi(d.port)
-		d.header, _ = GetHeader(d.host, port)
-	}
-	return d.header
-}
-
-func SliceCopy(b []byte) []byte {
-	c := make([]byte, len(b))
-	copy(c, b)
-	return c
-}
+type Addr = domain.Addr
+type SockAddr = domain.SockAddr
+type DstAddr = domain.DstAddr
 
 func checkAddrType(address string) (isDomain, isV4 bool, host string, port int) {
 	host, portStr, err := net.SplitHostPort(address)
@@ -704,6 +491,7 @@ func DialTCPConn(address string, cfg *cfg) (Conn, error) {
 type ivChecker struct {
 	ivs1    map[string]bool
 	ivs2    map[string]bool
+	ivs3    map[string]bool
 	expires time.Time
 	lock    sync.Mutex
 	once    sync.Once
@@ -713,14 +501,16 @@ func (c *ivChecker) check(iv string) bool {
 	c.once.Do(func() {
 		c.ivs1 = make(map[string]bool)
 		c.ivs2 = make(map[string]bool)
-		c.expires = time.Now().Add(time.Second * time.Duration(IvExpireSecond) * 3)
+		c.ivs3 = make(map[string]bool)
+		c.expires = time.Now().Add(time.Second * time.Duration(domain.IvExpireSecond) * 3)
 	})
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	if time.Now().After(c.expires) {
-		c.expires = time.Now().Add(time.Second * time.Duration(IvExpireSecond) * 3)
+		c.expires = time.Now().Add(time.Second * time.Duration(domain.IvExpireSecond) * 3)
 		c.ivs1 = c.ivs2
-		c.ivs2 = make(map[string]bool)
+		c.ivs2 = c.ivs3
+		c.ivs3 = make(map[string]bool)
 	}
 	_, ok := c.ivs1[iv]
 	if ok {
@@ -730,7 +520,11 @@ func (c *ivChecker) check(iv string) bool {
 	if ok {
 		return false
 	}
-	c.ivs2[iv] = true
+	_, ok = c.ivs3[iv]
+	if ok {
+		return false
+	}
+	c.ivs3[iv] = true
 	return true
 }
 

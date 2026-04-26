@@ -1,25 +1,46 @@
-package main
+package server
 
 import (
 	"net"
 	"strings"
 
+	"github.com/ccsexyz/shadowsocks-go/crypto"
 	ss "github.com/ccsexyz/shadowsocks-go/shadowsocks"
 )
 
 func RunMultiTCPRemoteServer(c *ss.Config) {
-	RunTCPServer(c.Localaddr, c, ss.ListenMultiSS, tcpRemoteHandler)
+	for _, v := range c.Backends {
+		hits := 0
+		v.Any = &hits
+	}
+	handlers := []ss.AcceptHandler{ss.LimitHandler}
+	if c.Obfs {
+		handlers = append(handlers, ss.ObfsHandler)
+	}
+	handlers = append(handlers, ss.SSMultiHandler)
+	RunTCPServer(c.Localaddr, c, handlers, tcpRemoteHandler)
 }
 
 func RunTCPRemoteServer(c *ss.Config) {
-	RunTCPServer(c.Localaddr, c, ss.ListenSS, tcpRemoteHandler)
+	handlers := []ss.AcceptHandler{ss.LimitHandler}
+	if c.Obfs {
+		handlers = append(handlers, ss.ObfsHandler)
+	}
+	if crypto.IsAEAD2022(c.Method) {
+		handlers = append(handlers, ss.SS2022Handler)
+	} else {
+		handlers = append(handlers, ss.SSHandler)
+	}
+	RunTCPServer(c.Localaddr, c, handlers, tcpRemoteHandler)
 }
 
 func RunWstunnelRemoteServer(c *ss.Config) {
-	RunTCPServer(c.Localaddr, c, ss.ListenSS, tcpRemoteHandler)
+	RunTCPRemoteServer(c)
 }
 
-func tcpRemoteHandler(conn ss.Conn, c *ss.Config) {
+func tcpRemoteHandler(ac *ss.AcceptedConn) {
+	conn := ac.Conn
+	c := ac.Config
 	defer conn.Close()
 	C, err := ss.GetSsConn(conn)
 	if err != nil {
@@ -28,7 +49,7 @@ func tcpRemoteHandler(conn ss.Conn, c *ss.Config) {
 	if conn.GetCfg() != nil {
 		c = conn.GetCfg()
 	}
-	target := GetDstOfConn(conn)
+	target := ac.TargetStr()
 	if len(target) == 0 {
 		c.LogD("target length is 0")
 		return
@@ -45,7 +66,7 @@ func tcpRemoteHandler(conn ss.Conn, c *ss.Config) {
 	}
 	defer rconn.Close()
 	if C != nil {
-		C.Xu0s()
+		C.CancelDeferClose()
 	}
 	c.Log("proxy", target, "from", conn.RemoteAddr(), "->", conn.LocalAddr(),
 		"to", rconn.LocalAddr(), "->", rconn.RemoteAddr())

@@ -1,4 +1,4 @@
-package main
+package server
 
 import (
 	"github.com/ccsexyz/shadowsocks-go/internal/utils"
@@ -6,12 +6,14 @@ import (
 )
 
 func RunTCPLocalServer(c *ss.Config) {
-	RunTCPServer(c.Localaddr, c, ss.ListenSocks5, tcpLocalHandler)
+	RunTCPServer(c.Localaddr, c, []ss.AcceptHandler{ss.LimitHandler, ss.SocksAcceptor}, tcpLocalHandler)
 }
 
-func tcpLocalHandler(conn ss.Conn, c *ss.Config) {
+func tcpLocalHandler(ac *ss.AcceptedConn) {
+	conn := ac.Conn
+	c := ac.Config
 	defer conn.Close()
-	target := GetDstOfConn(conn)
+	target := ac.TargetStr()
 	if c.LogHTTP {
 		conn = ss.NewHttpLogConn(conn, c)
 	}
@@ -36,16 +38,5 @@ func tcpLocalHandler(conn ss.Conn, c *ss.Config) {
 	c.Log("proxy", opt.Target, "from", conn.RemoteAddr(), "->",
 		conn.LocalAddr(), "to", rconn.LocalAddr(), "->",
 		rconn.RemoteAddr())
-	// lim, err := ss.GetLimitConn(conn)
-	// if err == nil {
-	// 	defer func() {
-	// 		for _, v := range lim.Rlimiters {
-	// 			c.Log("read", v.GetTotalBytes(), "bytes")
-	// 		}
-	// 		for _, v := range lim.Wlimiters {
-	// 			c.Log("write", v.GetTotalBytes(), "bytes")
-	// 		}
-	// 	}()
-	// }
 	ss.Pipe(conn, rconn, c)
 }

@@ -1,4 +1,4 @@
-package main
+package server
 
 import (
 	"github.com/ccsexyz/shadowsocks-go/internal/utils"
@@ -6,12 +6,14 @@ import (
 )
 
 func RunSocksProxyServer(c *ss.Config) {
-	RunTCPServer(c.Localaddr, c, ss.ListenSocks5, socksProxyHandler)
+	RunTCPServer(c.Localaddr, c, []ss.AcceptHandler{ss.LimitHandler, ss.SocksAcceptor}, socksProxyHandler)
 }
 
-func socksProxyHandler(conn ss.Conn, c *ss.Config) {
+func socksProxyHandler(ac *ss.AcceptedConn) {
+	conn := ac.Conn
+	c := ac.Config
 	defer conn.Close()
-	target := GetDstOfConn(conn)
+	target := ac.TargetStr()
 	if c.LogHTTP {
 		conn = ss.NewHttpLogConn(conn, c)
 	}

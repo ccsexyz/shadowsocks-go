@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"log"
-	"math/rand"
+	"math/rand/v2"
 	"net"
 	"sync"
 )
@@ -45,9 +45,9 @@ const (
 func randStringBytesMaskImprSrc(n int) string {
 	b := make([]byte, n)
 	// A src.Int63() generates 63 random bits, enough for letterIdxMax characters!
-	for i, cache, remain := n-1, rand.Int63(), letterIdxMax; i >= 0; {
+	for i, cache, remain := n-1, rand.Int64(), letterIdxMax; i >= 0; {
 		if remain == 0 {
-			cache, remain = rand.Int63(), letterIdxMax
+			cache, remain = rand.Int64(), letterIdxMax
 		}
 		if idx := int(cache & letterIdxMask); idx < len(letterBytes) {
 			b[i] = letterBytes[idx]
@@ -96,12 +96,12 @@ func init() {
 }
 
 func buildHTTPRequest(headers string) string {
-	return fmt.Sprintf(requestFormat, randStringBytesMaskImprSrc(10), headers, (rand.Int63()%65536 + 10485760))
+	return fmt.Sprintf(requestFormat, randStringBytesMaskImprSrc(10), headers, (rand.Int64()%65536 + 10485760))
 	// return fmt.Sprintf(requestFormat, randStringBytesMaskImprSrc(10), headers, 0)
 }
 
 func buildHTTPResponse(headers string) string {
-	return fmt.Sprintf(responseFromat, headers, (rand.Int63()%65536 + 104857600))
+	return fmt.Sprintf(responseFromat, headers, (rand.Int64()%65536 + 104857600))
 	// return fmt.Sprintf(responseFromat, headers, 0)
 }
 

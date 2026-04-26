@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ccsexyz/shadowsocks-go/crypto"
 	"github.com/ccsexyz/shadowsocks-go/internal/utils"
 	"github.com/ccsexyz/shadowsocks-go/redir"
 )
@@ -95,7 +96,7 @@ func (c *UDPConn) fakeReadFrom(b []byte) (int, net.Addr, error) {
 }
 
 func (c *UDPConn) readImpl(b []byte, readfrom func([]byte) (int, net.Addr, error)) (int, net.Addr, error) {
-	cb, err := utils.NewCipherBlock(c.c.Method, c.c.Password)
+	cb, err := crypto.NewCipherBlock(c.c.Method, c.c.Password)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -138,7 +139,7 @@ func (c *UDPConn) Read(b []byte) (n int, err error) {
 }
 
 func (c *UDPConn) WriteTo(b []byte, addr net.Addr) (n int, err error) {
-	cb, err := utils.NewCipherBlock(c.c.Method, c.c.Password)
+	cb, err := crypto.NewCipherBlock(c.c.Method, c.c.Password)
 	if err != nil {
 		return
 	}
@@ -207,12 +208,12 @@ func (c *MultiUDPConn) ReadFrom(b []byte) (n int, addr net.Addr, err error) {
 			c.sessions.Store(addr.String(), ctx.chs)
 			// *(chs.Any.(*int))++
 			ctx.chs.LogD("udp mode choose", ctx.chs.Method, ctx.chs.Password)
-			n = copy(b, ctx.addr.header)
+			n = copy(b, ctx.addr.Hdr)
 			n += copy(b[n:], ctx.data)
 		} else {
 			cfg := v.(*Config)
-			var cb utils.CipherBlock
-			cb, err = utils.NewCipherBlock(cfg.Method, cfg.Password)
+			var cb crypto.CipherBlock
+			cb, err = crypto.NewCipherBlock(cfg.Method, cfg.Password)
 			if err != nil {
 				return
 			}
@@ -245,7 +246,7 @@ func (c *MultiUDPConn) WriteTo(b []byte, addr net.Addr) (n int, err error) {
 		return
 	}
 	cfg := v.(*Config)
-	cb, err := utils.NewCipherBlock(cfg.Method, cfg.Password)
+	cb, err := crypto.NewCipherBlock(cfg.Method, cfg.Password)
 	if err != nil {
 		return
 	}

@@ -1,21 +1,33 @@
-package main
+package server
 
 import (
+	"github.com/ccsexyz/shadowsocks-go/crypto"
 	"github.com/ccsexyz/shadowsocks-go/internal/utils"
 	ss "github.com/ccsexyz/shadowsocks-go/shadowsocks"
 )
 
 func RunSSProxyServer(c *ss.Config) {
-	RunTCPServer(c.Localaddr, c, ss.ListenSS, ssproxyHandler)
+	handlers := []ss.AcceptHandler{ss.LimitHandler}
+	if c.Obfs {
+		handlers = append(handlers, ss.ObfsHandler)
+	}
+	if crypto.IsAEAD2022(c.Method) {
+		handlers = append(handlers, ss.SS2022Handler)
+	} else {
+		handlers = append(handlers, ss.SSHandler)
+	}
+	RunTCPServer(c.Localaddr, c, handlers, ssproxyHandler)
 }
 
-func ssproxyHandler(conn ss.Conn, c *ss.Config) {
+func ssproxyHandler(ac *ss.AcceptedConn) {
+	conn := ac.Conn
+	c := ac.Config
 	defer conn.Close()
 	C, err := ss.GetSsConn(conn)
 	if err != nil {
 		c.LogD(err)
 	}
-	target := GetDstOfConn(conn)
+	target := ac.TargetStr()
 	if len(target) == 0 {
 		c.LogD("target length is 0")
 		return
@@ -39,21 +51,10 @@ func ssproxyHandler(conn ss.Conn, c *ss.Config) {
 	}
 	defer rconn.Close()
 	if C != nil {
-		C.Xu0s() // FIXME
+		C.CancelDeferClose()
 	}
 	c.Log("proxy", target, "from", conn.RemoteAddr(), "->", conn.LocalAddr(),
 		"to", rconn.LocalAddr(), "->", rconn.RemoteAddr())
-	// lim, err := ss.GetLimitConn(conn)
-	// if err == nil {
-	// 	defer func() {
-	// 		for _, v := range lim.Rlimiters {
-	// 			c.Log("read", v.GetTotalBytes(), "bytes")
-	// 		}
-	// 		for _, v := range lim.Wlimiters {
-	// 			c.Log("write", v.GetTotalBytes(), "bytes")
-	// 		}
-	// 	}()
-	// }
 	if c.LogHTTP {
 		conn = ss.NewHttpLogConn(conn, c)
 	}

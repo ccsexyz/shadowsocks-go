@@ -3,7 +3,7 @@ package ss
 import (
 	"encoding/base64"
 	"fmt"
-	"math/rand"
+	"math/rand/v2"
 	"strings"
 	"time"
 
@@ -23,9 +23,9 @@ const (
 func randStringBytesMaskImprSrc(n int) string {
 	b := make([]byte, n)
 	// A src.Int63() generates 63 random bits, enough for letterIdxMax characters!
-	for i, cache, remain := n-1, rand.Int63(), letterIdxMax; i >= 0; {
+	for i, cache, remain := n-1, rand.Int64(), letterIdxMax; i >= 0; {
 		if remain == 0 {
-			cache, remain = rand.Int63(), letterIdxMax
+			cache, remain = rand.Int64(), letterIdxMax
 		}
 		if idx := int(cache & letterIdxMask); idx < len(letterBytes) {
 			b[i] = letterBytes[idx]
@@ -72,7 +72,7 @@ const (
 )
 
 func buildHTTPRequest(headers string) string {
-	return fmt.Sprintf(requestFormat, randStringBytesMaskImprSrc(rand.Intn(48)+1), headers)
+	return fmt.Sprintf(requestFormat, randStringBytesMaskImprSrc(rand.IntN(48)+1), headers)
 }
 
 func buildHTTPResponse(headers string) string {
@@ -83,7 +83,7 @@ func buildSimpleObfsRequest(host string, length int) string {
 	key := make([]byte, 16)
 	utils.PutRandomBytes(key)
 	b64key := base64.StdEncoding.EncodeToString(key)
-	return fmt.Sprintf(simpleObfsRequestFormat, host, rand.Intn(51), rand.Intn(3), b64key, length)
+	return fmt.Sprintf(simpleObfsRequestFormat, host, rand.IntN(51), rand.IntN(3), b64key, length)
 }
 
 func buildSimpleObfsResponse() string {

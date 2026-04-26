@@ -4,12 +4,13 @@ import (
 	"encoding/binary"
 	"fmt"
 	"hash/crc32"
-	"math/rand"
+	"math/rand/v2"
 	"net"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/ccsexyz/shadowsocks-go/crypto"
 	"github.com/ccsexyz/shadowsocks-go/internal/utils"
 	"golang.org/x/net/proxy"
 )
@@ -100,7 +101,13 @@ func checkAndModifyTarget(opt *DialOptions) (newOpt *DialOptions, err error) {
 		}
 
 		newOpt = new(DialOptions)
-		*newOpt = *opt // copy the options to avoid modifying the original one
+		*newOpt = *opt
+		if newOpt.Data != nil {
+			newOpt.Data = append([]byte{}, opt.Data...)
+		}
+		if newOpt.RawHeader != nil {
+			newOpt.RawHeader = append([]byte{}, opt.RawHeader...)
+		}
 		newOpt.Target = net.JoinHostPort(ip.String(), strconv.Itoa(port))
 		c.Log("resolve", host, "to", ip.String())
 		return
@@ -208,11 +215,15 @@ func dialSSWithOptions(opt *DialOptions) (conn Conn, err error) {
 			Rlimiters: limiters,
 		}
 	}
-	dec, err := utils.NewDecrypter(c.Method, c.Password)
+		if crypto.IsAEAD2022(c.Method) {
+			conn, err = ss2022Dial(opt)
+			return
+		}
+	dec, err := crypto.NewDecrypter(c.Method, c.Password)
 	if err != nil {
 		return
 	}
-	enc, err := utils.NewEncrypter(c.Method, c.Password)
+	enc, err := crypto.NewEncrypter(c.Method, c.Password)
 	if err != nil {
 		return
 	}
@@ -226,7 +237,7 @@ func dialSSWithOptions(opt *DialOptions) (conn Conn, err error) {
 	} else {
 		header := make([]byte, 512)
 		headerLen := 0
-		noplen := rand.Intn(4)
+		noplen := rand.IntN(4)
 		noplen += int(crc32.Checksum(header, c.crctbl) % (128 - (lenTs + 5)))
 		headerLen += copy(header[headerLen:], []byte{typeNop, byte(noplen)})
 		headerLen += noplen
@@ -246,7 +257,9 @@ func DialSSWithOptions(opt *DialOptions) (conn Conn, err error) {
 	defer func() {
 		if conn != nil {
 			if err == nil && len(opt.Data) > 0 {
-				_, err = conn.Write(opt.Data)
+				if _, ok := conn.(*Aead2022Conn); !ok {
+					_, err = conn.Write(opt.Data)
+				}
 			}
 			if err != nil {
 				conn.Close()

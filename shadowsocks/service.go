@@ -13,27 +13,24 @@ import (
 
 var services sync.Map
 
-func bultinServiceHandler(conn Conn, lis *listener) (c Conn) {
-	var dst string
+func bultinServiceHandler(conn Conn, lis *listener) AcceptResult {
+	dst := ""
 	if conn.GetDst() != nil {
 		dst = conn.GetDst().String()
 	}
-	if len(dst) == 0 {
-		c = conn
-		return
+	if dst == "" {
+		return AcceptResult{AcceptContinue, conn}
 	}
 	v, ok := services.Load(dst)
 	if !ok {
-		c = conn
-		return
+		return AcceptResult{AcceptContinue, conn}
 	}
-	handler := v.(listenHandler)
-	c = handler(conn, lis)
-	return
+	handler := v.(AcceptHandler)
+	return handler(conn, lis)
 }
 
 // StoreServiceHandler stores the handler to services map with key addr
-func StoreServiceHandler(addr string, handler listenHandler) {
+func StoreServiceHandler(addr string, handler AcceptHandler) {
 	services.Store(addr, handler)
 }
 
@@ -52,10 +49,9 @@ func init() {
 	StoreServiceHandler(adminaddr, adminHandler)
 }
 
-func echoHandler(conn Conn, lis *listener) (c Conn) {
+func echoHandler(conn Conn, lis *listener) AcceptResult {
 	go Pipe(conn, conn, lis.c)
-	c = nilConn
-	return
+	return AcceptResult{AcceptDrop, nil}
 }
 
 func disableBackend(lis *listener, nickname string) (ok bool) {
@@ -146,8 +142,8 @@ const (
 	cmdStatus  = "status"
 )
 
-func adminHandler(conn Conn, lis *listener) (c Conn) {
-	c = nilConn
+func adminHandler(conn Conn, lis *listener) (result AcceptResult) {
+	result = AcceptResult{AcceptDrop, nil}
 	defer conn.Close()
 
 	var err error

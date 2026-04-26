@@ -1,14 +1,16 @@
-package main
+package server
 
 import (
 	"github.com/ccsexyz/shadowsocks-go/shadowsocks"
 )
 
 func RunTCPTunServer(c *ss.Config) {
-	RunTCPServer(c.Localaddr, c, ss.ListenTCPTun, tcpTunHandler)
+	RunTCPServer(c.Localaddr, c, nil, tcpTunHandler)
 }
 
-func tcpTunHandler(conn ss.Conn, c *ss.Config) {
+func tcpTunHandler(ac *ss.AcceptedConn) {
+	conn := ac.Conn
+	c := ac.Config
 	defer conn.Close()
 	rconn, err := ss.DialSSWithOptions(&ss.DialOptions{
 		Target: c.Remoteaddr,

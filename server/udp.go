@@ -1,8 +1,8 @@
-package main
+package server
 
 import (
 	"fmt"
-	"math/rand"
+	"math/rand/v2"
 	"net"
 
 	"github.com/ccsexyz/shadowsocks-go/internal/utils"

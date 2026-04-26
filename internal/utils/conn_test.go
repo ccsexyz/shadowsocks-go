@@ -7,7 +7,7 @@ import (
 	"hash/crc32"
 	"io"
 	"log"
-	"math/rand"
+	"math/rand/v2"
 	"net"
 	"sync"
 	"testing"
@@ -48,7 +48,7 @@ func TestSliceConnMultipleWriter(t *testing.T) {
 		defer sconn.Close()
 		buf := make([]byte, 65536)
 		for it := 0; it < 1000; it++ {
-			n := rand.Intn(60000) + 6
+			n := rand.IntN(60000) + 6
 			binary.BigEndian.PutUint16(buf, uint16(n))
 			io.ReadFull(cr.Reader, buf[6:n])
 			chksum := crc32.ChecksumIEEE(buf[6:n])

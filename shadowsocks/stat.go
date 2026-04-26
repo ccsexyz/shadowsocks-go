@@ -1,6 +1,7 @@
 package ss
 
 import (
+	"net"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -22,6 +23,8 @@ type statConn struct {
 	s    *statServer
 	once sync.Once
 }
+
+func (c *statConn) Unwrap() net.Conn { return c.Conn }
 
 func newStatConn(conn Conn, s *statServer) *statConn {
 	defer atomic.AddInt32(&s.connections, 1)
