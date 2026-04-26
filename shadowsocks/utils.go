@@ -13,8 +13,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ccsexyz/shadowsocks-go/domain"
 	"github.com/ccsexyz/shadowsocks-go/crypto"
+	"github.com/ccsexyz/shadowsocks-go/domain"
 	"github.com/ccsexyz/shadowsocks-go/internal/utils"
 )
 
@@ -35,7 +35,7 @@ const (
 	typeDm                 = domain.TypeDm
 	typeIPv6               = domain.TypeIPv6
 	typeMux                = domain.TypeMux
-	typeTs                 = domain.TypeTs // timestamp
+	typeTs                 = domain.TypeTs  // timestamp
 	typeNop                = domain.TypeNop // [nop 1 byte] [noplen 1 byte (< 128)] [zero data, noplen byte]
 	lenIPv4                = domain.LenIPv4
 	lenIPv6                = domain.LenIPv6
@@ -209,8 +209,6 @@ func ParseAddrWithMultipleBackends(b []byte, configs []*Config) (*parseContext, 
 	return ctxs[0], nil
 }
 
-
-
 func safeHeadHex(b []byte, n int) []byte {
 	if len(b) > n {
 		return []byte(fmt.Sprintf("%x", b[:n]))
@@ -364,30 +362,6 @@ func GetSsConn(conn net.Conn) (c *SsConn, err error) {
 			return
 		}
 		c, err = GetSsConn(conn)
-	}
-	return
-}
-
-func GetLimitConn(conn net.Conn) (l *LimitConn, err error) {
-	l, ok := conn.(*LimitConn)
-	if !ok {
-		conn, err = GetInnerConn(conn)
-		if err != nil {
-			return
-		}
-		l, err = GetLimitConn(conn)
-	}
-	return
-}
-
-func GetRemainConn(conn net.Conn) (r *RemainConn, err error) {
-	r, ok := conn.(*RemainConn)
-	if !ok {
-		conn, err = GetInnerConn(conn)
-		if err != nil {
-			return
-		}
-		r, err = GetRemainConn(conn)
 	}
 	return
 }

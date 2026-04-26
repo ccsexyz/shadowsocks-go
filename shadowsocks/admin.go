@@ -155,21 +155,21 @@ type configSummary struct {
 }
 
 type backendSummary struct {
-	Nickname        string `json:"nickname"`
-	RemoteAddr      string `json:"remoteaddr"`
-	Disabled        bool   `json:"disabled"`
-	Method          string `json:"method"`
-	Connections     int32  `json:"connections"`
-	TotalReadBytes  int64  `json:"totalReadBytes"`
-	TotalWritBytes  int64  `json:"totalWritBytes"`
+	Nickname       string `json:"nickname"`
+	RemoteAddr     string `json:"remoteaddr"`
+	Disabled       bool   `json:"disabled"`
+	Method         string `json:"method"`
+	Connections    int32  `json:"connections"`
+	TotalReadBytes int64  `json:"totalReadBytes"`
+	TotalWritBytes int64  `json:"totalWritBytes"`
 }
 
 type aggregateStats struct {
-	NumConfigs        int   `json:"numConfigs"`
-	TotalConnections  int32 `json:"totalConnections"`
-	TotalReadBytes    int64 `json:"totalReadBytes"`
-	TotalWritBytes    int64 `json:"totalWritBytes"`
-	UptimeSeconds     int64 `json:"uptimeSeconds"`
+	NumConfigs       int   `json:"numConfigs"`
+	TotalConnections int32 `json:"totalConnections"`
+	TotalReadBytes   int64 `json:"totalReadBytes"`
+	TotalWritBytes   int64 `json:"totalWritBytes"`
+	UptimeSeconds    int64 `json:"uptimeSeconds"`
 }
 
 func buildConfigSummary(i int, c *Config, numConfigs int) configSummary {
@@ -263,37 +263,37 @@ func handleGetConfigRaw(w http.ResponseWriter, r *http.Request) {
 	c := cfgs[idx]
 	// build a masked version for safe display
 	type safeConfig struct {
-		Nickname       string   `json:"nickname"`
-		Type           string   `json:"type"`
-		LocalAddr      string   `json:"localaddr"`
-		LocalAddrs     []string `json:"localaddrs,omitempty"`
-		RemoteAddr     string   `json:"remoteaddr"`
-		Method         string   `json:"method"`
-		Password       string   `json:"password"`
-		UDPRelay       bool     `json:"udprelay"`
-		Verbose        bool     `json:"verbose"`
-		Debug          bool     `json:"debug"`
-		Safe           bool     `json:"safe"`
-		Timeout        int      `json:"timeout"`
-		Obfs           bool     `json:"obfs"`
-		ObfsMethod     string   `json:"obfsmethod,omitempty"`
-		AutoProxy      bool     `json:"autoproxy"`
-		LogHTTP        bool     `json:"loghttp"`
-		SSProxy        bool     `json:"ssproxy"`
-		AllowHTTP      bool     `json:"allow_http"`
-		SecureOrigin   bool     `json:"secure_origin"`
-		MITM           bool     `json:"mitm"`
-		Direct         bool     `json:"direct"`
-		PreferIPv4     bool     `json:"prefer_ipv4"`
-		NoIPv4         bool     `json:"no_ipv4"`
-		NoIPv6         bool     `json:"no_ipv6"`
-		LocalResolve   bool     `json:"local_resolve"`
-		Limit          int      `json:"limit"`
-		LimitPerConn   int      `json:"limitperconn"`
-		DataShard      int      `json:"datashard"`
-		ParityShard    int      `json:"parityshard"`
-		AdminAddr      string   `json:"adminaddr,omitempty"`
-		BackendCount   int      `json:"backendCount"`
+		Nickname     string   `json:"nickname"`
+		Type         string   `json:"type"`
+		LocalAddr    string   `json:"localaddr"`
+		LocalAddrs   []string `json:"localaddrs,omitempty"`
+		RemoteAddr   string   `json:"remoteaddr"`
+		Method       string   `json:"method"`
+		Password     string   `json:"password"`
+		UDPRelay     bool     `json:"udprelay"`
+		Verbose      bool     `json:"verbose"`
+		Debug        bool     `json:"debug"`
+		Safe         bool     `json:"safe"`
+		Timeout      int      `json:"timeout"`
+		Obfs         bool     `json:"obfs"`
+		ObfsMethod   string   `json:"obfsmethod,omitempty"`
+		AutoProxy    bool     `json:"autoproxy"`
+		LogHTTP      bool     `json:"loghttp"`
+		SSProxy      bool     `json:"ssproxy"`
+		AllowHTTP    bool     `json:"allow_http"`
+		SecureOrigin bool     `json:"secure_origin"`
+		MITM         bool     `json:"mitm"`
+		Direct       bool     `json:"direct"`
+		PreferIPv4   bool     `json:"prefer_ipv4"`
+		NoIPv4       bool     `json:"no_ipv4"`
+		NoIPv6       bool     `json:"no_ipv6"`
+		LocalResolve bool     `json:"local_resolve"`
+		Limit        int      `json:"limit"`
+		LimitPerConn int      `json:"limitperconn"`
+		DataShard    int      `json:"datashard"`
+		ParityShard  int      `json:"parityshard"`
+		AdminAddr    string   `json:"adminaddr,omitempty"`
+		BackendCount int      `json:"backendCount"`
 	}
 	sc := safeConfig{
 		Nickname:     c.Nickname,

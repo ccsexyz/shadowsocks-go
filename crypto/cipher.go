@@ -166,13 +166,13 @@ type cipherMethodEntry struct {
 }
 
 var cipherMethod = map[string]cipherMethodEntry{
-	"aes-128-gcm":                {16, 16, NewAESGCMEncrypter, NewAESGCMDecrypter, NewAESGCMCipherBlock, false},
-	"aes-192-gcm":                {24, 24, NewAESGCMEncrypter, NewAESGCMDecrypter, NewAESGCMCipherBlock, false},
-	"aes-256-gcm":                {32, 32, NewAESGCMEncrypter, NewAESGCMDecrypter, NewAESGCMCipherBlock, false},
-	"chacha20poly1305":           {32, 32, NewChacha20Poly1305Encrypter, NewChacha20Poly1305Decrypter, NewChaCha20Poly1305CipherBlock, false},
-	"plain":                     {0, 0, NewPlainEncrypter, NewPlainDecrypter, NewPlainCipherBlock, false},
-	"2022-blake3-aes-128-gcm":   {16, 16, newNotSupportedEncrypter, newNotSupportedDecrypter, New2022AESGCMCipherBlock, true},
-	"2022-blake3-aes-256-gcm":   {32, 32, newNotSupportedEncrypter, newNotSupportedDecrypter, New2022AESGCMCipherBlock, true},
+	"aes-128-gcm":                   {16, 16, NewAESGCMEncrypter, NewAESGCMDecrypter, NewAESGCMCipherBlock, false},
+	"aes-192-gcm":                   {24, 24, NewAESGCMEncrypter, NewAESGCMDecrypter, NewAESGCMCipherBlock, false},
+	"aes-256-gcm":                   {32, 32, NewAESGCMEncrypter, NewAESGCMDecrypter, NewAESGCMCipherBlock, false},
+	"chacha20poly1305":              {32, 32, NewChacha20Poly1305Encrypter, NewChacha20Poly1305Decrypter, NewChaCha20Poly1305CipherBlock, false},
+	"plain":                         {0, 0, NewPlainEncrypter, NewPlainDecrypter, NewPlainCipherBlock, false},
+	"2022-blake3-aes-128-gcm":       {16, 16, newNotSupportedEncrypter, newNotSupportedDecrypter, New2022AESGCMCipherBlock, true},
+	"2022-blake3-aes-256-gcm":       {32, 32, newNotSupportedEncrypter, newNotSupportedDecrypter, New2022AESGCMCipherBlock, true},
 	"2022-blake3-chacha20-poly1305": {32, 32, newNotSupportedEncrypter, newNotSupportedDecrypter, New2022Chacha20Poly1305CipherBlock, true},
 }
 

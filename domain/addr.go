@@ -62,9 +62,9 @@ func (s *SockAddr) Header() []byte {
 }
 
 type DstAddr struct {
-	dst  string
-	prt  string
-	hdr  []byte
+	dst string
+	prt string
+	hdr []byte
 }
 
 func NewDstAddr(host, port string) *DstAddr {

@@ -43,7 +43,7 @@ func (cl *chListener) Close() error {
 type AcceptAction int
 
 const (
-	AcceptReject  AcceptAction = iota // 0 = safe zero value for bare returns
+	AcceptReject AcceptAction = iota // 0 = safe zero value for bare returns
 	AcceptContinue
 	AcceptDrop
 	AcceptDone
@@ -69,13 +69,13 @@ type listener struct {
 
 // Exported handler variables for building accept-time handler chains.
 var (
-	LimitHandler    = AcceptHandler(limitAcceptHandler)
-	ObfsHandler     = AcceptHandler(obfsAcceptHandler)
-	SSHandler       = AcceptHandler(ssAcceptHandler)
-	SS2022Handler   = AcceptHandler(ss2022AcceptHandler)
-	SSMultiHandler  = AcceptHandler(ssMultiAcceptHandler)
-	SocksAcceptor   = AcceptHandler(socksAcceptor)
-	RedirAcceptor   = AcceptHandler(redirAcceptor)
+	LimitHandler   = AcceptHandler(limitAcceptHandler)
+	ObfsHandler    = AcceptHandler(obfsAcceptHandler)
+	SSHandler      = AcceptHandler(ssAcceptHandler)
+	SS2022Handler  = AcceptHandler(ss2022AcceptHandler)
+	SSMultiHandler = AcceptHandler(ssMultiAcceptHandler)
+	SocksAcceptor  = AcceptHandler(socksAcceptor)
+	RedirAcceptor  = AcceptHandler(redirAcceptor)
 )
 
 func NewListener(lis *net.TCPListener, c *Config, handlers []AcceptHandler) *listener {

@@ -215,10 +215,10 @@ func dialSSWithOptions(opt *DialOptions) (conn Conn, err error) {
 			Rlimiters: limiters,
 		}
 	}
-		if crypto.IsAEAD2022(c.Method) {
-			conn, err = ss2022Dial(opt)
-			return
-		}
+	if crypto.IsAEAD2022(c.Method) {
+		conn, err = ss2022Dial(opt)
+		return
+	}
 	dec, err := crypto.NewDecrypter(c.Method, c.Password)
 	if err != nil {
 		return

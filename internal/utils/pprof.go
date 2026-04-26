@@ -1,3 +1,4 @@
+//go:build goprof
 // +build goprof
 
 package utils

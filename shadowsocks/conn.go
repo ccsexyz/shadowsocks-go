@@ -130,9 +130,9 @@ func debugAcceptHandler(conn Conn, lis *listener) (c Conn) {
 
 type SsConn struct {
 	Conn
-	enc  crypto.CipherStream
-	dec  crypto.CipherStream
-	c    *Config
+	enc        crypto.CipherStream
+	dec        crypto.CipherStream
+	c          *Config
 	deferClose bool
 }
 

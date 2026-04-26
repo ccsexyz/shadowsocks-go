@@ -32,8 +32,10 @@ type Aead2022Conn struct {
 	svSalt  []byte
 	cliSalt []byte
 
-	lbuf []byte
-	dbuf []byte
+	rlbuf []byte
+	rdbuf []byte
+	wlbuf []byte
+	wdbuf []byte
 }
 
 func newAead2022Conn(conn Conn, readCipher, writeCipher *crypto.TcpCipher2022) *Aead2022Conn {
@@ -46,12 +48,12 @@ func newAead2022Conn(conn Conn, readCipher, writeCipher *crypto.TcpCipher2022) *
 
 func newServerAead2022Conn(conn Conn, readCipher *crypto.TcpCipher2022, method string, psk, svSalt, cliSalt []byte) *Aead2022Conn {
 	return &Aead2022Conn{
-		Conn:        conn,
-		readCipher:  readCipher,
-		method:      method,
-		psk:         psk,
-		svSalt:      svSalt,
-		cliSalt:     cliSalt,
+		Conn:       conn,
+		readCipher: readCipher,
+		method:     method,
+		psk:        psk,
+		svSalt:     svSalt,
+		cliSalt:    cliSalt,
 	}
 }
 
@@ -133,10 +135,10 @@ func (c *Aead2022Conn) Read(b []byte) (n int, err error) {
 	}
 
 	lbLen := 2 + c.readCipher.Overhead()
-	if cap(c.lbuf) < lbLen {
-		c.lbuf = make([]byte, lbLen)
+	if cap(c.rlbuf) < lbLen {
+		c.rlbuf = make([]byte, lbLen)
 	}
-	lb := c.lbuf[:lbLen]
+	lb := c.rlbuf[:lbLen]
 	_, err = io.ReadFull(c.Conn, lb)
 	if err != nil {
 		return 0, err
@@ -149,10 +151,10 @@ func (c *Aead2022Conn) Read(b []byte) (n int, err error) {
 	length := int(binary.BigEndian.Uint16(lb[:2]))
 
 	dataLen := length + c.readCipher.Overhead()
-	if cap(c.dbuf) < dataLen {
-		c.dbuf = make([]byte, dataLen)
+	if cap(c.rdbuf) < dataLen {
+		c.rdbuf = make([]byte, dataLen)
 	}
-	data := c.dbuf[:dataLen]
+	data := c.rdbuf[:dataLen]
 	_, err = io.ReadFull(c.Conn, data)
 	if err != nil {
 		return 0, err
@@ -216,18 +218,18 @@ func (c *Aead2022Conn) Write(b []byte) (n int, err error) {
 
 		overhead := c.writeCipher.Overhead()
 		lbLen := 2 + overhead
-		if cap(c.lbuf) < lbLen {
-			c.lbuf = make([]byte, lbLen)
+		if cap(c.wlbuf) < lbLen {
+			c.wlbuf = make([]byte, lbLen)
 		}
-		lb := c.lbuf[:2:lbLen]
+		lb := c.wlbuf[:2:lbLen]
 		binary.BigEndian.PutUint16(lb[:2], uint16(len(chunk)))
 		lb = c.writeCipher.EncryptPacket(lb)
 
 		dataLen := len(chunk) + overhead
-		if cap(c.dbuf) < dataLen {
-			c.dbuf = make([]byte, dataLen)
+		if cap(c.wdbuf) < dataLen {
+			c.wdbuf = make([]byte, dataLen)
 		}
-		data := c.dbuf[:len(chunk):dataLen]
+		data := c.wdbuf[:len(chunk):dataLen]
 		copy(data, chunk)
 		data = c.writeCipher.EncryptPacket(data)
 

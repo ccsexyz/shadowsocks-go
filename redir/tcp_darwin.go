@@ -37,8 +37,10 @@ type pfNatLoock struct {
 // https://opensource.apple.com/source/xnu/xnu-2050.7.9/bsd/net/pfvar.h
 // #define DIOCNATLOOK	_IOWR('D', 23, struct pfioc_natlook)
 // #define	_IOWR(g,n,t)	_IOC(IOC_INOUT,	(g), (n), sizeof(t))
-// #define	_IOC(inout,group,num,len) \
-// 		(inout | ((len & IOCPARM_MASK) << 16) | ((group) << 8) | (num))
+//
+//	#define	_IOC(inout,group,num,len) \
+//			(inout | ((len & IOCPARM_MASK) << 16) | ((group) << 8) | (num))
+//
 // #define	IOCPARM_MASK	0x1fff		/* parameter length, at most 13 bits */
 // #define	IOC_INOUT	(IOC_IN|IOC_OUT)
 // #define	IOC_IN		(__uint32_t)0x80000000

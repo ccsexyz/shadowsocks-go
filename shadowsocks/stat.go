@@ -8,20 +8,20 @@ import (
 )
 
 type statServer struct {
-	startTime       time.Time
-	reloadTime      time.Time
-	connections     int32
+	startTime        time.Time
+	reloadTime       time.Time
+	connections      int32
 	totalConnections int64
-	peakConnections int32
-	totalReadBytes  int64
-	totalWritBytes  int64
-	readSnap        int64
-	writSnap        int64
-	connSnap        int64
-	readSpeed       int32
-	writSpeed       int32
-	connErrNum      int32
-	tracker         *ConnTracker
+	peakConnections  int32
+	totalReadBytes   int64
+	totalWritBytes   int64
+	readSnap         int64
+	writSnap         int64
+	connSnap         int64
+	readSpeed        int32
+	writSpeed        int32
+	connErrNum       int32
+	tracker          *ConnTracker
 }
 
 type statConn struct {

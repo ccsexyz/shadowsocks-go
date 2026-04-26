@@ -14,7 +14,6 @@ import (
 	"github.com/bits-and-blooms/bitset"
 )
 
-
 // UDPConn is the union set of net.Conn and net.PacketConn
 type UDPConn interface {
 	// Read reads data from the connection.
