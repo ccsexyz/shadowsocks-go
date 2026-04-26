@@ -1,0 +1,2397 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shadowsocks Admin</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* =========================================================
+   Design Tokens — Material 3 inspired
+   ========================================================= */
+:root {
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', 'Menlo', Monaco, Consolas, monospace;
+
+  /* Light theme */
+  --bg: #f8f9fa;
+  --surface: #ffffff;
+  --surface-variant: #f1f3f4;
+  --surface-hover: #f8f9fa;
+  --text: #202124;
+  --text-secondary: #5f6368;
+  --text-tertiary: #80868b;
+  --outline: #dadce0;
+  --outline-variant: #e8eaed;
+
+  --primary: #1a73e8;
+  --primary-container: #e8f0fe;
+  --on-primary: #ffffff;
+
+  --success: #1e8e3e;
+  --success-container: #e6f4ea;
+  --error: #d93025;
+  --error-container: #fce8e6;
+  --warning: #f9ab00;
+  --warning-container: #fef7e0;
+
+  --shadow-color: 60 64 67;
+  --shadow-1: 0 1px 2px 0 rgba(var(--shadow-color), 0.08), 0 1px 3px 1px rgba(var(--shadow-color), 0.04);
+  --shadow-2: 0 1px 3px 0 rgba(var(--shadow-color), 0.12), 0 4px 12px 4px rgba(var(--shadow-color), 0.06);
+  --shadow-3: 0 4px 12px 0 rgba(var(--shadow-color), 0.15), 0 8px 24px 8px rgba(var(--shadow-color), 0.08);
+
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+  --radius-full: 9999px;
+
+  --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-base: 250ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-slow: 350ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+body.dark {
+  --bg: #0f0f0f;
+  --surface: #1c1c1c;
+  --surface-variant: #282828;
+  --surface-hover: #222222;
+  --text: #e8eaed;
+  --text-secondary: #9aa0a6;
+  --text-tertiary: #5f6368;
+  --outline: #3c4043;
+  --outline-variant: #282828;
+
+  --primary: #8ab4f8;
+  --primary-container: #1a2a3a;
+
+  --success: #81c995;
+  --success-container: #1a3a22;
+  --error: #f28b82;
+  --error-container: #3e1515;
+  --warning: #fdd663;
+  --warning-container: #3d2e0a;
+
+  --shadow-color: 0 0 0;
+  --shadow-1: 0 1px 2px 0 rgba(0,0,0,0.3), 0 1px 3px 1px rgba(0,0,0,0.15);
+  --shadow-2: 0 1px 3px 0 rgba(0,0,0,0.4), 0 4px 12px 4px rgba(0,0,0,0.2);
+  --shadow-3: 0 4px 12px 0 rgba(0,0,0,0.5), 0 8px 24px 8px rgba(0,0,0,0.3);
+}
+
+/* =========================================================
+   Base
+   ========================================================= */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  font-family: var(--font-sans);
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.5;
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  transition: background-color 0.4s var(--transition-base), color 0.4s var(--transition-base);
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--outline); border-radius: var(--radius-full); }
+::-webkit-scrollbar-thumb:hover { background: var(--text-tertiary); }
+::selection { background: var(--primary-container); color: var(--text); }
+
+/* =========================================================
+   Animations
+   ========================================================= */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes pulse-dot {
+  0%, 100% { box-shadow: 0 0 0 0px currentColor; }
+  50% { box-shadow: 0 0 0 4px transparent; }
+}
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+@keyframes bannerSlide {
+  from { transform: translateY(-100%); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+/* =========================================================
+   Header
+   ========================================================= */
+.header {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: color-mix(in srgb, var(--bg) 85%, transparent);
+  backdrop-filter: blur(16px) saturate(1.4);
+  -webkit-backdrop-filter: blur(16px) saturate(1.4);
+  border-bottom: 1px solid var(--outline-variant);
+  padding: 16px 32px;
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  flex-wrap: wrap;
+  animation: slideDown 0.5s var(--transition-slow) both;
+}
+
+.header h1 {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.header h1 a {
+  color: var(--text);
+  text-decoration: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  transition: opacity 0.2s;
+}
+.header h1 a:hover { opacity: 0.8; }
+
+.dot {
+  width: 8px;
+  height: 8px;
+  background: var(--success);
+  border-radius: 50%;
+  color: var(--success);
+  animation: pulse-dot 2.5s infinite;
+  flex-shrink: 0;
+}
+
+.stats {
+  display: flex;
+  gap: 10px;
+  font-size: 12px;
+  font-weight: 500;
+  flex-wrap: wrap;
+}
+
+.stat-chip {
+  background: var(--surface-variant);
+  color: var(--text-secondary);
+  padding: 6px 14px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--outline-variant);
+  transition: all var(--transition-fast);
+  white-space: nowrap;
+}
+
+.stat-chip:hover {
+  background: var(--surface-hover);
+  border-color: var(--outline);
+  transform: translateY(-1px);
+}
+
+.stat-chip span {
+  color: var(--text);
+  font-weight: 700;
+  margin-left: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.spacer { flex: 1; }
+
+.theme-btn {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  border: 1px solid var(--outline);
+  background: var(--surface);
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  line-height: 1;
+  transition: all var(--transition-fast);
+  position: relative;
+  overflow: hidden;
+}
+
+.theme-btn:hover {
+  background: var(--surface-variant);
+  color: var(--text);
+  transform: rotate(12deg) scale(1.05);
+  box-shadow: var(--shadow-2);
+}
+
+.theme-btn:active { transform: scale(0.95); }
+
+/* =========================================================
+   Layout
+   ========================================================= */
+.container {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 32px;
+}
+
+/* =========================================================
+   Error Banner
+   ========================================================= */
+.error-banner {
+  position: sticky;
+  top: 72px;
+  z-index: 90;
+  background: var(--error-container);
+  color: var(--error);
+  padding: 12px 24px;
+  margin: 16px 32px 0;
+  border-radius: var(--radius-lg);
+  font-size: 13px;
+  font-weight: 500;
+  display: none;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid color-mix(in srgb, var(--error) 10%, transparent);
+  animation: bannerSlide 0.4s var(--transition-slow);
+  backdrop-filter: blur(8px);
+}
+
+.error-banner::before {
+  content: '⚠';
+  font-size: 16px;
+}
+
+.error-banner.show { display: flex; }
+
+body.dark .error-banner {
+  background: color-mix(in srgb, var(--error) 15%, transparent);
+  border-color: color-mix(in srgb, var(--error) 25%, transparent);
+}
+
+/* =========================================================
+   Grid & Cards
+   ========================================================= */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+  gap: 24px;
+  animation: fadeIn 0.5s var(--transition-slow);
+}
+
+.card {
+  background: var(--surface);
+  border-radius: var(--radius-xl);
+  padding: 0;
+  box-shadow: var(--shadow-1);
+  border: 1px solid var(--outline-variant);
+  transition: transform var(--transition-base), box-shadow var(--transition-base);
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  animation: slideUp 0.5s var(--transition-slow) both;
+  display: flex;
+  flex-direction: column;
+}
+
+.card:nth-child(1) { animation-delay: 0.04s; }
+.card:nth-child(2) { animation-delay: 0.08s; }
+.card:nth-child(3) { animation-delay: 0.12s; }
+.card:nth-child(4) { animation-delay: 0.16s; }
+.card:nth-child(5) { animation-delay: 0.20s; }
+.card:nth-child(6) { animation-delay: 0.24s; }
+
+.card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: var(--success);
+  opacity: 0;
+  transition: opacity var(--transition-base);
+  z-index: 2;
+}
+
+.card:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--shadow-3);
+}
+
+.card:hover::before { opacity: 1; }
+
+.card.disabled {
+  opacity: 0.5;
+  filter: grayscale(0.5);
+}
+
+.card.disabled::before {
+  background: var(--text-tertiary);
+  opacity: 0.6;
+}
+
+.card-header {
+  padding: 22px 24px 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  position: relative;
+  transition: all var(--transition-fast);
+}
+
+.status-dot.on {
+  background: var(--success);
+  box-shadow: 0 0 0 3px var(--success-container);
+}
+
+.status-dot.off {
+  background: var(--error);
+  box-shadow: 0 0 0 3px var(--error-container);
+}
+
+.card-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  letter-spacing: -0.3px;
+}
+
+.badge {
+  font-size: 11px;
+  padding: 4px 12px;
+  border-radius: var(--radius-full);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  flex-shrink: 0;
+  border: 1px solid transparent;
+  transition: transform var(--transition-fast);
+}
+
+.card:hover .badge { transform: scale(1.05); }
+
+/* Badge color mapping */
+.badge-local { color: var(--success); background: var(--success-container); }
+.badge-server { color: var(--primary); background: var(--primary-container); }
+.badge-redir { color: #b06000; background: #fef7e0; }
+body.dark .badge-redir { color: #fdd663; background: #3d2e0a; }
+.badge-multiserver { color: #9334e6; background: #f3e8fd; }
+body.dark .badge-multiserver { color: #c58af9; background: #2d1b4e; }
+.badge-ssproxy { color: #e8710a; background: #fef0e6; }
+body.dark .badge-ssproxy { color: #f0886e; background: #3d1e0a; }
+.badge-socksproxy { color: #d93025; background: #fce8e6; }
+body.dark .badge-socksproxy { color: #f07eb4; background: #3e1515; }
+.badge-tcptun, .badge-udptun { color: var(--success); background: var(--success-container); }
+.badge-wstunnel { color: #c2410c; background: #fef0e6; }
+body.dark .badge-wstunnel { color: #f0a060; background: #3d1e0a; }
+
+.card-meta {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin: 0 24px 16px;
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+
+.card-meta span { white-space: nowrap; }
+
+.meta-label {
+  color: var(--text-tertiary);
+  font-weight: 500;
+  margin-right: 2px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* Sparkline */
+.sparkline {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 36px;
+  margin: 0 24px 16px;
+  padding: 4px 0;
+}
+
+.sparkline .bar {
+  flex: 1;
+  min-width: 2px;
+  border-radius: 2px 2px 0 0;
+  transition: height 0.4s var(--transition-slow);
+  opacity: 0.7;
+}
+
+.sparkline .bar.read { background: linear-gradient(to top, var(--success), color-mix(in srgb, var(--success) 60%, transparent)); }
+.sparkline .bar.write { background: linear-gradient(to top, var(--primary), color-mix(in srgb, var(--primary) 60%, transparent)); }
+
+/* Card Stats */
+.card-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1px;
+  margin: 0 24px 16px;
+  background: var(--outline-variant);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.stat-cell {
+  text-align: center;
+  padding: 10px 4px;
+  background: var(--surface);
+  transition: background var(--transition-fast);
+}
+
+.stat-cell:hover { background: var(--surface-hover); }
+
+.stat-value {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.2px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-sub {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-sub.up { color: var(--success); }
+.stat-sub.down { color: var(--primary); }
+
+.stat-label {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  margin-top: 2px;
+  font-weight: 500;
+}
+
+/* Toggles */
+.toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin: 0 24px 14px;
+  padding-top: 4px;
+}
+
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-weight: 500;
+  user-select: none;
+  transition: color var(--transition-fast);
+}
+
+.toggle:hover { color: var(--text); }
+
+.toggle input[type=checkbox] { display: none; }
+
+.toggle-slider {
+  width: 36px;
+  height: 20px;
+  background: var(--outline);
+  border-radius: 10px;
+  position: relative;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.toggle-slider::after {
+  content: '';
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  top: 2px;
+  left: 2px;
+  transition: transform var(--transition-fast), box-shadow var(--transition-fast);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+}
+
+.toggle input:checked + .toggle-slider { background: var(--success); }
+.toggle input:checked + .toggle-slider::after {
+  transform: translateX(16px);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+}
+
+.toggle:active .toggle-slider::after { width: 20px; }
+.toggle input:checked:active + .toggle-slider::after { transform: translateX(14px); }
+
+/* Backends */
+.backends {
+  margin: 0 24px;
+  border-top: 1px solid var(--outline-variant);
+  padding-top: 10px;
+  animation: fadeIn 0.3s var(--transition-slow);
+}
+
+.backend-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 0;
+  font-size: 11px;
+  gap: 8px;
+}
+
+.backend-item + .backend-item { border-top: 1px solid var(--outline-variant); }
+
+.backend-item .bname {
+  font-weight: 600;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.backend-item .binfo {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.backend-item .bstats {
+  display: flex;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  align-items: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.backend-item .bstats b {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* Card Actions */
+.card-actions {
+  display: flex;
+  gap: 8px;
+  margin: 10px 24px 20px;
+}
+
+.card-actions button, .card-actions .btn {
+  background: var(--surface-variant);
+  border: 1px solid var(--outline-variant);
+  color: var(--text-secondary);
+  font-size: 12px;
+  padding: 6px 14px;
+  cursor: pointer;
+  text-decoration: none;
+  border-radius: var(--radius-sm);
+  font-weight: 500;
+  font-family: inherit;
+  transition: all var(--transition-fast);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.card-actions button:hover, .card-actions .btn:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+  border-color: var(--outline);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-1);
+}
+
+.card-actions button:active, .card-actions .btn:active { transform: scale(0.97); }
+
+/* Empty */
+.empty {
+  text-align: center;
+  padding: 80px 24px;
+  color: var(--text-tertiary);
+  font-size: 15px;
+  font-weight: 500;
+  animation: fadeIn 0.6s var(--transition-slow);
+}
+
+.empty::before {
+  content: '◈';
+  display: block;
+  font-size: 48px;
+  margin-bottom: 16px;
+  opacity: 0.3;
+}
+
+/* =========================================================
+   Detail View
+   ========================================================= */
+.detail {
+  display: none;
+  max-width: 880px;
+  margin: 0 auto;
+  animation: slideUp 0.4s var(--transition-slow);
+}
+
+.detail.open { display: block; }
+
+.back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  cursor: pointer;
+  margin-bottom: 24px;
+  user-select: none;
+  font-weight: 500;
+  padding: 8px 16px;
+  border-radius: var(--radius-full);
+  background: var(--surface-variant);
+  border: 1px solid var(--outline-variant);
+  transition: all var(--transition-fast);
+}
+
+.back-btn:hover {
+  color: var(--text);
+  background: var(--surface-hover);
+  transform: translateX(-2px);
+  box-shadow: var(--shadow-1);
+}
+
+.detail-card {
+  background: var(--surface);
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-xl);
+  padding: 32px;
+  box-shadow: var(--shadow-2);
+  animation: scaleIn 0.4s var(--transition-slow);
+}
+
+.detail-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 24px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--outline-variant);
+}
+
+.detail-header .card-title {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.5px;
+}
+
+.detail-header .badge { font-size: 12px; padding: 5px 14px; }
+
+.detail-meta {
+  display: flex;
+  gap: 28px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-bottom: 24px;
+  row-gap: 10px;
+}
+
+.detail-meta b {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.detail-sparkline {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 72px;
+  margin-bottom: 24px;
+  padding: 6px 0;
+  background: var(--surface-variant);
+  border-radius: var(--radius-md);
+  padding: 12px;
+}
+
+.detail-sparkline .bar {
+  flex: 1;
+  min-width: 3px;
+  border-radius: 3px 3px 0 0;
+  transition: height 0.4s var(--transition-slow);
+  opacity: 0.75;
+}
+
+.detail-sparkline .bar.read { background: linear-gradient(to top, var(--success), color-mix(in srgb, var(--success) 50%, transparent)); }
+.detail-sparkline .bar.write { background: linear-gradient(to top, var(--primary), color-mix(in srgb, var(--primary) 50%, transparent)); }
+
+.detail-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 12px;
+  margin-bottom: 32px;
+}
+
+.detail-stats .stat-cell {
+  padding: 16px 12px;
+  background: var(--surface-variant);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--outline-variant);
+  transition: all var(--transition-fast);
+}
+
+.detail-stats .stat-cell:hover {
+  background: var(--surface-hover);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-1);
+}
+
+.detail-stats .stat-value {
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  color: var(--text);
+  margin-bottom: 2px;
+}
+
+.detail-stats .stat-sub {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.detail-section {
+  margin-bottom: 32px;
+  animation: fadeIn 0.5s var(--transition-slow) both;
+}
+
+.detail-section:nth-child(2) { animation-delay: 0.05s; }
+.detail-section:nth-child(3) { animation-delay: 0.10s; }
+.detail-section:nth-child(4) { animation-delay: 0.15s; }
+
+.detail-section h3 {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--outline-variant);
+}
+
+/* Settings */
+.settings-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 0;
+}
+
+.setting-row + .setting-row { border-top: 1px solid var(--outline-variant); }
+
+.setting-row .slabel {
+  font-size: 14px;
+  color: var(--text);
+  font-weight: 500;
+}
+
+.setting-row input[type=number] {
+  width: 80px;
+  background: var(--surface-variant);
+  border: 1px solid var(--outline);
+  color: var(--text);
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-weight: 500;
+  transition: all var(--transition-fast);
+}
+
+.setting-row input[type=number]:focus {
+  border-color: var(--primary);
+  outline: none;
+  box-shadow: 0 0 0 3px var(--primary-container);
+}
+
+/* Detail backend items */
+.detail-backend-item {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  padding: 14px 0;
+  font-size: 13px;
+  gap: 14px;
+  transition: background var(--transition-fast);
+}
+
+.detail-backend-item:hover { background: var(--surface-hover); margin: 0 -12px; padding-left: 12px; padding-right: 12px; border-radius: var(--radius-sm); }
+
+.detail-backend-item + .detail-backend-item { border-top: 1px solid var(--outline-variant); }
+
+.detail-backend-item .bname { font-weight: 600; color: var(--text); }
+.detail-backend-item .binfo { color: var(--text-tertiary); font-size: 12px; }
+.detail-backend-item .bstats {
+  display: flex;
+  gap: 16px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.detail-backend-item .bstats b { color: var(--text); font-weight: 600; }
+
+/* Backend actions */
+.backend-actions { display: flex; gap: 6px; }
+
+.backend-actions button {
+  background: none;
+  border: none;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  padding: 4px 8px;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  font-weight: 500;
+  font-family: inherit;
+  transition: all var(--transition-fast);
+}
+
+.backend-actions button:hover {
+  background: var(--surface-variant);
+  color: var(--text);
+}
+
+.backend-actions button.danger:hover {
+  background: var(--error-container);
+  color: var(--error);
+}
+
+/* Backend form */
+.backend-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  padding: 18px 0;
+  animation: slideUp 0.3s var(--transition-slow);
+}
+
+.backend-form input {
+  background: var(--surface-variant);
+  border: 1px solid var(--outline);
+  color: var(--text);
+  padding: 9px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-family: var(--font-mono);
+  font-weight: 500;
+  transition: all var(--transition-fast);
+}
+
+.backend-form input:focus {
+  border-color: var(--primary);
+  outline: none;
+  box-shadow: 0 0 0 3px var(--primary-container);
+}
+
+.backend-form input[name=nick] { width: 120px; }
+.backend-form input[name=addr] { width: 200px; }
+.backend-form input[name=meth] { width: 160px; }
+.backend-form input[name=pass] { width: 140px; }
+
+.backend-form button {
+  background: var(--text);
+  border: none;
+  color: var(--surface);
+  font-size: 12px;
+  padding: 9px 18px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-weight: 600;
+  font-family: inherit;
+  transition: all var(--transition-fast);
+}
+
+.backend-form button:hover {
+  opacity: 0.85;
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-1);
+}
+
+.backend-form button.cancel {
+  background: transparent;
+  color: var(--text-tertiary);
+  font-weight: 500;
+}
+
+.backend-form button.cancel:hover {
+  background: var(--error-container);
+  color: var(--error);
+  opacity: 1;
+}
+
+/* Config display */
+.detail-config {
+  background: var(--surface-variant);
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-md);
+  padding: 20px 24px;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  max-height: 400px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  line-height: 1.7;
+  font-weight: 500;
+}
+
+/* Detail actions */
+.detail-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 20px;
+  flex-wrap: wrap;
+}
+
+.detail-actions .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--primary-container);
+  border: 1px solid color-mix(in srgb, var(--primary) 15%, transparent);
+  color: var(--primary);
+  font-size: 13px;
+  padding: 8px 18px;
+  cursor: pointer;
+  text-decoration: none;
+  border-radius: var(--radius-full);
+  font-weight: 600;
+  font-family: inherit;
+  transition: all var(--transition-fast);
+}
+
+.detail-actions .btn:hover {
+  background: var(--primary);
+  color: var(--on-primary);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-2);
+}
+
+.detail-actions .btn:active { transform: scale(0.97); }
+
+/* =========================================================
+   Tables
+   ========================================================= */
+.conn-table-wrap {
+  background: var(--surface);
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  box-shadow: var(--shadow-1);
+}
+
+.conn-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.conn-table th {
+  text-align: left;
+  padding: 12px 16px;
+  color: var(--text-tertiary);
+  font-weight: 700;
+  border-bottom: 1px solid var(--outline-variant);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  background: var(--surface-variant);
+  white-space: nowrap;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.conn-table th.sortable {
+  cursor: pointer;
+  user-select: none;
+  transition: color var(--transition-fast);
+}
+
+.conn-table th.sortable:hover { color: var(--text); }
+
+.conn-table th .sort-arrow {
+  font-size: 11px;
+  margin-left: 4px;
+  font-weight: 700;
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+}
+
+.conn-table th.sortable:hover .sort-arrow { opacity: 0.5; }
+.conn-table th .sort-arrow.asc { opacity: 1; color: var(--success); }
+.conn-table th .sort-arrow.desc { opacity: 1; color: var(--primary); }
+
+.conn-table td {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--outline-variant);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: background var(--transition-fast);
+}
+
+.conn-table tr { cursor: pointer; transition: background var(--transition-fast); }
+.conn-table tr:hover td { background: var(--surface-hover); }
+
+.conn-table .dur { color: var(--text-secondary); font-weight: 500; }
+.conn-table .bytes { color: var(--text-secondary); text-align: right; font-variant-numeric: tabular-nums; font-weight: 500; }
+.conn-table .addr { max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
+
+.conn-empty {
+  text-align: center;
+  padding: 48px 24px;
+  color: var(--text-tertiary);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.conn-empty::before {
+  content: '—';
+  display: block;
+  font-size: 32px;
+  margin-bottom: 8px;
+  opacity: 0.4;
+}
+
+/* Connection badges */
+.conn-badge {
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  padding: 3px 10px;
+  border-radius: var(--radius-full);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.conn-badge::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.conn-badge.active { background: var(--success-container); color: var(--success); }
+.conn-badge.active::before { background: var(--success); box-shadow: 0 0 0 2px var(--success-container); }
+.conn-badge.idle { background: var(--warning-container); color: #b06000; }
+body.dark .conn-badge.idle { color: #fdd663; }
+.conn-badge.idle::before { background: var(--warning); }
+.conn-badge.closed { background: var(--surface-variant); color: var(--text-tertiary); }
+.conn-badge.closed::before { background: var(--text-tertiary); }
+
+/* =========================================================
+   History Page
+   ========================================================= */
+.history-page {
+  display: none;
+  max-width: 1080px;
+  margin: 0 auto;
+  animation: slideUp 0.4s var(--transition-slow);
+}
+
+.history-page.open { display: block; }
+
+.history-page h2 {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 20px;
+  letter-spacing: -0.3px;
+}
+
+/* =========================================================
+   Connection Detail
+   ========================================================= */
+.conn-detail {
+  display: none;
+  max-width: 800px;
+  margin: 0 auto;
+  animation: slideUp 0.4s var(--transition-slow);
+}
+
+.conn-detail.open { display: block; }
+
+.conn-detail h2 {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 8px;
+  letter-spacing: -0.3px;
+}
+
+.conn-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  padding: 6px 16px;
+  border-radius: var(--radius-full);
+  margin-bottom: 24px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.conn-status.active { background: var(--success-container); color: var(--success); }
+.conn-status.closed { background: var(--error-container); color: var(--error); }
+.conn-status.idle { background: var(--warning-container); color: #b06000; }
+body.dark .conn-status.idle { color: #fdd663; }
+
+.conn-status::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+.conn-status.active::before { background: var(--success); }
+.conn-status.closed::before { background: var(--error); }
+.conn-status.idle::before { background: var(--warning); }
+
+.conn-detail .kv-grid {
+  display: grid;
+  grid-template-columns: 130px 1fr;
+  gap: 10px 20px;
+  margin-bottom: 24px;
+  font-size: 13px;
+}
+
+.conn-detail .kv-grid .k {
+  color: var(--text-tertiary);
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.conn-detail .kv-grid .v {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  word-break: break-all;
+  font-weight: 500;
+}
+
+.conn-detail .side-card {
+  background: var(--surface);
+  border-radius: var(--radius-lg);
+  padding: 24px;
+  margin-bottom: 20px;
+  border: 1px solid var(--outline-variant);
+  box-shadow: var(--shadow-1);
+  transition: all var(--transition-fast);
+}
+
+.conn-detail .side-card:hover {
+  box-shadow: var(--shadow-2);
+  transform: translateY(-2px);
+}
+
+.conn-detail .side-card h3 {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-tertiary);
+  margin-bottom: 16px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* Bandwidth bars */
+.bw-bar-row {
+  width: 100%;
+  height: 6px;
+  background: var(--outline-variant);
+  border-radius: 3px;
+  overflow: hidden;
+  min-width: 60px;
+}
+
+.bw-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.5s var(--transition-slow);
+}
+
+.bw-bar-fill.r { background: linear-gradient(90deg, var(--success), color-mix(in srgb, var(--success) 70%, #fff)); }
+.bw-bar-fill.w { background: linear-gradient(90deg, var(--primary), color-mix(in srgb, var(--primary) 70%, #fff)); }
+body.dark .bw-bar-fill.r { background: var(--success); }
+body.dark .bw-bar-fill.w { background: var(--primary); }
+
+.bw-summary {
+  display: flex;
+  gap: 24px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  padding-top: 12px;
+  margin-top: 12px;
+  border-top: 1px solid var(--outline-variant);
+  flex-wrap: wrap;
+}
+
+.bw-summary b {
+  color: var(--text);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* =========================================================
+   Ripple effect
+   ========================================================= */
+.ripple {
+  position: absolute;
+  border-radius: 50%;
+  transform: scale(0);
+  animation: ripple 0.6s linear;
+  background: rgba(255,255,255,0.35);
+  pointer-events: none;
+}
+
+@keyframes ripple {
+  to { transform: scale(4); opacity: 0; }
+}
+
+/* =========================================================
+   Responsive
+   ========================================================= */
+@media (max-width: 768px) {
+  .header { padding: 12px 20px; }
+  .container { padding: 20px; }
+  .grid { grid-template-columns: 1fr; gap: 16px; }
+  .detail-card { padding: 24px; }
+  .detail-stats { grid-template-columns: repeat(2, 1fr); }
+  .conn-table td, .conn-table th { padding: 10px 12px; }
+  .stats { gap: 8px; }
+  .stat-chip { padding: 5px 10px; font-size: 11px; }
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="header">
+    <h1><a href="#"><span class="dot"></span>Shadowsocks Admin</a></h1>
+    <div class="stats">
+      <div class="stat-chip">Servers <span id="numConfigs">0</span></div>
+      <div class="stat-chip">Conns <span id="totalConns">0</span></div>
+      <div class="stat-chip">&darr; <span id="totalRead">0</span></div>
+      <div class="stat-chip">&uarr; <span id="totalWrit">0</span></div>
+      <div class="stat-chip">Up <span id="uptime">0s</span></div>
+    </div>
+    <div class="spacer"></div>
+    <button class="theme-btn" onclick="toggleTheme()" title="Toggle theme" id="themeBtn">☀</button>
+  </div>
+
+  <div class="error-banner" id="errorBanner"></div>
+
+  <div class="container">
+    <!-- Overview -->
+    <div id="overview">
+      <div class="grid" id="grid"></div>
+      <div class="empty" id="emptyMsg" style="display:none">No servers configured</div>
+    </div>
+
+    <!-- Detail -->
+    <div class="detail" id="detail"></div>
+
+    <!-- History -->
+    <div class="history-page" id="historyPage"></div>
+
+    <!-- Connection detail -->
+    <div class="conn-detail" id="connDetail"></div>
+  </div>
+</div>
+
+<script>
+/* =========================================================
+   Theme
+   ========================================================= */
+(function() {
+  const stored = localStorage.getItem('ss-theme');
+  if (stored === 'dark') { document.body.classList.add('dark'); }
+  else if (!stored) { document.body.classList.remove('dark'); }
+  else { document.body.classList.remove('dark'); }
+  updateThemeBtn();
+})();
+
+function toggleTheme() {
+  document.body.classList.toggle('dark');
+  localStorage.setItem('ss-theme', document.body.classList.contains('dark') ? 'dark' : 'light');
+  updateThemeBtn();
+}
+
+function updateThemeBtn() {
+  const btn = document.getElementById('themeBtn');
+  if (btn) btn.textContent = document.body.classList.contains('dark') ? '☀' : '☾';
+}
+
+const grid = document.getElementById('grid');
+const emptyMsg = document.getElementById('emptyMsg');
+const errorBanner = document.getElementById('errorBanner');
+const overview = document.getElementById('overview');
+const detail = document.getElementById('detail');
+
+const cards = new Map();
+const TOGGLE_GRACE = 2000;
+
+function fmtBytes(b) {
+  if (b == null || b === 0) return '0 B';
+  if (b < 1024) return b + ' B';
+  if (b < 1048576) return (b / 1024).toFixed(1) + ' KB';
+  if (b < 1073741824) return (b / 1048576).toFixed(1) + ' MB';
+  return (b / 1073741824).toFixed(2) + ' GB';
+}
+
+function fmtRate(b) {
+  if (b == null || b === 0) return '0';
+  if (b < 1024) return b + ' B/s';
+  if (b < 1048576) return (b / 1024).toFixed(1) + ' KB/s';
+  return (b / 1048576).toFixed(1) + ' MB/s';
+}
+
+function fmtDuration(s) {
+  if (s < 60) return s + 's';
+  if (s < 3600) return Math.floor(s / 60) + 'm ' + (s % 60) + 's';
+  return Math.floor(s / 3600) + 'h ' + Math.floor((s % 3600) / 60) + 'm';
+}
+
+function badgeClass(type) {
+  const map = { local: 'local', server: 'server', redir: 'redir', multiserver: 'multiserver',
+    ssproxy: 'ssproxy', socksproxy: 'socksproxy', tcptun: 'tcptun', udptun: 'udptun', wstunnel: 'wstunnel' };
+  return 'badge badge-' + (map[type] || 'server');
+}
+
+function showError(msg) {
+  errorBanner.textContent = msg;
+  errorBanner.classList.add('show');
+  setTimeout(() => errorBanner.classList.remove('show'), 5000);
+}
+
+function now() { return Date.now(); }
+
+function shouldUpdateToggle(cardEntry, toggleName) {
+  if (!cardEntry || !cardEntry.toggles[toggleName]) return true;
+  return (now() - cardEntry.toggles[toggleName]) > TOGGLE_GRACE;
+}
+
+function apiToggle(url, body, cardEntry, toggleName) {
+  fetch(url, { method: 'PUT', body: JSON.stringify(body) })
+    .catch(e => showError(e.message));
+  if (cardEntry) cardEntry.toggles[toggleName] = now();
+}
+
+/* =========================================================
+   Sparkline
+   ========================================================= */
+function renderSparkline(el, trafficSamples) {
+  if (!el) return;
+  if (!trafficSamples || !trafficSamples.length) { el.innerHTML = ''; return; }
+  const max = Math.max(1, ...trafficSamples.map(s => Math.max(s.readRate, s.writRate)));
+  const recent = trafficSamples.slice(-40);
+  let html = '';
+  for (const s of recent) {
+    html += '<div class="bar read" style="height:' + Math.max(1, (s.readRate / max * 100).toFixed(0)) + '%"></div>';
+    html += '<div class="bar write" style="height:' + Math.max(1, (s.writRate / max * 100).toFixed(0)) + '%"></div>';
+  }
+  el.innerHTML = html;
+}
+
+function renderLargeSparkline(el, trafficSamples) {
+  if (!el) return;
+  if (!trafficSamples || !trafficSamples.length) { el.innerHTML = ''; return; }
+  const max = Math.max(1, ...trafficSamples.map(s => Math.max(s.readRate, s.writRate)));
+  let html = '';
+  for (const s of trafficSamples) {
+    html += '<div class="bar read" style="height:' + Math.max(1, (s.readRate / max * 100).toFixed(0)) + '%"></div>';
+    html += '<div class="bar write" style="height:' + Math.max(1, (s.writRate / max * 100).toFixed(0)) + '%"></div>';
+  }
+  el.innerHTML = html;
+}
+
+/* =========================================================
+   Card creation & update
+   ========================================================= */
+function createCard(cfg) {
+  const card = document.createElement('div');
+  card.className = 'card';
+  card.id = 'card-' + cfg.index;
+  card.onclick = function(e) {
+    if (e.target.closest('.toggle') || e.target.closest('button') || e.target.closest('.btn')) return;
+    window.location.hash = '#/config/' + cfg.index;
+  };
+
+  card.innerHTML =
+    `<div class="card-header">
+      <span class="status-dot on" id="sd-${cfg.index}"></span>
+      <span class="card-title" id="ct-${cfg.index}"></span>
+      <span class="badge" id="cb-${cfg.index}"></span>
+    </div>
+    <div class="card-meta">
+      <span><span class="meta-label">Local</span> <span id="cl-${cfg.index}"></span></span>
+      <span><span class="meta-label">Remote</span> <span id="cr-${cfg.index}"></span></span>
+      <span><span class="meta-label">Method</span> <span id="cm-${cfg.index}"></span></span>
+    </div>
+    <div class="sparkline" id="sp-${cfg.index}"></div>
+    <div class="card-stats">
+      <div class="stat-cell"><div class="stat-value" id="sconn-${cfg.index}">0</div><div class="stat-label">Conns</div></div>
+      <div class="stat-cell"><div class="stat-sub up" id="sconnrate-${cfg.index}">0</div><div class="stat-label">Conn/s</div></div>
+      <div class="stat-cell"><div class="stat-value" id="speak-${cfg.index}">0</div><div class="stat-label">Peak</div></div>
+      <div class="stat-cell"><div class="stat-value" id="stotal-${cfg.index}">0</div><div class="stat-label">Total</div></div>
+      <div class="stat-cell"><div class="stat-sub down" id="sreadrate-${cfg.index}">0</div><div class="stat-label">&darr; Rate</div></div>
+      <div class="stat-cell"><div class="stat-sub up" id="swritrate-${cfg.index}">0</div><div class="stat-label">&uarr; Rate</div></div>
+      <div class="stat-cell"><div class="stat-value" id="sread-${cfg.index}">0</div><div class="stat-label">&darr; Total</div></div>
+      <div class="stat-cell"><div class="stat-value" id="swrit-${cfg.index}">0</div><div class="stat-label">&uarr; Total</div></div>
+    </div>
+    <div class="toggles" id="tgl-${cfg.index}" onclick="event.stopPropagation()">
+      <label class="toggle click-through">
+        <input type="checkbox" id="tgl-enabled-${cfg.index}" onchange="onToggleEnabled(${cfg.index}, this)">
+        <span class="toggle-slider"></span> Enabled
+      </label>
+      <label class="toggle click-through">
+        <input type="checkbox" id="tgl-autoproxy-${cfg.index}" onchange="onToggleAutoProxy(${cfg.index}, this)">
+        <span class="toggle-slider"></span> AutoProxy
+      </label>
+      <label class="toggle click-through">
+        <input type="checkbox" id="tgl-loghttp-${cfg.index}" onchange="onToggleLogHTTP(${cfg.index}, this)">
+        <span class="toggle-slider"></span> LogHTTP
+      </label>
+    </div>
+    <div class="backends" id="bk-${cfg.index}" style="display:none"></div>
+    <div class="card-actions" onclick="event.stopPropagation()">
+      <button onclick="toggleBackends(${cfg.index})" id="btn-bk-${cfg.index}">&#9654; Backends</button>
+      <button onclick="viewDetail(${cfg.index})">Details</button>
+    </div>`;
+
+  grid.appendChild(card);
+
+  const entry = { el: card, toggles: {}, backendsOpen: false };
+  cards.set(cfg.index, entry);
+  return entry;
+}
+
+function updateCard(cfg, trafficSamples, cardEntry) {
+  const i = cfg.index;
+  const sd = document.getElementById('sd-' + i);
+  if (sd) sd.className = 'status-dot ' + (cfg.disabled ? 'off' : 'on');
+  cardEntry.el.classList.toggle('disabled', cfg.disabled);
+
+  setText('ct-' + i, dispName(cfg));
+  const cb = document.getElementById('cb-' + i);
+  if (cb) { cb.textContent = cfg.type; cb.className = badgeClass(cfg.type); }
+  setText('cl-' + i, cfg.localaddr || '-');
+  setText('cr-' + i, cfg.remoteaddr || '-');
+  setText('cm-' + i, cfg.method || '-');
+  setText('sconn-' + i, cfg.connections);
+  setText('sconnrate-' + i, (cfg.connRate || 0) + '/s');
+  setText('speak-' + i, cfg.peakConnections);
+  setText('stotal-' + i, cfg.totalConnections);
+  setText('sreadrate-' + i, fmtRate(cfg.readRate));
+  setText('swritrate-' + i, fmtRate(cfg.writRate));
+  setText('sread-' + i, fmtBytes(cfg.totalReadBytes));
+  setText('swrit-' + i, fmtBytes(cfg.totalWritBytes));
+  renderSparkline(document.getElementById('sp-' + i), trafficSamples);
+
+  if (shouldUpdateToggle(cardEntry, 'enabled')) {
+    const el = document.getElementById('tgl-enabled-' + i); if (el) el.checked = !cfg.disabled;
+  }
+  if (shouldUpdateToggle(cardEntry, 'autoproxy')) {
+    const el = document.getElementById('tgl-autoproxy-' + i); if (el) el.checked = cfg.autoproxy;
+  }
+  if (shouldUpdateToggle(cardEntry, 'loghttp')) {
+    const el = document.getElementById('tgl-loghttp-' + i); if (el) el.checked = cfg.loghttp;
+  }
+  updateBackendsSummary(i, cfg.backends, cardEntry);
+}
+
+function updateBackendsSummary(i, backends, cardEntry) {
+  const bk = document.getElementById('bk-' + i);
+  const btn = document.getElementById('btn-bk-' + i);
+  if (!backends || !backends.length) {
+    if (bk) bk.style.display = 'none';
+    if (btn) btn.style.display = 'none';
+    return;
+  }
+  if (btn) { btn.style.display = ''; btn.innerHTML = (cardEntry.backendsOpen ? '&#9660;' : '&#9654;') + ' Backends (' + backends.length + ')'; }
+  if (!bk) return;
+  bk.style.display = cardEntry.backendsOpen ? 'block' : 'none';
+  let html = '';
+  for (const b of backends) {
+    html +=
+      `<div class="backend-item" id="bki-${i}-${sanitize(b.nickname)}">
+        <div><span class="bname">${esc(b.nickname)}</span> <span class="binfo">&rarr; ${esc(b.remoteaddr)} [${esc(b.method)}]</span></div>
+        <div class="bstats"><b>${b.connections || 0}</b> conns &darr;<b>${fmtBytes(b.totalReadBytes)}</b> &uarr;<b>${fmtBytes(b.totalWritBytes)}</b></div>
+        <label class="toggle"><input type="checkbox" id="btgl-${i}-${sanitize(b.nickname)}" ${b.disabled ? '' : 'checked'} onchange="onToggleBackend(${i},'${escAttr(b.nickname)}',this)"><span class="toggle-slider"></span></label>
+      </div>`;
+  }
+  bk.innerHTML = html;
+}
+
+/* =========================================================
+   Detail view
+   ========================================================= */
+let detailIndex = -1;
+
+function viewDetail(index) {
+  window.location.hash = '#/config/' + index;
+}
+
+function hideDetail() {
+  overview.style.display = '';
+  detail.classList.remove('open');
+  detailIndex = -1;
+}
+
+function showDetail(index) {
+  overview.style.display = 'none';
+  detail.classList.add('open');
+  detailIndex = index;
+  Promise.all([
+    fetch('/api/configs/' + index).then(r => r.json()),
+    fetch('/api/traffic').then(r => r.json()).catch(() => []),
+    fetch('/api/configs/' + index + '/config').then(r => r.json()).catch(() => null)
+  ]).then(([cfg, traffic, rawCfg]) => {
+    if (detailIndex !== index) return;
+    const ts = (traffic && traffic[index]) ? traffic[index] : [];
+    renderDetailShell(cfg, ts, rawCfg);
+    pollActiveConns(index);
+  }).catch(e => showError(e.message));
+}
+
+function renderDetailShell(cfg, trafficSamples, rawCfg) {
+  if (!detail) return;
+  detail.innerHTML = buildDetailHTML(cfg, trafficSamples, rawCfg);
+  renderLargeSparkline(document.getElementById('dsp-' + cfg.index), trafficSamples);
+}
+
+function updateDetailData() {
+  const i = detailIndex;
+  if (i < 0 || !detail.classList.contains('open')) return;
+  Promise.all([
+    fetch('/api/configs/' + i).then(r => r.json()),
+    fetch('/api/traffic').then(r => r.json()).catch(() => [])
+  ]).then(([cfg, traffic]) => {
+    if (detailIndex !== i) return;
+    const ts = (traffic && traffic[i]) ? traffic[i] : [];
+    updateDetailStatsInPlace(cfg, ts);
+  }).catch(() => {});
+}
+
+function updateDetailStatsInPlace(cfg, trafficSamples) {
+  const i = cfg.index;
+  setText('dsconn-' + i, cfg.connections);
+  setText('dsconnrate-' + i, (cfg.connRate || 0) + '/s');
+  setText('dspeak-' + i, cfg.peakConnections);
+  setText('dstotal-' + i, cfg.totalConnections);
+  setText('dsreadrate-' + i, fmtRate(cfg.readRate));
+  setText('dswritrate-' + i, fmtRate(cfg.writRate));
+  setText('dsread-' + i, fmtBytes(cfg.totalReadBytes));
+  setText('dswrit-' + i, fmtBytes(cfg.totalWritBytes));
+  renderLargeSparkline(document.getElementById('dsp-' + i), trafficSamples);
+  updateDetailBackendStats(i, cfg.backends);
+  const cfgPanel = document.getElementById('dgcfg-' + i);
+  if (cfgPanel && cfgPanel.style.display !== 'none') {
+    document.getElementById('dgcfgtxt-' + i).textContent = JSON.stringify(
+      buildSafeConfigForDisplay(cfg), null, 2);
+  }
+}
+
+function updateDetailBackendStats(i, backends) {
+  if (!backends) return;
+  for (const b of backends) {
+    const be = document.getElementById('dbe-' + i + '-' + sanitize(b.nickname));
+    if (!be) continue;
+    const bstats = be.querySelector('.bstats');
+    if (bstats) bstats.innerHTML =
+      '<b>' + (b.connections || 0) + '</b> conns &darr;<b>' + fmtBytes(b.totalReadBytes) + '</b> &uarr;<b>' + fmtBytes(b.totalWritBytes) + '</b>';
+  }
+}
+
+function buildSafeConfigForDisplay(cfg) {
+  return {
+    nickname: cfg.nickname, type: cfg.type, localaddr: cfg.localaddr,
+    remoteaddr: cfg.remoteaddr, method: cfg.method, password: '****',
+    udprelay: cfg.udprelay || false, verbose: cfg.verbose || false,
+    debug: cfg.debug || false, safe: cfg.safe || false, timeout: cfg.timeout,
+    obfs: cfg.obfs || false, autoproxy: cfg.autoproxy || false,
+    loghttp: cfg.loghttp || false, ssproxy: cfg.ssproxy || false,
+    allow_http: cfg.allow_http || false, secure_origin: cfg.secure_origin || false,
+    mitm: cfg.mitm || false, direct: cfg.direct || false,
+    prefer_ipv4: cfg.prefer_ipv4 || false, no_ipv4: cfg.no_ipv4 || false,
+    no_ipv6: cfg.no_ipv6 || false, local_resolve: cfg.local_resolve || false,
+    limit: cfg.limit || 0, limitperconn: cfg.limitperconn || 0,
+    datashard: cfg.datashard || 0, parityshard: cfg.parityshard || 0,
+    adminaddr: cfg.adminaddr || '', backendCount: (cfg.backends && cfg.backends.length) || 0
+  };
+}
+
+function refreshDetailAfterBackendChange(index) {
+  fetch('/api/configs/' + index).then(r => r.json()).then(cfg => {
+    if (detailIndex !== index) return;
+    rebuildDetailBackends(index, cfg.backends);
+    updateDetailStatsInPlace(cfg, []);
+    pollActiveConns(index);
+  }).catch(() => {});
+}
+
+function rebuildDetailBackends(i, backends) {
+  const section = document.getElementById('dg-backends-' + i);
+  if (!section) return;
+  if (!backends || !backends.length) {
+    section.innerHTML = '<div class="conn-empty">No upstreams configured</div>' +
+      '<div id="be-form-' + i + '"></div>' +
+      '<div class="detail-actions" style="margin-top:8px"><button class="btn" onclick="showAddBackend(' + i + ')">+ Add Upstream</button></div>';
+    return;
+  }
+  let html = '';
+  for (const b of backends) {
+    html +=
+      '<div class="detail-backend-item" id="dbe-' + i + '-' + sanitize(b.nickname) + '">' +
+      '<div><span class="bname">' + esc(b.nickname) + '</span> <span class="binfo">&rarr; ' + esc(b.remoteaddr) + ' [' + esc(b.method) + ']</span></div>' +
+      '<div class="bstats"><b>' + (b.connections || 0) + '</b> conns &darr;<b>' + fmtBytes(b.totalReadBytes) + '</b> &uarr;<b>' + fmtBytes(b.totalWritBytes) + '</b></div>' +
+      '<label class="toggle"><input type="checkbox" id="dbtgl-' + i + '-' + sanitize(b.nickname) + '" ' + (b.disabled ? '' : 'checked') + ' onchange="onToggleBackend(' + i + ',\'' + escAttr(b.nickname) + '\',this)"><span class="toggle-slider"></span></label>' +
+      '<div class="backend-actions">' +
+      '<button onclick="editBackend(' + i + ',\'' + escAttr(b.nickname) + '\',\'' + escAttr(b.remoteaddr) + '\',\'' + escAttr(b.method) + '\',\'\')">Edit</button>' +
+      '<button class="danger" onclick="deleteBackend(' + i + ',\'' + escAttr(b.nickname) + '\')">Del</button>' +
+      '</div></div>';
+  }
+  section.innerHTML = html +
+    '<div id="be-form-' + i + '"></div>' +
+    '<div class="detail-actions" style="margin-top:8px"><button class="btn" onclick="showAddBackend(' + i + ')">+ Add Upstream</button></div>';
+}
+
+function buildDetailHTML(cfg, trafficSamples, rawCfg) {
+  const i = cfg.index;
+  return `
+    <div class="back-btn" onclick="window.location.hash='#'">&larr; Back to overview</div>
+    <div class="detail-card">
+      <div class="detail-header">
+        <span class="status-dot ${cfg.disabled ? 'off' : 'on'}" style="width:10px;height:10px"></span>
+        <span class="card-title">${esc(dispName(cfg))}</span>
+        <span class="${badgeClass(cfg.type)}">${esc(cfg.type)}</span>
+      </div>
+      <div class="detail-meta">
+        <span><span class="meta-label">Local</span> <b>${esc(cfg.localaddr || '-')}</b></span>
+        <span><span class="meta-label">Remote</span> <b>${esc(cfg.remoteaddr || '-')}</b></span>
+        <span><span class="meta-label">Method</span> <b>${esc(cfg.method || '-')}</b></span>
+        <span><span class="meta-label">Timeout</span> <b>${rawCfg ? rawCfg.timeout + 's' : '-'}</b></span>
+        <span><span class="meta-label">UDP</span> <b>${rawCfg ? (rawCfg.udprelay ? 'On' : 'Off') : '-'}</b></span>
+      </div>
+      <div class="detail-sparkline" id="dsp-${i}"></div>
+      <div class="detail-stats">
+        <div class="stat-cell"><div class="stat-value" id="dsconn-${i}">${cfg.connections}</div><div class="stat-label">Active Conns</div></div>
+        <div class="stat-cell"><div class="stat-sub up" id="dsconnrate-${i}">${cfg.connRate || 0}/s</div><div class="stat-label">Conn Rate</div></div>
+        <div class="stat-cell"><div class="stat-value" id="dspeak-${i}">${cfg.peakConnections}</div><div class="stat-label">Peak Conns</div></div>
+        <div class="stat-cell"><div class="stat-value" id="dstotal-${i}">${cfg.totalConnections}</div><div class="stat-label">Total Conns</div></div>
+        <div class="stat-cell"><div class="stat-sub down" id="dsreadrate-${i}">${fmtRate(cfg.readRate)}</div><div class="stat-label">&darr; Read Rate</div></div>
+        <div class="stat-cell"><div class="stat-sub up" id="dswritrate-${i}">${fmtRate(cfg.writRate)}</div><div class="stat-label">&uarr; Write Rate</div></div>
+        <div class="stat-cell"><div class="stat-value" id="dsread-${i}">${fmtBytes(cfg.totalReadBytes)}</div><div class="stat-label">&darr; Total Read</div></div>
+        <div class="stat-cell"><div class="stat-value" id="dswrit-${i}">${fmtBytes(cfg.totalWritBytes)}</div><div class="stat-label">&uarr; Total Written</div></div>
+      </div>
+      ${rawCfg ? `
+      <div class="detail-section">
+        <h3>Server Control</h3>
+        <div class="settings-grid">
+          ${settingToggle(i, 'Enabled', !cfg.disabled, 'disable', true)}
+        </div>
+      </div>
+      <div class="detail-section">
+        <h3>Logging</h3>
+        <div class="settings-grid">
+          ${settingToggle(i, 'Verbose', rawCfg.verbose, 'verbose')}
+          ${settingToggle(i, 'Debug', rawCfg.debug, 'debug')}
+        </div>
+      </div>
+      <div class="detail-section">
+        <h3>Proxy Features</h3>
+        <div class="settings-grid">
+          ${settingToggle(i, 'AutoProxy', rawCfg.autoproxy, 'autoproxy')}
+          ${settingToggle(i, 'LogHTTP', rawCfg.loghttp, 'loghttp')}
+          ${settingToggle(i, 'Safe Mode', rawCfg.safe, 'safe')}
+          ${settingToggle(i, 'Direct', rawCfg.direct, 'direct')}
+          ${settingToggle(i, 'SS Proxy', rawCfg.ssproxy, 'ssproxy')}
+          ${settingToggle(i, 'MITM', rawCfg.mitm, 'mitm')}
+          ${settingToggle(i, 'Allow HTTP', rawCfg.allow_http, 'allow_http')}
+          ${settingToggle(i, 'Secure Origin', rawCfg.secure_origin, 'secure_origin')}
+        </div>
+      </div>
+      <div class="detail-section">
+        <h3>Network</h3>
+        <div class="settings-grid">
+          ${settingToggle(i, 'UDP Relay', rawCfg.udprelay, 'udprelay')}
+          ${settingToggle(i, 'Prefer IPv4', rawCfg.prefer_ipv4, 'prefer_ipv4')}
+          ${settingToggle(i, 'No IPv4', rawCfg.no_ipv4, 'no_ipv4')}
+          ${settingToggle(i, 'No IPv6', rawCfg.no_ipv6, 'no_ipv6')}
+          ${settingToggle(i, 'Local Resolve', rawCfg.local_resolve, 'local_resolve')}
+        </div>
+      </div>
+      <div class="detail-section">
+        <h3>Limits</h3>
+        <div class="settings-grid">
+          ${settingNumber(i, 'Limit (KB/s)', rawCfg.limit, 'limit')}
+          ${settingNumber(i, 'Per-Conn (KB/s)', rawCfg.limitperconn, 'limitperconn')}
+          ${settingNumber(i, 'Timeout (s)', rawCfg.timeout, 'timeout')}
+        </div>
+      </div>` : ''}
+      <div class="detail-section" id="dg-backends-${i}">
+        <h3>Upstreams${cfg.backends && cfg.backends.length ? ' (' + cfg.backends.length + ')' : ''}</h3>
+        ${cfg.backends && cfg.backends.length ? cfg.backends.map(b => `
+          <div class="detail-backend-item" id="dbe-${i}-${sanitize(b.nickname)}">
+            <div><span class="bname">${esc(b.nickname)}</span> <span class="binfo">&rarr; ${esc(b.remoteaddr)} [${esc(b.method)}]</span></div>
+            <div class="bstats"><b>${b.connections || 0}</b> conns &darr;<b>${fmtBytes(b.totalReadBytes)}</b> &uarr;<b>${fmtBytes(b.totalWritBytes)}</b></div>
+            <label class="toggle"><input type="checkbox" id="dbtgl-${i}-${sanitize(b.nickname)}" ${b.disabled ? '' : 'checked'} onchange="onToggleBackend(${i},'${escAttr(b.nickname)}',this)"><span class="toggle-slider"></span></label>
+            <div class="backend-actions">
+              <button onclick="editBackend(${i},'${escAttr(b.nickname)}','${escAttr(b.remoteaddr)}','${escAttr(b.method)}','')">Edit</button>
+              <button class="danger" onclick="deleteBackend(${i},'${escAttr(b.nickname)}')">Del</button>
+            </div>
+          </div>`).join('') : '<div class="conn-empty">No upstreams configured</div>'}
+        <div id="be-form-${i}"></div>
+        <div class="detail-actions" style="margin-top:8px">
+          <button class="btn" onclick="showAddBackend(${i})">+ Add Upstream</button>
+        </div>
+      </div>
+      ${rawCfg ? `
+      <div class="detail-section" id="dgcfg-${i}">
+        <h3>Configuration</h3>
+        <div class="detail-config" id="dgcfgtxt-${i}">${esc(JSON.stringify(rawCfg, null, 2))}</div>
+      </div>` : ''}
+      <div class="detail-section">
+        <h3>Active Connections</h3>
+        <div id="activeConns-${i}"><div class="conn-empty">Loading...</div></div>
+      </div>
+      <div class="detail-actions">
+        <a class="btn" href="#/config/${i}/history">View Connection History &rarr;</a>
+      </div>
+    </div>`;
+}
+
+/* =========================================================
+   Toggle handlers
+   ========================================================= */
+function onToggleEnabled(index, cb) {
+  const ce = cards.get(index);
+  apiToggle('/api/configs/' + index + '/disable', { disabled: !cb.checked }, ce, 'enabled');
+}
+function onToggleAutoProxy(index, cb) {
+  const ce = cards.get(index);
+  apiToggle('/api/configs/' + index + '/autoproxy', { enabled: cb.checked }, ce, 'autoproxy');
+}
+function onToggleLogHTTP(index, cb) {
+  const ce = cards.get(index);
+  apiToggle('/api/configs/' + index + '/loghttp', { enabled: cb.checked }, ce, 'loghttp');
+}
+function onToggleBackend(index, nickname, cb) {
+  const ce = cards.get(index);
+  apiToggle('/api/configs/' + index + '/backends/' + encodeURIComponent(nickname) + '/disable',
+    { disabled: !cb.checked }, ce, 'bk-' + nickname);
+}
+
+function toggleBackends(index) {
+  const ce = cards.get(index);
+  if (!ce) return;
+  ce.backendsOpen = !ce.backendsOpen;
+}
+
+/* =========================================================
+   Routing
+   ========================================================= */
+function handleRoute() {
+  const hash = window.location.hash;
+  let m = hash.match(/^#\/config\/(\d+)\/connection\/(\d+)$/);
+  if (m) {
+    hideDetail(); hideHistoryPage();
+    showConnDetail(parseInt(m[1]), parseInt(m[2]));
+    return;
+  }
+  m = hash.match(/^#\/config\/(\d+)\/history$/);
+  if (m) {
+    hideDetail(); hideConnDetail();
+    showHistoryPage(parseInt(m[1]));
+    return;
+  }
+  m = hash.match(/^#\/config\/(\d+)$/);
+  if (m) {
+    hideHistoryPage(); hideConnDetail();
+    showDetail(parseInt(m[1]));
+  } else {
+    hideDetail(); hideHistoryPage(); hideConnDetail();
+    pollOverview();
+  }
+}
+
+window.addEventListener('hashchange', handleRoute);
+
+/* =========================================================
+   Active connections
+   ========================================================= */
+function pollActiveConns(index) {
+  fetch('/api/configs/' + index + '/connections')
+    .then(r => r.json())
+    .then(conns => {
+      const el = document.getElementById('activeConns-' + index);
+      if (!el) return;
+      renderConnTable(el, conns, true, index);
+    }).catch(() => {});
+}
+
+let connSortCol = 'id';
+let connSortAsc = false;
+
+function sortBy(col) {
+  if (connSortCol === col) { connSortAsc = !connSortAsc; }
+  else { connSortCol = col; connSortAsc = true; }
+  const el = document.getElementById('activeConns-' + detailIndex);
+  const hel = document.getElementById('historyTable');
+  if (el && detailIndex >= 0) {
+    fetch('/api/configs/' + detailIndex + '/connections').then(r => r.json()).then(d => renderConnTable(el, d, true, detailIndex));
+  }
+  if (hel && historyCfgIndex >= 0) {
+    fetch('/api/configs/' + historyCfgIndex + '/connections/history').then(r => r.json()).then(d => renderConnTable(hel, d, false, historyCfgIndex));
+  }
+}
+
+function sortArrow(col) {
+  if (connSortCol !== col) return '';
+  const cls = connSortAsc ? 'asc' : 'desc';
+  return '<span class="sort-arrow ' + cls + '">' + (connSortAsc ? '▲' : '▼') + '</span>';
+}
+
+function renderConnTable(el, conns, isActive, configIndex) {
+  if (!el) return;
+  if (!conns || !conns.length) {
+    el.innerHTML = '<div class="conn-empty">' + (isActive ? 'No active connections' : 'No history') + '</div>';
+    return;
+  }
+  const paired = new Map();
+  for (const c of conns) {
+    if (c.pairedID) {
+      const partner = conns.find(x => x.id === c.pairedID);
+      if (partner && !paired.has(c.id)) {
+        paired.set(c.pairedID, { in: c, out: partner });
+        paired.set(c.id, { in: partner, out: c });
+      }
+    }
+  }
+  const shown = new Set();
+  const rows = [];
+  for (const c of conns) {
+    if (shown.has(c.id)) continue;
+    const p = paired.get(c.id);
+    if (p) {
+      shown.add(p.in.id); shown.add(p.out.id);
+      rows.push({ pair: true, inp: p.in, out: p.out });
+    } else {
+      shown.add(c.id);
+      rows.push({ pair: false, inp: c });
+    }
+  }
+
+  function connStatus(r) { if (r.endTime) return 'closed'; if (r.lastActive && (Date.now() - r.lastActive / 1000000) > 1000) return 'idle'; return 'active'; }
+  const sortKey = (r) => {
+    const c = r.inp;
+    switch (connSortCol) {
+      case 'id': return c.id;
+      case 'status': return connStatus(c);
+      case 'src': return c.srcAddr || '';
+      case 'dst': return c.dstAddr || '';
+      case 'dur': return Date.now() - new Date(c.startTime).getTime();
+      case 'read': return c.readBytes;
+      case 'write': return c.writBytes;
+      default: return c.id;
+    }
+  };
+  rows.sort((a, b) => {
+    const va = sortKey(a), vb = sortKey(b);
+    if (typeof va === 'string') return connSortAsc ? va.localeCompare(vb) : vb.localeCompare(va);
+    return connSortAsc ? va - vb : vb - va;
+  });
+
+  const th = (col, label) =>
+    '<th class="sortable" onclick="sortBy(\'' + col + '\')">' + label + sortArrow(col) + '</th>';
+
+  let html = '<div class="conn-table-wrap"><table class="conn-table"><tr>' +
+    th('id','ID') + th('status','Status') + th('src','Source') + th('dst','Target') +
+    th('dur',isActive?'Duration':'Start') + th('read','↓ Read') + th('write','↑ Write') +
+    '</tr>';
+  const now = Date.now();
+
+  function statusBadge(s) {
+    var labels = { active: 'Active', idle: 'Idle', closed: 'Closed' };
+    return '<span class="conn-badge ' + s + '">' + labels[s] + '</span>';
+  }
+
+  for (const row of rows) {
+    if (row.pair) {
+      const inp = row.inp, out = row.out;
+      const st = connStatus(inp);
+      const dur = st === 'active' ? fmtDurationMs(now - new Date(inp.startTime).getTime())
+        : fmtDurationMs(new Date(inp.endTime).getTime() - new Date(inp.startTime).getTime());
+      const startStr = new Date(inp.startTime).toLocaleTimeString();
+      html += '<tr onclick="viewConnection(' + configIndex + ',' + inp.id + ')">' +
+        '<td>' + inp.id + '/' + out.id + '</td>' +
+        '<td>' + statusBadge(st) + '</td>' +
+        '<td class="addr" title="' + esc(inp.srcAddr) + '">' + esc(inp.srcAddr || '-') + '</td>' +
+        '<td class="addr" title="' + esc(inp.dstAddr) + ' → ' + esc(out.dstAddr) + '">' + esc(inp.dstAddr || '-') + '<br><span style="color:var(--text-tertiary);font-size:10px">→ ' + esc(out.dstAddr || '-') + '</span></td>' +
+        '<td class="dur">' + (st === 'active' ? dur : (startStr + ' · ' + dur)) + '</td>' +
+        '<td class="bytes">' + fmtBytes(inp.readBytes) + '</td>' +
+        '<td class="bytes">' + fmtBytes(inp.writBytes) + '</td>' +
+        '</tr>';
+    } else {
+      const c = row.inp;
+      const st = connStatus(c);
+      const dur = st === 'active' ? fmtDurationMs(now - new Date(c.startTime).getTime())
+        : fmtDurationMs(new Date(c.endTime).getTime() - new Date(c.startTime).getTime());
+      const startStr = new Date(c.startTime).toLocaleTimeString();
+      html += '<tr onclick="viewConnection(' + configIndex + ',' + c.id + ')">' +
+        '<td>' + c.id + '</td>' +
+        '<td>' + statusBadge(st) + '</td>' +
+        '<td class="addr" title="' + esc(c.srcAddr) + '">' + esc(c.srcAddr || '-') + '</td>' +
+        '<td class="addr" title="' + esc(c.dstAddr) + '">' + esc(c.dstAddr || '-') + '</td>' +
+        '<td class="dur">' + (st === 'active' ? dur : (startStr + ' · ' + dur)) + '</td>' +
+        '<td class="bytes">' + fmtBytes(c.readBytes) + '</td>' +
+        '<td class="bytes">' + fmtBytes(c.writBytes) + '</td>' +
+        '</tr>';
+    }
+  }
+  html += '</table></div>';
+  el.innerHTML = html;
+}
+
+/* =========================================================
+   Settings helpers
+   ========================================================= */
+function settingToggle(index, label, checked, key, isDisable) {
+  const sid = 'stg-' + index + '-' + key;
+  const handler = isDisable
+    ? `applyBoolSetting(${index},'${key}',!this.checked)`
+    : `applyBoolSetting(${index},'${key}',this.checked)`;
+  return `<div class="setting-row">
+    <span class="slabel">${esc(label)}</span>
+    <label class="toggle"><input type="checkbox" id="${sid}" ${checked ? 'checked' : ''} onchange="${handler}"><span class="toggle-slider"></span></label>
+  </div>`;
+}
+
+function settingNumber(index, label, val, key) {
+  const sid = 'stg-' + index + '-' + key;
+  return `<div class="setting-row">
+    <span class="slabel">${esc(label)}</span>
+    <input type="number" id="${sid}" value="${val || 0}" onchange="applyNumSetting(${index},'${key}',this.value)" min="0">
+  </div>`;
+}
+
+function applyBoolSetting(index, key, val) {
+  const body = {};
+  body[key] = val;
+  fetch('/api/configs/' + index + '/settings', { method: 'PUT', body: JSON.stringify(body) })
+    .catch(e => showError(e.message));
+}
+
+function applyNumSetting(index, key, val) {
+  const body = {};
+  body[key] = parseInt(val) || 0;
+  fetch('/api/configs/' + index + '/settings', { method: 'PUT', body: JSON.stringify(body) })
+    .catch(e => showError(e.message));
+}
+
+/* =========================================================
+   Backend management
+   ========================================================= */
+function showAddBackend(index) {
+  const el = document.getElementById('be-form-' + index);
+  if (!el) return;
+  el.innerHTML = `<div class="backend-form">
+    <input name="nick" placeholder="Nickname" value="">
+    <input name="addr" placeholder="Remote (host:port)" value="">
+    <input name="meth" placeholder="Method" value="">
+    <input name="pass" placeholder="Password" value="" type="text">
+    <button onclick="addBackend(${index},this)">Save</button>
+    <button class="cancel" onclick="this.parentElement.remove()">Cancel</button>
+  </div>`;
+}
+
+function editBackend(index, nickname, addr, method, _pass) {
+  const el = document.getElementById('be-form-' + index);
+  if (!el) return;
+  el.innerHTML = `<div class="backend-form">
+    <span style="font-size:12px;color:var(--text-tertiary);font-weight:500">Editing <b style="color:var(--text)">${esc(nickname)}</b></span>
+    <input name="addr" placeholder="Remote (host:port)" value="${escAttr(addr)}">
+    <input name="meth" placeholder="Method" value="${escAttr(method)}">
+    <input name="pass" placeholder="Password" value="" type="text">
+    <button onclick="updateBackend(${index},'${escAttr(nickname)}',this)">Save</button>
+    <button class="cancel" onclick="this.parentElement.remove()">Cancel</button>
+  </div>`;
+}
+
+function updateBackend(index, nickname, form) {
+  const addr = form.parentElement.querySelector('[name=addr]').value.trim();
+  const meth = form.parentElement.querySelector('[name=meth]').value.trim();
+  const pass = form.parentElement.querySelector('[name=pass]').value.trim();
+  const body = {};
+  if (addr) body.remoteaddr = addr;
+  if (meth) body.method = meth;
+  if (pass) body.password = pass;
+  if (!Object.keys(body).length) return;
+  fetch('/api/configs/' + index + '/backends/' + encodeURIComponent(nickname), {
+    method: 'PUT', body: JSON.stringify(body)
+  }).then(r => r.json()).then(d => {
+    if (d.status === 'ok') {
+      form.parentElement.remove();
+      refreshDetailAfterBackendChange(index);
+    }
+  }).catch(e => showError(e.message));
+}
+
+function addBackend(index, btn) {
+  const form = btn.parentElement;
+  const nick = form.querySelector('[name=nick]').value.trim();
+  const addr = form.querySelector('[name=addr]').value.trim();
+  const meth = form.querySelector('[name=meth]').value.trim();
+  const pass = form.querySelector('[name=pass]').value.trim();
+  if (!nick || !addr) return;
+  fetch('/api/configs/' + index + '/backends', {
+    method: 'POST',
+    body: JSON.stringify({ nickname: nick, remoteaddr: addr, method: meth, password: pass })
+  }).then(r => r.json()).then(d => {
+    if (d.status === 'ok') {
+      form.remove();
+      refreshDetailAfterBackendChange(index);
+    } else {
+      showError('Failed to add backend');
+    }
+  }).catch(e => showError(e.message));
+}
+
+function deleteBackend(index, nickname) {
+  if (!confirm('Delete upstream "' + nickname + '"?')) return;
+  fetch('/api/configs/' + index + '/backends/' + encodeURIComponent(nickname), { method: 'DELETE' })
+    .then(r => r.json()).then(d => {
+      if (d.status === 'ok') refreshDetailAfterBackendChange(index);
+      else showError('Failed to delete');
+    }).catch(e => showError(e.message));
+}
+
+function fmtDurationMs(ms) {
+  if (ms < 1000) return ms + 'ms';
+  if (ms < 60000) return (ms / 1000).toFixed(1) + 's';
+  if (ms < 3600000) return Math.floor(ms / 60000) + 'm ' + Math.floor((ms % 60000) / 1000) + 's';
+  return Math.floor(ms / 3600000) + 'h ' + Math.floor((ms % 3600000) / 60000) + 'm';
+}
+
+/* =========================================================
+   History page
+   ========================================================= */
+let historyCfgIndex = -1;
+
+function showHistoryPage(index) {
+  overview.style.display = 'none';
+  detail.classList.remove('open');
+  detailIndex = -1;
+  const hp = document.getElementById('historyPage');
+  if (!hp) return;
+  hp.classList.add('open');
+  historyCfgIndex = index;
+  hp.innerHTML = `
+    <div class="back-btn" onclick="window.location.hash='#/config/${index}'">&larr; Back to server detail</div>
+    <h2 id="hpTitle">Connection History</h2>
+    <div id="historyTable"><div class="conn-empty">Loading...</div></div>`;
+  fetch('/api/configs/' + index).then(r => r.json()).then(cfg => {
+    if (historyCfgIndex !== index) return;
+    document.getElementById('hpTitle').textContent = 'Connection History — ' + esc(dispName(cfg));
+  }).catch(() => {});
+  pollHistory(index);
+}
+
+function hideHistoryPage() {
+  document.getElementById('historyPage').classList.remove('open');
+  historyCfgIndex = -1;
+}
+
+function pollHistory(index) {
+  fetch('/api/configs/' + index + '/connections/history')
+    .then(r => r.json())
+    .then(conns => {
+      if (historyCfgIndex !== index) return;
+      const el = document.getElementById('historyTable');
+      if (el) renderConnTable(el, conns, false, index);
+    }).catch(() => {});
+}
+
+/* =========================================================
+   Utilities
+   ========================================================= */
+function setText(id, val) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = val == null ? '-' : val;
+}
+
+function esc(s) {
+  if (s == null) return '';
+  const d = document.createElement('div');
+  d.textContent = String(s);
+  return d.innerHTML;
+}
+
+function escAttr(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function dispName(cfg) {
+  const prefix = cfg.type + '-';
+  return (cfg.nickname && cfg.nickname.startsWith(prefix)) ? cfg.nickname.slice(prefix.length) : (cfg.nickname || '');
+}
+
+function sanitize(s) {
+  return String(s).replace(/[^a-zA-Z0-9_-]/g, '_');
+}
+
+/* =========================================================
+   Overview poll
+   ========================================================= */
+async function pollOverview() {
+  try {
+    const [configs, traffic, stats] = await Promise.all([
+      fetch('/api/configs').then(r => r.json()),
+      fetch('/api/traffic').then(r => r.json()).catch(() => []),
+      fetch('/api/stats').then(r => r.json())
+    ]);
+    errorBanner.classList.remove('show');
+
+    document.getElementById('numConfigs').textContent = stats.numConfigs;
+    document.getElementById('totalConns').textContent = stats.totalConnections;
+    document.getElementById('totalRead').textContent = fmtBytes(stats.totalReadBytes);
+    document.getElementById('totalWrit').textContent = fmtBytes(stats.totalWritBytes);
+    document.getElementById('uptime').textContent = fmtDuration(stats.uptimeSeconds);
+
+    const seen = new Set();
+    for (const cfg of configs) {
+      seen.add(cfg.index);
+      let cardEntry = cards.get(cfg.index);
+      if (!cardEntry) cardEntry = createCard(cfg);
+      updateCard(cfg, (traffic && traffic[cfg.index]) ? traffic[cfg.index] : [], cardEntry);
+    }
+    for (const [idx, entry] of cards) {
+      if (!seen.has(idx)) { entry.el.remove(); cards.delete(idx); }
+    }
+    emptyMsg.style.display = configs.length ? 'none' : 'block';
+  } catch (e) { showError(e.message); }
+}
+
+/* =========================================================
+   Detail & History poll
+   ========================================================= */
+function pollDetailActive() {
+  if (detailIndex < 0 || !detail.classList.contains('open')) return;
+  updateDetailData();
+  pollActiveConns(detailIndex);
+}
+
+function pollHistoryActive() {
+  if (historyCfgIndex < 0) return;
+  pollHistory(historyCfgIndex);
+}
+
+/* =========================================================
+   Connection detail
+   ========================================================= */
+let connDetailCfg = -1;
+let connDetailID = -1;
+
+function viewConnection(configIndex, connID) {
+  window.location.hash = '#/config/' + configIndex + '/connection/' + connID;
+}
+
+function showConnDetail(configIndex, connID) {
+  overview.style.display = 'none';
+  detail.classList.remove('open');
+  detailIndex = -1;
+  document.getElementById('historyPage').classList.remove('open');
+  const cd = document.getElementById('connDetail');
+  cd.classList.add('open');
+  cd.innerHTML = '<div class="conn-empty">Loading...</div>';
+  connDetailCfg = configIndex;
+  connDetailID = connID;
+  pollConnDetail(configIndex, connID);
+}
+
+function pollConnDetail(configIndex, connID) {
+  fetch('/api/configs/' + configIndex + '/connection/' + connID)
+    .then(r => { if (!r.ok) throw new Error('not found'); return r.json(); })
+    .then(data => {
+      if (connDetailCfg !== configIndex || connDetailID !== connID) return;
+      if (data.pairedID) {
+        fetch('/api/configs/' + configIndex + '/connection/' + data.pairedID)
+          .then(r => r.ok ? r.json() : null)
+          .then(paired => renderConnDetail(data, paired, configIndex))
+          .catch(() => renderConnDetail(data, null, configIndex));
+      } else {
+        renderConnDetail(data, null, configIndex);
+      }
+    }).catch(e => {
+      document.getElementById('connDetail').innerHTML =
+        '<div class="conn-empty">Connection not found</div>';
+    });
+}
+
+function renderConnDetail(rec, paired, configIndex) {
+  const cd = document.getElementById('connDetail');
+  const isActive = !rec.endTime;
+  const isIdle = isActive && rec.lastActive && (Date.now() - rec.lastActive / 1000000) > 1000;
+  const cStatus = rec.endTime ? 'closed' : (isIdle ? 'idle' : 'active');
+  const cLabel = rec.endTime ? 'Closed' : (isIdle ? 'Idle' : 'Active');
+  const dur = isActive
+    ? fmtDurationMs(Date.now() - new Date(rec.startTime).getTime())
+    : fmtDurationMs(new Date(rec.endTime).getTime() - new Date(rec.startTime).getTime());
+
+  function sideCard(label, r) {
+    if (!r) return '';
+    const sd = isActive ? fmtDurationMs(Date.now() - new Date(r.startTime).getTime()) : '-';
+    return `<div class="side-card">
+      <h3>${label}</h3>
+      <div class="kv-grid">
+        <div class="k">ID</div><div class="v">${r.id}</div>
+        <div class="k">Source</div><div class="v">${esc(r.srcAddr || '-')}</div>
+        <div class="k">Target</div><div class="v">${esc(r.dstAddr || '-')}</div>
+        <div class="k">Host</div><div class="v">${esc(r.host || '-')}</div>
+        <div class="k">Started</div><div class="v">${new Date(r.startTime).toLocaleString()}</div>
+        <div class="k">${isActive ? 'Duration' : 'Ended'}</div><div class="v">${isActive ? sd : new Date(r.endTime).toLocaleString() + ' (' + sd + ')'}</div>
+        <div class="k">↓ Read</div><div class="v">${fmtBytes(r.readBytes)}</div>
+        <div class="k">↑ Written</div><div class="v">${fmtBytes(r.writBytes)}</div>
+      </div>
+    </div>`;
+  }
+
+  cd.innerHTML = `
+    <div class="back-btn" onclick="${detailIndex >= 0 ? 'window.location.hash=\'#/config/' + detailIndex + '\'' : 'window.location.hash=\'#\''}">&larr; Back</div>
+    <h2>Connection #${rec.id}</h2>
+    <span class="conn-status ${cStatus}">${cLabel}</span>
+    ${paired ? '<div style="margin-top:20px">' + sideCard('Inbound', rec) + sideCard('Outbound', paired) + '</div>'
+      : sideCard(cLabel + ' Connection', rec)}
+    ${buildBwChart(rec)}
+    <div class="detail-actions" style="margin-top:16px">
+      <a class="btn" href="#/config/${configIndex}">View Server Detail &rarr;</a>
+    </div>`;
+}
+
+function buildBwChart(rec) {
+  if (!rec.samples || !rec.samples.length) return '';
+  let lastSec = 0; let hasData = false;
+  for (let i = 0; i < rec.samples.length; i++) {
+    const s = rec.samples[i];
+    if (s.r > 0 || s.w > 0) { lastSec = i; hasData = true; }
+  }
+  if (!hasData) return '';
+
+  let rows = '', totalR = 0, totalW = 0, activeSecs = 0, peak = 1;
+  for (let i = 0; i <= lastSec; i++) {
+    const s = rec.samples[i] || { r: 0, w: 0 };
+    if (s.r > 0 || s.w > 0) { totalR += s.r; totalW += s.w; activeSecs++; }
+    if (s.r > peak) peak = s.r;
+    if (s.w > peak) peak = s.w;
+    rows += '<tr>' +
+      '<td>' + i + 's</td>' +
+      '<td class="bytes">' + (s.r > 0 ? fmtBytes(s.r) : '·') + '</td>' +
+      '<td class="bytes">' + (s.w > 0 ? fmtBytes(s.w) : '·') + '</td>' +
+      '<td class="bytes">' + ((s.r + s.w) > 0 ? fmtBytes(s.r + s.w) : '·') + '</td>' +
+      '<td><div class="bw-bar-row"><div class="bw-bar-fill r" style="width:' + Math.round(s.r / peak * 100) + '%"></div></div></td>' +
+      '<td><div class="bw-bar-row"><div class="bw-bar-fill w" style="width:' + Math.round(s.w / peak * 100) + '%"></div></div></td>' +
+      '</tr>';
+  }
+  const avgR = activeSecs > 0 ? Math.round(totalR / activeSecs) : 0;
+  const avgW = activeSecs > 0 ? Math.round(totalW / activeSecs) : 0;
+  return '<div class="side-card" style="margin-top:0">' +
+    '<h3>Bandwidth Timeline · ' + (lastSec + 1) + 's · peak ' + fmtBytes(peak) + '/s</h3>' +
+    '<div class="conn-table-wrap"><table class="conn-table">' +
+    '<tr><th>Time</th><th class="bytes">↓ Read</th><th class="bytes">↑ Write</th><th class="bytes">Total</th><th colspan="2">Distribution</th></tr>' +
+    rows + '</table></div>' +
+    '<div class="bw-summary">' +
+    '<span>↓ avg <b>' + fmtBytes(avgR) + '/s</b></span>' +
+    '<span>↑ avg <b>' + fmtBytes(avgW) + '/s</b></span>' +
+    '<span>↓ total <b>' + fmtBytes(totalR) + '</b></span>' +
+    '<span>↑ total <b>' + fmtBytes(totalW) + '</b></span>' +
+    '</div></div>';
+}
+
+function hideConnDetail() {
+  document.getElementById('connDetail').classList.remove('open');
+  connDetailCfg = -1;
+  connDetailID = -1;
+}
+
+/* =========================================================
+   Init
+   ========================================================= */
+pollOverview();
+setInterval(pollOverview, 2000);
+setInterval(pollDetailActive, 2000);
+setInterval(pollHistoryActive, 2000);
+setInterval(function() {
+  if (connDetailCfg >= 0) pollConnDetail(connDetailCfg, connDetailID);
+}, 2000);
+handleRoute();
+</script>
+</body>
+</html>

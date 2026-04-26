@@ -27,6 +27,7 @@ func main() {
 	flag.StringVar(&c.NetworkConfig.Localaddr, "l", "", "local listen address")
 	flag.StringVar(&target, "t", "", "target address(for tcptun and udptun)")
 	flag.StringVar(&configfile, "c", "", "the configuration file path")
+	flag.StringVar(&c.AdminAddr, "admin", "", "admin webui listen address (e.g. 127.0.0.1:8090)")
 	flag.StringVar(&c.CryptoConfig.Method, "m", "aes-128-gcm", "crypt method")
 	flag.StringVar(&c.CryptoConfig.Password, "p", "you need a password", "password")
 	flag.BoolVar(&c.CryptoConfig.Nonop, "nonop", false, "enable this to be compatiable with official ss servers(client only)")
@@ -75,6 +76,10 @@ func main() {
 			c.Remoteaddr = target
 		}
 		ss.CheckConfig(&c)
+		if c.AdminAddr != "" {
+			ss.StartAdminServer(c.AdminAddr)
+		}
+		ss.SetAdminConfigs([]*ss.Config{&c})
 		runServer(&c)
 		return
 	}
@@ -89,6 +94,18 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	if c.AdminAddr == "" {
+		for _, cfg := range configs {
+			if cfg.AdminAddr != "" {
+				c.AdminAddr = cfg.AdminAddr
+				break
+			}
+		}
+	}
+	if c.AdminAddr != "" {
+		ss.StartAdminServer(c.AdminAddr)
+	}
+	ss.SetAdminConfigs(configs)
 	for {
 		die := make(chan bool)
 		var wg sync.WaitGroup
@@ -122,6 +139,7 @@ func main() {
 							continue
 						}
 						configs = newConfigs
+						ss.SetAdminConfigs(configs)
 						close(die)
 						return
 					} else if event.Op&fsnotify.Remove == fsnotify.Remove {

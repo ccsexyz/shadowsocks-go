@@ -33,3 +33,5 @@ shadowsocks-*
 *.patch
 
 publish.sh
+CLAUDE.md
+/cmd/shadowsocks/shadowsocks

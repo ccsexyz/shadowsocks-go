@@ -64,6 +64,14 @@ func tcpRemoteHandler(ac *ss.AcceptedConn) {
 		c.Log(err)
 		return
 	}
+	// wrap outbound conn with tracking, paired to the inbound connection
+	if sc, ok := conn.(*ss.StatConn); ok {
+		if rec := sc.GetRecord(); rec != nil {
+			if tracker := c.GetTracker(); tracker != nil {
+				rconn = tracker.TrackOutbound(rconn, rec, target)
+			}
+		}
+	}
 	defer rconn.Close()
 	if C != nil {
 		C.CancelDeferClose()

@@ -85,6 +85,7 @@ type Config struct {
 	DataShard      int       `json:"datashard"`
 	ParityShard    int       `json:"parityshard"`
 	SSProxy        bool      `json:"ssproxy"`
+	AdminAddr      string    `json:"adminaddr"`
 
 	CryptoConfig
 	ObfsConfig
@@ -342,7 +343,9 @@ func CheckConfig(c *Config) {
 		if len(c.limiters) != 0 {
 			v.limiters = append(v.limiters, c.limiters...)
 		}
-		v.stat = c.stat
+		if v.stat == nil {
+			v.stat = &statServer{}
+		}
 	}
 }
 
