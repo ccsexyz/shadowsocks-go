@@ -334,55 +334,6 @@ func (lis *listener) drainPool(handler AcceptHandler) {
 	}()
 }
 
-func ListenSS(service string, c *Config) (lis net.Listener, err error) {
-	handlers := []AcceptHandler{LimitHandler}
-	if c.Obfs {
-		handlers = append(handlers, ObfsHandler)
-	}
-	if crypto.IsAEAD2022(c.Method) {
-		handlers = append(handlers, SS2022Handler)
-	} else {
-		handlers = append(handlers, SSHandler)
-	}
-	ltmp, err := Listen(service, c, handlers)
-	if err != nil {
-		return nil, err
-	}
-	li := ltmp.(*listener)
-	if c.Obfs && c.getPool() != nil {
-		handler := SSHandler
-		if crypto.IsAEAD2022(c.Method) {
-			handler = SS2022Handler
-		}
-		li.drainPool(handler)
-	}
-	lis = li
-	return
-}
-
-func ListenMultiSS(service string, c *Config) (lis net.Listener, err error) {
-	for _, v := range c.Backends {
-		hits := 0
-		v.initRuntime().Any = &hits
-	}
-	handlers := []AcceptHandler{LimitHandler}
-	if c.Obfs {
-		handlers = append(handlers, ObfsHandler)
-	}
-	handlers = append(handlers, SSMultiHandler)
-	li, err := Listen(service, c, handlers)
-	if err != nil {
-		return nil, err
-	}
-	li2 := li.(*listener)
-	if c.Obfs && c.getPool() != nil {
-		li2.drainPool(SSMultiHandler)
-	}
-	go backendSorter(li2)
-	lis = li
-	return
-}
-
 func backendSorter(lis *listener) {
 	ticker := time.NewTicker(30 * time.Second)
 	i := 0
@@ -593,10 +544,6 @@ func ssAcceptHandler(conn Conn, lis *listener) AcceptResult {
 	return AcceptResult{AcceptContinue, conn}
 }
 
-func ListenSocks5(address string, c *Config) (net.Listener, error) {
-	return Listen(address, c, []AcceptHandler{LimitHandler, socksAcceptor})
-}
-
 func httpProxyAcceptor(conn Conn, lis *listener) AcceptResult {
 	parser := utils.NewHTTPHeaderParser(utils.GetBuf(buffersize))
 	defer utils.PutBuf(parser.GetBuf())
@@ -686,45 +633,6 @@ func httpProxyAcceptor(conn Conn, lis *listener) AcceptResult {
 }
 
 type Acceptor func(net.Conn) net.Conn
-
-func GetShadowAcceptor(args map[string]interface{}) Acceptor {
-	var lis listener
-	lis.c = &Config{CryptoConfig: CryptoConfig{Safe: true}}
-
-	iaddr, ok := args["localaddr"]
-	if ok {
-		lis.c.Localaddr, _ = iaddr.(string)
-	}
-	iudp, ok := args["udprelay"]
-	if ok {
-		lis.c.UDPRelay, _ = iudp.(bool)
-	}
-	lis.c.Type = "socksproxy"
-
-	var password string
-	var method string
-	ipass, ok := args["password"]
-	if ok {
-		password, _ = ipass.(string)
-	}
-	imethod, ok := args["method"]
-	if ok {
-		method, _ = imethod.(string)
-	}
-
-	defer func() { CheckConfig(lis.c) }()
-	if len(password) != 0 {
-		lis.c.SSProxy = true
-		lis.c.Backends = getConfigs(method, password)
-	}
-	return func(conn net.Conn) net.Conn {
-		result := socksAcceptor(newBaseConn(conn, lis.c), &lis)
-		if result.Action == AcceptContinue {
-			return result.Conn
-		}
-		return nil
-	}
-}
 
 func getConfigs(method, password string) []*Config {
 	cfgs := getConfigs0(method, password)
@@ -927,10 +835,6 @@ func ssFallbackDetector(conn Conn, buf []byte, n int, lis *listener) AcceptResul
 	return AcceptResult{AcceptContinue, c}
 }
 
-func ListenRedir(address string, c *Config) (net.Listener, error) {
-	return Listen(address, c, []AcceptHandler{LimitHandler, redirAcceptor})
-}
-
 func redirAcceptor(conn Conn, lis *listener) AcceptResult {
 	tconn, err := GetNetTCPConn(conn)
 	if err != nil {
@@ -948,22 +852,6 @@ func redirAcceptor(conn Conn, lis *listener) AcceptResult {
 	}
 	conn.SetDst(domain.NewDstAddr(host, port))
 	return AcceptResult{AcceptContinue, conn}
-}
-
-func ListenTCPTun(address string, c *Config) (net.Listener, error) {
-	return Listen(address, c, nil)
-}
-
-func NewTCPDialer() func(string) (net.Conn, error) {
-	return func(addr string) (net.Conn, error) {
-		return net.Dial("tcp", addr)
-	}
-}
-
-func NewSSDialer(c *Config) func(string) (net.Conn, error) {
-	return func(addr string) (net.Conn, error) {
-		return DialSSWithOptions(&DialOptions{Target: addr, C: c})
-	}
 }
 
 func DialUDP(c *Config) (conn Conn, err error) {

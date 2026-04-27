@@ -2,18 +2,13 @@ package utils
 
 import (
 	"crypto/rand"
-	"encoding/binary"
-	"io"
 	"net"
 	"reflect"
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 	"unsafe"
 )
-
-const defaultMethod = "aes-128-gcm"
 
 func PutRandomBytes(b []byte) {
 	rand.Read(b)
@@ -59,25 +54,6 @@ func (c *ExitCleaner) Exit() {
 	}
 }
 
-func (c *ExitCleaner) Delete(index int) func() {
-	c.lock.Lock()
-	defer c.lock.Unlock()
-	if index > len(c.runner) || index < 0 {
-		return nil
-	}
-	f := c.runner[index]
-	if index == 0 {
-		c.runner = c.runner[1:]
-	} else if index == len(c.runner)-1 {
-		c.runner = c.runner[:index]
-	} else {
-		runner1 := c.runner[:index]
-		runner2 := c.runner[index+1:]
-		c.runner = append(runner1, runner2...)
-	}
-	return f
-}
-
 func SliceToString(b []byte) (s string) {
 	pbytes := (*reflect.SliceHeader)(unsafe.Pointer(&b))
 	pstring := (*reflect.StringHeader)(unsafe.Pointer(&s))
@@ -94,140 +70,6 @@ func StringToSlice(s string) (b []byte) {
 	pbytes.Cap = pstring.Len
 	return
 }
-
-type Die struct {
-	RWLock
-	ch  chan bool
-	die bool
-}
-
-func (d *Die) Ch() (ch <-chan bool) {
-	d.RunInLock(func() {
-		if d.ch == nil {
-			d.ch = make(chan bool)
-		}
-		ch = d.ch
-	})
-	return
-}
-
-func (d *Die) Die(f func()) {
-	var die bool
-
-	d.RunInLock(func() {
-		die = d.die
-		if !d.die {
-			d.die = true
-		}
-		if d.ch == nil {
-			d.ch = make(chan bool)
-		}
-	})
-
-	if die {
-		return
-	}
-
-	close(d.ch)
-
-	if f != nil {
-		f()
-	}
-}
-
-func (d *Die) IsDead() (dead bool) {
-	d.RunInRLock(func() {
-		dead = d.die
-	})
-	return
-}
-
-type Lock struct {
-	sync.Mutex
-}
-
-func (l *Lock) RunInLock(f func()) {
-	l.Lock()
-	defer l.Unlock()
-	if f != nil {
-		f()
-	}
-}
-
-type RWLock struct {
-	sync.RWMutex
-}
-
-func (l *RWLock) RunInLock(f func()) {
-	l.Lock()
-	defer l.Unlock()
-	if f != nil {
-		f()
-	}
-}
-
-func (l *RWLock) RunInRLock(f func()) {
-	l.RLock()
-	defer l.RUnlock()
-	if f != nil {
-		f()
-	}
-}
-
-type Locker interface {
-	RunInLock(f func())
-}
-
-type RWLocker interface {
-	Locker
-	RunInRLock(f func())
-}
-
-type Expires struct {
-	E time.Time
-	L RWLock
-}
-
-func (e *Expires) isExpired() bool {
-	return time.Now().After(e.E)
-}
-
-func (e *Expires) IsExpired() bool {
-	e.L.RLock()
-	defer e.L.RUnlock()
-	return e.isExpired()
-}
-
-func (e *Expires) update(d time.Duration) {
-	e.E = time.Now().Add(d)
-}
-
-func (e *Expires) Update(d time.Duration) {
-	e.L.Lock()
-	e.update(d)
-	e.L.Unlock()
-}
-
-func (e *Expires) IsExpiredAndUpdate(d time.Duration) bool {
-	expired := e.IsExpired()
-	if !expired {
-		return expired
-	}
-	e.L.Lock()
-	defer e.L.Unlock()
-	expired = e.isExpired()
-	if expired {
-		e.update(d)
-		return true
-	}
-	return false
-}
-
-var domainNodePool = &sync.Pool{New: func() interface{} {
-	return &domainNode{
-		nodes: make(map[string]*domainNode),
-	}
-}}
 
 // DomainRoot is a simple trie tree
 type DomainRoot struct {
@@ -360,91 +202,4 @@ func SplitHostAndPort(hostport string) (host string, port int, err error) {
 	}
 	port, err = strconv.Atoi(portStr)
 	return
-}
-
-func SplitIPAndPort(ipport string) (ip net.IP, port int, err error) {
-	ipstr, port, err := SplitHostAndPort(ipport)
-	if err != nil {
-		return
-	}
-	ip = net.ParseIP(ipstr)
-	return
-}
-
-func PipeUDPOverTCP(udpconn net.Conn, tcpconn net.Conn, bufpool *sync.Pool, timeout time.Duration, pseudo []byte) {
-	die1 := make(chan struct{})
-	die2 := make(chan struct{})
-
-	ubuf := bufpool.Get().([]byte)
-	defer bufpool.Put(ubuf)
-	tbuf := bufpool.Get().([]byte)
-	defer bufpool.Put(tbuf)
-
-	trySetTimeout := func(conn net.Conn, isRead bool) {
-		if timeout.Nanoseconds() == 0 {
-			return
-		}
-		expires := time.Now().Add(timeout)
-		if isRead {
-			conn.SetReadDeadline(expires)
-		} else {
-			conn.SetWriteDeadline(expires)
-		}
-	}
-
-	pseudoLen := copy(tbuf, pseudo)
-
-	go func() {
-		var szoff, left int
-		if pseudoLen < 2 {
-			left = 2 - pseudoLen
-		} else {
-			szoff = pseudoLen - 2
-		}
-		defer close(die1)
-		for {
-			trySetTimeout(udpconn, true)
-			n, err := udpconn.Read(ubuf[left:])
-			if err != nil {
-				return
-			}
-			n -= pseudoLen
-			binary.BigEndian.PutUint16(ubuf[szoff:], uint16(n))
-			trySetTimeout(tcpconn, false)
-			_, err = tcpconn.Write(ubuf[szoff : szoff+n+2])
-			if err != nil {
-				return
-			}
-		}
-	}()
-
-	go func() {
-		defer close(die2)
-		buf := tbuf[pseudoLen:]
-		for {
-			trySetTimeout(tcpconn, true)
-			_, err := io.ReadFull(tcpconn, buf[:2])
-			if err != nil {
-				return
-			}
-			sz := int(binary.BigEndian.Uint16(buf[:2]))
-			if sz > len(buf) {
-				return
-			}
-			_, err = io.ReadFull(tcpconn, buf[:sz])
-			if err != nil {
-				return
-			}
-			trySetTimeout(udpconn, false)
-			_, err = udpconn.Write(tbuf[:pseudoLen+sz])
-			if err != nil {
-				return
-			}
-		}
-	}()
-
-	select {
-	case <-die1:
-	case <-die2:
-	}
 }

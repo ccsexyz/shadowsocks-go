@@ -31,17 +31,10 @@ const (
 	cmdUDP                 = domain.CmdUDP
 	cmdSocks4OK            = domain.CmdSocks4OK
 	typeIPv4               = domain.TypeIPv4
-	typeDm                 = domain.TypeDm
-	typeIPv6               = domain.TypeIPv6
-	typeMux                = domain.TypeMux
 	typeTs                 = domain.TypeTs  // timestamp
 	typeNop                = domain.TypeNop // [nop 1 byte] [noplen 1 byte (< 128)] [zero data, noplen byte]
 	lenIPv4                = domain.LenIPv4
-	lenIPv6                = domain.LenIPv6
 	lenTs                  = domain.LenTs
-	muxaddr                = domain.MuxAddr
-	muxhost                = domain.MuxHost
-	muxport                = domain.MuxPort
 	defaultObfsHost        = domain.DefaultObfsHost
 	defaultFilterCapacity  = domain.DefaultFilterCapacity
 	defaultFilterFalseRate = domain.DefaultFilterFalseRate
@@ -62,8 +55,7 @@ func init() {
 type cb func()
 
 var (
-	errInvalidHeader        = fmt.Errorf("invalid header")
-	errDuplicatedInitVector = fmt.Errorf("receive duplicated iv")
+	errInvalidHeader = fmt.Errorf("invalid header")
 )
 
 func ParseAddr(b []byte) (*domain.SockAddr, []byte, error) {
@@ -606,13 +598,3 @@ type bytesFilter interface {
 	Close() error
 	TestAndAdd([]byte) bool
 }
-
-type nullFilterImpl struct{}
-
-func newNullFilter() bytesFilter {
-	return &nullFilterImpl{}
-}
-
-func (r *nullFilterImpl) Close() error { return nil }
-
-func (r *nullFilterImpl) TestAndAdd(_ []byte) bool { return false }

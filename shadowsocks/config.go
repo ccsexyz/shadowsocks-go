@@ -150,7 +150,6 @@ func (c *Config) getLimiters() []*Limiter {
 	}
 	return c.rt.limiters
 }
-func (c *Config) addLimiter(l *Limiter) { c.initRuntime().limiters = append(c.rt.limiters, l) }
 
 func (c *Config) getLogger() *log.Logger {
 	if c.rt == nil {
@@ -178,13 +177,6 @@ func (c *Config) getLogFile() *os.File {
 	return c.rt.logfile
 }
 
-func (c *Config) getAny() interface{} {
-	if c.rt == nil {
-		return nil
-	}
-	return c.rt.Any
-}
-
 func (c *Config) DieChan() chan bool { return c.initRuntime().Die }
 
 func (c *Config) getPool() *ConnPool {
@@ -195,7 +187,6 @@ func (c *Config) getPool() *ConnPool {
 }
 func (c *Config) setPool(p *ConnPool) { c.initRuntime().pool = p }
 
-func (c *Config) addCloser(f cb) { c.initRuntime().closers = append(c.rt.closers, f) }
 func (c *Config) getClosers() []cb {
 	if c.rt == nil {
 		return nil
@@ -251,7 +242,6 @@ func (c *Config) getCRCTable() *crc32.Table {
 	}
 	return c.rt.crctbl
 }
-func (c *Config) setCRCTable(t *crc32.Table) { c.initRuntime().crctbl = t }
 
 func (c *Config) isDisabled() bool {
 	if c.rt == nil {
@@ -311,10 +301,6 @@ func (c *Config) Close() error {
 		f()
 	}
 	return nil
-}
-
-func initBloomFilter(c *Config, f *bytesFilter) {
-	*f = newBloomFilter(c.FilterCapacity, defaultFilterFalseRate)
 }
 
 func (c *Config) udpFilterTestAndAdd(b []byte) bool {

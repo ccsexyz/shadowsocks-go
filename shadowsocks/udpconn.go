@@ -29,14 +29,6 @@ func (c *UDPConn) SetHost(host string) { c.host = host }
 func (c *UDPConn) GetDst() Addr        { return c.dst }
 func (c *UDPConn) GetHost() string     { return c.host }
 
-func NewUDPConn1(conn utils.UDPConn, c *Config) *UDPConn {
-	return &UDPConn{
-		PacketConn: conn,
-		Conn:       conn,
-		cfg:        c,
-	}
-}
-
 func NewUDPConn2(conn net.Conn, c *Config) *UDPConn {
 	return &UDPConn{
 		Conn: conn,

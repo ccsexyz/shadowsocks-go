@@ -18,12 +18,6 @@ func DupBuffer(b []byte) (b2 []byte) {
 	return
 }
 
-func SliceCopy(b []byte) []byte {
-	c := make([]byte, len(b))
-	copy(c, b)
-	return c
-}
-
 func PutHeader(b []byte, host string, port int) (n int) {
 	n = len(host)
 	b[0] = TypeDm

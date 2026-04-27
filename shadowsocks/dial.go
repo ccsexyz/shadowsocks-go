@@ -24,8 +24,7 @@ type DialOptions struct {
 }
 
 var (
-	errTargetTooLong = fmt.Errorf("target length is too long")
-	errNoBackends    = fmt.Errorf("no available backends")
+	errNoBackends = fmt.Errorf("no available backends")
 )
 
 func dialSocks5WithOptions(opt *DialOptions) (conn Conn, err error) {

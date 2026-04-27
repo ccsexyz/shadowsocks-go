@@ -13,8 +13,6 @@ import (
 	"golang.org/x/crypto/hkdf"
 )
 
-var initialVector = []byte{167, 115, 79, 156, 18, 172, 27, 1, 164, 21, 242, 193, 252, 120, 230, 107}
-
 type ssAEADNonce [32]byte
 
 func (s *ssAEADNonce) increment() {

@@ -8,8 +8,6 @@ import (
 	"net/http"
 	"sync"
 	"time"
-
-	"github.com/pkg/errors"
 )
 
 // AddrCtx carries a ctx inteface and can sotre some control message
@@ -128,110 +126,6 @@ func PipeForUDPServer(c1, c2 net.Conn, ctx *UDPServerCtx) {
 	case <-c1die:
 	case <-c2die:
 	}
-}
-
-const (
-	defaultSubUDPMTU     = 65535
-	defaultSubUDPExpires = 60
-)
-
-func newUDPServerCtx() *UDPServerCtx {
-	return &UDPServerCtx{
-		Expires: defaultSubUDPExpires,
-		Mtu:     defaultSubUDPMTU,
-	}
-}
-
-// SubUDPListener implements net.Listener and acts like tcp net.Listener
-type SubUDPListener struct {
-	conn   net.PacketConn
-	ctx    *UDPServerCtx
-	connch chan *SubConn
-	once   sync.Once
-}
-
-// ListenSubUDP returns net.Listener
-func ListenSubUDP(network, address string) (net.Listener, error) {
-	return ListenSubUDPWithCtx(network, address, newUDPServerCtx())
-}
-
-// ListenSubUDPWithConn returns net.Listener
-func ListenSubUDPWithConn(conn net.PacketConn) (net.Listener, error) {
-	return ListenSubUDPWithConnAndCtx(conn, newUDPServerCtx())
-}
-
-// ListenSubUDPWithCtx returns net.Listener
-func ListenSubUDPWithCtx(network, address string, ctx *UDPServerCtx) (net.Listener, error) {
-	laddr, err := net.ResolveUDPAddr(network, address)
-	if err != nil {
-		return nil, err
-	}
-	conn, err := net.ListenUDP(network, laddr)
-	if err != nil {
-		return nil, err
-	}
-	return ListenSubUDPWithConnAndCtx(conn, ctx)
-}
-
-// ListenSubUDPWithConnAndCtx returns net.Listener
-func ListenSubUDPWithConnAndCtx(conn net.PacketConn, ctx *UDPServerCtx) (net.Listener, error) {
-	listener := &SubUDPListener{
-		conn:   conn,
-		ctx:    ctx,
-		connch: make(chan *SubConn, 16),
-	}
-	return listener, nil
-}
-
-// Close close listener and destroy everything
-func (listener *SubUDPListener) Close() error {
-	if listener.conn != nil {
-		listener.conn.Close()
-	}
-	if listener.ctx != nil {
-		listener.ctx.close()
-	}
-	return nil
-}
-
-// Accept accepts a new net.Conn from listner
-func (listener *SubUDPListener) Accept() (net.Conn, error) {
-	conn, err := listener.AcceptSub()
-	if err != nil {
-		return nil, err
-	}
-	return conn, nil
-}
-
-// AcceptSub accepts a new subconn from listner
-func (listener *SubUDPListener) AcceptSub() (*SubConn, error) {
-	listener.once.Do(func() {
-		listener.ctx.init()
-		go listener.runServer()
-	})
-	select {
-	case <-listener.ctx.die:
-		return nil, errors.New("acccept from closed listener")
-	case subconn := <-listener.connch:
-		return subconn, nil
-	}
-}
-
-// Addr returns the local address of underlying packet connection
-func (listener *SubUDPListener) Addr() net.Addr {
-	return listener.conn.LocalAddr()
-}
-
-func (listener *SubUDPListener) handleNewConn(conn *SubConn) {
-	select {
-	case <-listener.ctx.die:
-		conn.Close()
-	case listener.connch <- conn:
-	}
-}
-
-func (listener *SubUDPListener) runServer() {
-	listener.ctx.runUDPServer(listener.conn, listener.handleNewConn)
 }
 
 var httpProxyTransport = &http.Transport{

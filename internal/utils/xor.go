@@ -100,11 +100,3 @@ func fastXORWords(dst, a, b []byte) {
 		_dw[7] = _aw[7] ^ _bw[7]
 	}
 }
-
-func xorWords(dst, a, b []byte) {
-	if supportsUnaligned {
-		fastXORWords(dst, a, b)
-	} else {
-		safeXORBytes(dst, a, b)
-	}
-}

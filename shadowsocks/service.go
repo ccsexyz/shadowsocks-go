@@ -36,12 +36,8 @@ func StoreServiceHandler(addr string, handler AcceptHandler) {
 
 const (
 	echoaddr = "echo:10086"
-	echohost = "echo"
-	echoport = 10086
 
 	adminaddr = "admin:6666"
-	adminhost = "admin"
-	adminport = 6666
 )
 
 func init() {
