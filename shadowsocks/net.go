@@ -57,7 +57,7 @@ type AcceptResult struct {
 type AcceptHandler func(Conn, *listener) AcceptResult
 
 type listener struct {
-	net.TCPListener
+	rawlis   net.Listener
 	c        *Config
 	die      chan bool
 	connch   chan Conn
@@ -78,15 +78,15 @@ var (
 	RedirAcceptor  = AcceptHandler(redirAcceptor)
 )
 
-func NewListener(lis *net.TCPListener, c *Config, handlers []AcceptHandler) *listener {
+func NewListener(lis net.Listener, c *Config, handlers []AcceptHandler) *listener {
 	l := &listener{
-		TCPListener: *lis,
-		c:           c,
-		handlers:    handlers,
-		die:         make(chan bool),
-		connch:      make(chan Conn, 32),
-		httpch:      make(chan net.Conn, 32),
-		errch:       make(chan error, 32),
+		rawlis:   lis,
+		c:        c,
+		handlers: handlers,
+		die:      make(chan bool),
+		connch:   make(chan Conn, 32),
+		httpch:   make(chan net.Conn, 32),
+		errch:    make(chan error, 32),
 	}
 	if c.Type == "wstunnel" {
 		l.httpsrv = &http.Server{Handler: l}
@@ -192,7 +192,7 @@ func (lis *listener) acceptor() {
 	defer lis.Close()
 	isWstunnel := lis.c.Type == "wstunnel"
 	for {
-		conn, err := lis.TCPListener.AcceptTCP()
+		conn, err := lis.rawlis.Accept()
 		if err != nil {
 			if operr, ok := err.(*net.OpError); ok {
 				lis.c.Log(operr.Net, operr.Op, operr.Addr, operr.Err)
@@ -235,6 +235,10 @@ func (lis *listener) handleNewConn(conn Conn) {
 	}
 }
 
+func (lis *listener) Addr() net.Addr {
+	return lis.rawlis.Addr()
+}
+
 func (lis *listener) Close() error {
 	select {
 	case <-lis.die:
@@ -244,7 +248,7 @@ func (lis *listener) Close() error {
 	if lis.httpsrv != nil {
 		lis.httpsrv.Close()
 	}
-	return lis.TCPListener.Close()
+	return lis.rawlis.Close()
 }
 
 func (lis *listener) Accept() (conn net.Conn, err error) {
@@ -282,9 +286,12 @@ func (lis *listener) Accept() (conn net.Conn, err error) {
 	}
 }
 
-// Listen creates a TCP listener with the given handler chain.
-// This is the canonical entry point for TCP listeners.
+// Listen creates a TCP or virtual listener with the given handler chain.
 func Listen(address string, c *Config, handlers []AcceptHandler) (net.Listener, error) {
+	if strings.HasPrefix(address, "@") {
+		vl := RegisterVirtualForce(address, c.Nickname)
+		return NewListener(vl, c, handlers), nil
+	}
 	addr, err := net.ResolveTCPAddr("tcp", address)
 	if err != nil {
 		return nil, err

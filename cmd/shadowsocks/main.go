@@ -47,6 +47,7 @@ func main() {
 	flag.BoolVar(&c.SSProxy, "ssproxy", false, "enable ss proxy for local server")
 	flag.BoolVar(&c.HttpConfig.AllowHTTP, "allow_http", false, "allow http wstunel connection")
 	flag.BoolVar(&c.HttpConfig.SecureOrigin, "secure_origin", false, "enable WebSocket origin validation")
+	flag.StringVar(&c.NetworkConfig.RtunnelService, "rtunnel-service", "", "rtunnel server service address for external access")
 	flag.Int64Var(&domain.IvExpireSecond, "iv_expire_second", 30, "specifies the expiration time for IVs in the checker, in seconds")
 	flag.Parse()
 
@@ -218,5 +219,26 @@ func runServer(c *ss.Config) {
 	case "wstunnel":
 		c.Log("run wstunnel server at", c.Localaddr, "with method", c.Method)
 		server.RunWstunnelRemoteServer(c)
+	case "rtunnelclient":
+		if c.Backend == nil || len(c.Backend.Remoteaddr) == 0 || len(c.Remoteaddr) == 0 {
+			break
+		}
+		c.Log("run rtunnel client, server:", c.Backend.Remoteaddr, "target:", c.Remoteaddr)
+		server.RunRtunnelClient(c)
+	case "rtunnelserver":
+		hasService := len(c.RtunnelService) != 0
+		if !hasService {
+			for _, b := range c.Backends {
+				if len(b.RtunnelService) != 0 {
+					hasService = true
+					break
+				}
+			}
+		}
+		if len(c.Localaddr) == 0 || !hasService {
+			break
+		}
+		c.Log("run rtunnel server at", c.Localaddr)
+		server.RunRtunnelServer(c)
 	}
 }

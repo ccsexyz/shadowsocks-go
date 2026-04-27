@@ -404,6 +404,14 @@ func isAddrDualStack(address string) bool {
 }
 
 func DialTCP(address string, cfg *cfg) (*BaseConn, error) {
+	if strings.HasPrefix(address, "@") {
+		conn, err := DialVirtual(address)
+		if err != nil {
+			return nil, err
+		}
+		return newBaseConn(conn, cfg), nil
+	}
+
 	var protocol string
 	dialCtx := context.Background()
 

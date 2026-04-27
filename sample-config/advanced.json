@@ -63,5 +63,12 @@
         "password": "your-password",
         "usemul": true,
         "mulconn": 4
+    },
+    {
+        "type": "local",
+        "localaddr": "@socks",
+        "remoteaddr": "server.example.com:8080",
+        "method": "aes-256-gcm",
+        "password": "your-password"
     }
 ]

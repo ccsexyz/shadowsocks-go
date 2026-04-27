@@ -1,0 +1,41 @@
+[
+    {
+        "type": "rtunnelserver",
+        "localaddr": ":8443",
+        "method": "aes-256-gcm",
+        "password": "your-password",
+        "rtunnelservice": ":8080"
+    },
+    {
+        "type": "rtunnelserver",
+        "localaddr": ":8443",
+        "backends": [
+            {
+                "method": "aes-256-gcm",
+                "password": "password-for-bob",
+                "rtunnelservice": ":8081"
+            },
+            {
+                "method": "chacha20-poly1305",
+                "password": "password-for-alice",
+                "rtunnelservice": ":8082"
+            },
+            {
+                "method": "2022-blake3-aes-256-gcm",
+                "password": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+                "rtunnelservice": ":8083"
+            }
+        ]
+    },
+    {
+        "type": "rtunnelserver",
+        "localaddr": ":8443",
+        "backends": [
+            {
+                "method": "2022-blake3-aes-256-gcm",
+                "password": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+                "rtunnelservice": "@rdp"
+            }
+        ]
+    }
+]

@@ -33,15 +33,16 @@ type ObfsConfig struct {
 
 // NetworkConfig groups network addressing and routing configuration.
 type NetworkConfig struct {
-	Type         string   `json:"type"`
-	Localaddr    string   `json:"localaddr"`
-	Localaddrs   []string `json:"localaddrs"`
-	Remoteaddr   string   `json:"remoteaddr"`
-	Timeout      int      `json:"timeout"`
-	PreferIPv4   bool     `json:"prefer_ipv4"`
-	NoIPv4       bool     `json:"no_ipv4"`
-	NoIPv6       bool     `json:"no_ipv6"`
-	LocalResolve bool     `json:"local_resolve"`
+	Type           string   `json:"type"`
+	Localaddr      string   `json:"localaddr"`
+	Localaddrs     []string `json:"localaddrs"`
+	Remoteaddr     string   `json:"remoteaddr"`
+	Timeout        int      `json:"timeout"`
+	PreferIPv4     bool     `json:"prefer_ipv4"`
+	NoIPv4         bool     `json:"no_ipv4"`
+	NoIPv6         bool     `json:"no_ipv6"`
+	LocalResolve   bool     `json:"local_resolve"`
+	RtunnelService string   `json:"rtunnelservice"`
 }
 
 // HttpConfig groups HTTP-related configuration.

@@ -59,5 +59,23 @@
                 "password": "backend-password"
             }
         ]
+    },
+    {
+        "type": "rtunnelclient",
+        "remoteaddr": "127.0.0.1:3389",
+        "backend": {
+            "remoteaddr": "server1.example.com:8443",
+            "method": "aes-256-gcm",
+            "password": "your-password"
+        }
+    },
+    {
+        "type": "rtunnelclient",
+        "remoteaddr": "127.0.0.1:22",
+        "backend": {
+            "remoteaddr": "server1.example.com:8443",
+            "method": "2022-blake3-aes-256-gcm",
+            "password": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+        }
     }
 ]

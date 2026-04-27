@@ -110,6 +110,7 @@ func StartAdminServer(addr string) {
 	mux.HandleFunc("GET /api/configs/{index}/connections/history", handleConnectionHistory)
 	mux.HandleFunc("GET /api/configs/{index}/connection/{id}", handleGetConnection)
 	mux.HandleFunc("PUT /api/configs/{index}/settings", handleUpdateSettings)
+	mux.HandleFunc("GET /api/virtual", handleListVirtual)
 	mux.HandleFunc("PUT /api/configs/{index}/backends/{nickname}", handleUpdateBackend)
 	mux.HandleFunc("DELETE /api/configs/{index}/backends/{nickname}", handleDeleteBackend)
 	mux.HandleFunc("POST /api/configs/{index}/backends", handleAddBackend)
@@ -897,6 +898,10 @@ func toString(v interface{}) (string, error) {
 		return strconv.FormatBool(val), nil
 	}
 	return "", strconv.ErrSyntax
+}
+
+func handleListVirtual(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, ListVirtualServices())
 }
 
 func writeJSON(w http.ResponseWriter, v interface{}) {
