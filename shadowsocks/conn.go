@@ -46,6 +46,7 @@ type BaseConn struct {
 }
 
 func (c *BaseConn) GetCfg() *Config     { return c.cfg }
+func (c *BaseConn) SetCfg(cfg *Config)  { c.cfg = cfg }
 func (c *BaseConn) SetDst(dst Addr)     { c.dst = dst }
 func (c *BaseConn) SetHost(host string) { c.host = host }
 func (c *BaseConn) GetDst() Addr        { return c.dst }

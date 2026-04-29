@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -128,6 +129,10 @@ func PipeForUDPServer(c1, c2 net.Conn, ctx *UDPServerCtx) {
 	}
 }
 
+// VirtualDialer is set by the shadowsocks package to enable dialing @-prefixed
+// virtual service addresses from the HTTP transport used by HttpProxyTo.
+var VirtualDialer func(network, addr string) (net.Conn, error)
+
 var httpProxyTransport = &http.Transport{
 	DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 		itarget := ctx.Value("target")
@@ -136,6 +141,9 @@ var httpProxyTransport = &http.Transport{
 			if ok {
 				addr = target
 			}
+		}
+		if VirtualDialer != nil && strings.HasPrefix(addr, "@") {
+			return VirtualDialer(network, addr)
 		}
 		var dialer net.Dialer
 		return dialer.DialContext(ctx, network, addr)

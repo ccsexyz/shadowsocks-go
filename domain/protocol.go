@@ -7,7 +7,7 @@ import (
 	"unicode"
 )
 
-var IvExpireSecond int64
+var IvExpireSecond int64 = 30
 
 func DupBuffer(b []byte) (b2 []byte) {
 	l := len(b)

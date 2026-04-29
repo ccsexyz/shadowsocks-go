@@ -117,6 +117,8 @@ func runRtunnelMultiServer(c *ss.Config) {
 	RunTCPServer(c.Localaddr, c, handlers, rtunnelServerHandler)
 }
 
+func RtunnelHandler(ac *ss.AcceptedConn) { rtunnelServerHandler(ac) }
+
 func rtunnelServerHandler(ac *ss.AcceptedConn) {
 	conn := ac.Conn
 	topCfg := ac.Config

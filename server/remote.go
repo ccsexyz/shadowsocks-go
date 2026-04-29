@@ -38,6 +38,8 @@ func RunWstunnelRemoteServer(c *ss.Config) {
 	RunTCPRemoteServer(c)
 }
 
+func RemoteHandler(ac *ss.AcceptedConn) { tcpRemoteHandler(ac) }
+
 func tcpRemoteHandler(ac *ss.AcceptedConn) {
 	conn := ac.Conn
 	c := ac.Config

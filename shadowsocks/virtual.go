@@ -7,7 +7,15 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/ccsexyz/shadowsocks-go/internal/utils"
 )
+
+func init() {
+	utils.VirtualDialer = func(network, addr string) (net.Conn, error) {
+		return DialVirtual(addr)
+	}
+}
 
 type virtualAddr struct{ name string }
 

@@ -389,9 +389,28 @@ func ssMultiAcceptHandler2(conn Conn, lis *listener, addr *SockAddr, n int,
 		conn = &RemainConn{Conn: ssConn, remain: data}
 	}
 	conn.SetDst(addr)
+	setInnerCfg(conn, chs)
 	c = conn
 	chs.LogD("choose", chs.Method, chs.Password, addr.Host(), addr.Port())
 	return
+}
+
+func setInnerCfg(conn Conn, cfg *Config) {
+	for {
+		if bc, ok := conn.(*BaseConn); ok {
+			bc.SetCfg(cfg)
+			return
+		}
+		if uw, ok := conn.(Unwrapper); ok {
+			c, ok := uw.Unwrap().(Conn)
+			if !ok {
+				return
+			}
+			conn = c
+		} else {
+			return
+		}
+	}
 }
 
 func ssMultiAcceptHandler(conn Conn, lis *listener) AcceptResult {
@@ -449,6 +468,7 @@ func ss2022MultiAcceptHandler2(conn Conn, lis *listener, ctx *parseContext) (c C
 		conn = &RemainConn{Conn: ssConn, remain: ctx.data}
 	}
 	conn.SetDst(ctx.addr)
+	setInnerCfg(conn, chs)
 	c = conn
 	chs.LogD("choose SS2022", chs.Method, ctx.addr.Host(), ctx.addr.Port())
 	return

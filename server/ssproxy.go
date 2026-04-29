@@ -19,6 +19,8 @@ func RunSSProxyServer(c *ss.Config) {
 	RunTCPServer(c.Localaddr, c, handlers, ssproxyHandler)
 }
 
+func SSProxyHandler(ac *ss.AcceptedConn) { ssproxyHandler(ac) }
+
 func ssproxyHandler(ac *ss.AcceptedConn) {
 	conn := ac.Conn
 	c := ac.Config
