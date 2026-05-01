@@ -7,7 +7,7 @@
             "password": "password-for-user1"
         },
         {
-            "method": "chacha20-poly1305",
+            "method": "chacha20-ietf-poly1305",
             "password": "password-for-user2"
         },
         {

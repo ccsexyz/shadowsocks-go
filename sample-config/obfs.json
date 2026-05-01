@@ -11,7 +11,7 @@
                 "method": "aes-256-gcm"
             },
             {
-                "method": "chacha20-poly1305",
+                "method": "chacha20-ietf-poly1305",
                 "password": "password-for-user2"
             }
         ]
@@ -32,7 +32,7 @@
         "backends": [
             {
                 "remoteaddr": "server.example.com:12345",
-                "method": "chacha20-poly1305",
+                "method": "chacha20-ietf-poly1305",
                 "password": "password-for-user2",
                 "obfs": true,
                 "obfsmethod": "tls",

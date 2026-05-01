@@ -101,6 +101,10 @@ func NewUDPListener(address string) (conn *net.UDPConn, err error) {
 	return
 }
 
+var udpPipeBufPool = sync.Pool{
+	New: func() any { return make([]byte, 2048) },
+}
+
 // PipeForUDPServer is a simple pipe loop for udp server
 func PipeForUDPServer(c1, c2 net.Conn, ctx *UDPServerCtx) {
 	c1die := make(chan bool)
@@ -109,13 +113,14 @@ func PipeForUDPServer(c1, c2 net.Conn, ctx *UDPServerCtx) {
 		defer close(die)
 		var n, nw int
 		var err error
-		buf := make([]byte, ctx.Mtu)
+		buf := udpPipeBufPool.Get().([]byte)
+		defer udpPipeBufPool.Put(buf)
 		for err == nil {
 			src.SetReadDeadline(time.Now().Add(time.Second * time.Duration(ctx.Expires)))
 			n, err = src.Read(buf)
 			if n > 0 || err == nil {
 				nw, err = dst.Write(buf[:n])
-				if err == nil && nw != n {
+				if err == nil && nw < n {
 					err = io.ErrShortWrite
 				}
 			}

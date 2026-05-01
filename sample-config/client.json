@@ -44,7 +44,7 @@
             },
             {
                 "remoteaddr": "server2.example.com:8080",
-                "method": "chacha20-poly1305",
+                "method": "chacha20-ietf-poly1305",
                 "password": "backend2-password"
             }
         ]

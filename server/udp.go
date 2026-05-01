@@ -1,10 +1,13 @@
 package server
 
 import (
+	"encoding/binary"
 	"fmt"
+	"log"
 	"math/rand/v2"
 	"net"
 
+	"github.com/ccsexyz/shadowsocks-go/crypto"
 	"github.com/ccsexyz/shadowsocks-go/internal/utils"
 	ss "github.com/ccsexyz/shadowsocks-go/shadowsocks"
 )
@@ -18,14 +21,22 @@ func (conn *udpLocalConn) Read(b []byte) (n int, err error) {
 		err = fmt.Errorf("the length of buffer can't be less than three")
 		return
 	}
-	b[0] = 0
-	b[1] = 0
-	b[2] = 0
+	// Read SIP022-format response from SS tunnel: [Type][TS][PadLen][Pad][Addr][Port][Payload]
 	n, err = conn.Conn.Read(b[3:])
-	if err == nil {
-		n += 3
+	if err != nil {
+		return
 	}
-	return
+	// Parse SIP022 and convert to SOCKS5: [RSV(2)][FRAG(1)][ATYP(1)][ADDR][PORT(2)][PAYLOAD]
+	hdr, host, port, payload, perr := crypto.ParseSIP022(b[3 : 3+n])
+	if perr != nil {
+		// Not SIP022 — pass through as-is (compat with old format)
+		_ = hdr
+		b[0] = 0
+		b[1] = 0
+		b[2] = 0
+		return n + 3, nil
+	}
+	return crypto.BuildSOCKS5Response(b, host, port, payload), nil
 }
 
 func (conn *udpLocalConn) Write(b []byte) (n int, err error) {
@@ -33,14 +44,18 @@ func (conn *udpLocalConn) Write(b []byte) (n int, err error) {
 		err = fmt.Errorf("the length of buffer can't be less than three")
 		return
 	}
-	n, err = conn.Conn.Write(b[3:])
-	n += 3
-	return
+	// Convert SOCKS5 to SIP022 format, then write to SS tunnel
+	sipPkt := crypto.BuildSIP022Request(b[3:])
+	_, err = conn.Conn.Write(sipPkt)
+	if err != nil {
+		return
+	}
+	return len(b), nil
 }
 
 type udpRemoteConn struct {
 	net.Conn
-	header []byte
+	header []byte // SIP022 header: [Type][TS][PadLen][Pad][Addr][Port]
 }
 
 func (conn *udpRemoteConn) Read(b []byte) (n int, err error) {
@@ -49,6 +64,7 @@ func (conn *udpRemoteConn) Read(b []byte) (n int, err error) {
 		err = fmt.Errorf("the length of buffer can't be less than hdrlen %d", hdrlen)
 		return
 	}
+	// Read payload from target, prepend stored SIP022 header
 	n, err = conn.Conn.Read(b[hdrlen:])
 	if err != nil {
 		return
@@ -61,16 +77,20 @@ func (conn *udpRemoteConn) Read(b []byte) (n int, err error) {
 }
 
 func (conn *udpRemoteConn) Write(b []byte) (n int, err error) {
-	_, data, err := ss.ParseAddr(b)
+	// Try SIP022 format first, then fall back to legacy ATYP format
+	_, _, _, payload, perr := crypto.ParseSIP022(b)
+	if perr != nil {
+		_, payload, err = ss.ParseAddr(b)
+		if err != nil {
+			log.Printf("[UDP] remote Write: parse failed: %v", err)
+			return
+		}
+	}
+	_, err = conn.Conn.Write(payload)
 	if err != nil {
 		return
 	}
-	n, err = conn.Conn.Write(data)
-	if err != nil {
-		return
-	}
-	n += len(b) - len(data)
-	return
+	return len(b), nil
 }
 
 func getCreateFuncOfUDPRemoteServer(c *ss.Config) func(*utils.SubConn) (net.Conn, net.Conn, error) {
@@ -80,14 +100,31 @@ func getCreateFuncOfUDPRemoteServer(c *ss.Config) func(*utils.SubConn) (net.Conn
 		defer utils.PutBuf(buf)
 		n, err := conn.Read(buf)
 		if err != nil {
+			log.Printf("udp remote handler: SubConn.Read failed: %v", err)
 			return
 		}
 		b := buf[:n]
-		addr, data, err := ss.ParseAddr(b)
-		if err != nil {
-			err = fmt.Errorf("unexpected header")
-			return
+
+		// Try SIP022 format first, fall back to legacy ATYP format
+		sipHdr, host, port, data, perr := crypto.ParseSIP022(b)
+		if perr == nil {
+			// SIP022 parsed: build response header with Type=1 (SERVER), ClientSID=0
+			sipHdr = crypto.BuildSIP022Response(makeATYPHeader(host, port), 0)
+		} else {
+			// Legacy format: [ATYP][ADDR][PORT][PAYLOAD]
+			var addr *ss.SockAddr
+			addr, data, perr = ss.ParseAddr(b)
+			if perr != nil {
+				log.Printf("udp remote handler: parse failed len=%d firstByte=0x%02x err=%v", n, b[0], perr)
+				return
+			}
+			host = addr.Host()
+			port, _ = strconvAddrPort(addr.Port())
+			sipHdr = b[:len(b)-len(data)] // legacy header: ATYP+ADDR+PORT
 		}
+
+		target := net.JoinHostPort(host, portStr(port))
+
 		var rconn net.Conn
 		if len(c.Backends) != 0 && c.Type == "ssproxy" {
 			v := c.Backends[rand.Int()%len(c.Backends)]
@@ -100,21 +137,51 @@ func getCreateFuncOfUDPRemoteServer(c *ss.Config) func(*utils.SubConn) (net.Conn
 			c2 = rconn
 			return
 		}
-		target := net.JoinHostPort(addr.Host(), addr.Port())
 		rconn, err = net.Dial("udp", target)
 		if err != nil {
-			c.LogD(err)
+			log.Printf("udp remote handler: dial target %s failed: %v", target, err)
 			return
 		}
-		rconn.Write(data)
+		_, err = rconn.Write(data)
+		if err != nil {
+			log.Printf("udp remote handler: write to target %s failed: %v", target, err)
+			return
+		}
 		c1 = conn
 		c2 = &udpRemoteConn{
 			Conn:   rconn,
-			header: ss.DupBuffer(b[:len(b)-len(data)]),
+			header: ss.DupBuffer(sipHdr),
 		}
 		return
 	}
 }
+
+// makeATYPHeader builds an ATYP+ADDR+PORT header for the given host and port.
+func makeATYPHeader(host string, port int) []byte {
+	ip := net.ParseIP(host)
+	if ip4 := ip.To4(); ip4 != nil {
+		hdr := make([]byte, 1+4+2)
+		hdr[0] = 1 // ATYP IPv4
+		copy(hdr[1:5], ip4)
+		binary.BigEndian.PutUint16(hdr[5:7], uint16(port))
+		return hdr
+	}
+	// Domain
+	hdr := make([]byte, 1+1+len(host)+2)
+	hdr[0] = 3 // ATYP Domain
+	hdr[1] = byte(len(host))
+	copy(hdr[2:], host)
+	binary.BigEndian.PutUint16(hdr[2+len(host):], uint16(port))
+	return hdr
+}
+
+func strconvAddrPort(s string) (int, error) {
+	var p int
+	_, err := fmt.Sscanf(s, "%d", &p)
+	return p, err
+}
+
+func portStr(port int) string { return fmt.Sprintf("%d", port) }
 
 func RunUDPRemoteServer(c *ss.Config) {
 	lis, err := ss.ListenUDP(c)

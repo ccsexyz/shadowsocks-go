@@ -48,7 +48,7 @@ func main() {
 	// Use index+localaddr as key to avoid port sharing when multiple
 	// configs use the same placeholder like "127.0.0.1:0".
 	type listenerKey struct {
-		idx int
+		idx  int
 		addr string
 	}
 	listeners := make(map[listenerKey]net.Listener)

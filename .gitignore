@@ -35,3 +35,7 @@ shadowsocks-*
 publish.sh
 CLAUDE.md
 /cmd/shadowsocks/shadowsocks
+/cmd/pload/pload
+/cmd/udpforward/udpforward
+/cmd/udpbench/udpbench
+/cmd/h3test/h3test

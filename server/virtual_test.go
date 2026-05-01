@@ -1,6 +1,7 @@
 package server
 
 import (
+	"fmt"
 	"io"
 	"net"
 	"strconv"
@@ -640,4 +641,155 @@ func TestVirtualServiceChaining(t *testing.T) {
 	if string(resp) != payload {
 		t.Errorf("expected '%s', got '%s'", payload, string(resp))
 	}
+}
+
+func udpEchoServer(t *testing.T) (string, int) {
+	t.Helper()
+	conn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			n, addr, err := conn.ReadFromUDP(buf)
+			if err != nil {
+				return
+			}
+			conn.WriteToUDP(buf[:n], addr)
+		}
+	}()
+	_, portStr, _ := net.SplitHostPort(conn.LocalAddr().String())
+	port, _ := strconv.Atoi(portStr)
+	return conn.LocalAddr().String(), port
+}
+
+func TestMultiServerUDP_2022AndNon2022Backends(t *testing.T) {
+	// Verify multiserver UDP correctly selects the right backend
+	// when both 2022 and non-2022 backends are configured.
+	// This is the exact scenario that exposed the missing len(iv)>0 guard.
+
+	_, echoPort := udpEchoServer(t)
+
+	multisrv := &ss.Config{}
+	multisrv.Type = "multiserver"
+	multisrv.Localaddr = "127.0.0.1:0"
+	multisrv.UDPRelay = true
+	multisrv.Backends = []*ss.Config{
+		{CryptoConfig: ss.CryptoConfig{Method: "2022-blake3-aes-256-gcm", Password: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}},
+		{CryptoConfig: ss.CryptoConfig{Method: "aes-256-gcm", Password: "non2022-test-pw"}},
+	}
+	ss.CheckConfig(multisrv)
+	defer multisrv.Close()
+
+	lis, err := ss.ListenMultiUDP(multisrv)
+	if err != nil {
+		t.Fatal("ListenMultiUDP:", err)
+	}
+	srvAddr := lis.LocalAddr().(*net.UDPAddr)
+	t.Logf("multiserver UDP on %s", srvAddr)
+
+	go RunUDPServer(lis, multisrv, getCreateFuncOfUDPRemoteServer)
+
+	// Test 1: Send via 2022 backend
+	t.Run("2022", func(t *testing.T) {
+		cli := &ss.Config{}
+		cli.Method = "2022-blake3-aes-256-gcm"
+		cli.Password = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+		cli.Remoteaddr = srvAddr.String()
+		ss.CheckConfig(cli)
+
+		conn, err := ss.DialUDP(cli)
+		if err != nil {
+			t.Fatal("DialUDP:", err)
+		}
+		defer conn.Close()
+
+		header := []byte{1, 127, 0, 0, 1, byte(echoPort >> 8), byte(echoPort)}
+		payload := []byte("multisrv-2022-data")
+		packet := append(header, payload...)
+		conn.Write(packet)
+
+		resp := make([]byte, 4096)
+		conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+		n, err := conn.Read(resp)
+		if err != nil {
+			t.Fatal("2022 read:", err)
+		}
+		got := string(resp[7:n])
+		if got != string(payload) {
+			t.Errorf("2022: expected %q, got %q", payload, got)
+		} else {
+			t.Logf("2022: roundtrip OK")
+		}
+	})
+
+	// Test 2: Send via non-2022 backend
+	t.Run("non2022", func(t *testing.T) {
+		cli := &ss.Config{}
+		cli.Method = "aes-256-gcm"
+		cli.Password = "non2022-test-pw"
+		cli.Remoteaddr = srvAddr.String()
+		ss.CheckConfig(cli)
+
+		conn, err := ss.DialUDP(cli)
+		if err != nil {
+			t.Fatal("DialUDP:", err)
+		}
+		defer conn.Close()
+
+		header := []byte{1, 127, 0, 0, 1, byte(echoPort >> 8), byte(echoPort)}
+		payload := []byte("multisrv-non2022-data")
+		packet := append(header, payload...)
+		conn.Write(packet)
+
+		resp := make([]byte, 4096)
+		conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+		n, err := conn.Read(resp)
+		if err != nil {
+			t.Fatal("non2022 read:", err)
+		}
+		got := string(resp[7:n])
+		if got != string(payload) {
+			t.Errorf("non2022: expected %q, got %q", payload, got)
+		} else {
+			t.Logf("non2022: roundtrip OK")
+		}
+	})
+
+	// Test 3: Send multiple 2022 packets to verify the IV guard
+	// prevents the empty IV from being stored in the filter
+	t.Run("2022_multipacket", func(t *testing.T) {
+		cli := &ss.Config{}
+		cli.Method = "2022-blake3-aes-256-gcm"
+		cli.Password = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+		cli.Remoteaddr = srvAddr.String()
+		ss.CheckConfig(cli)
+
+		conn, err := ss.DialUDP(cli)
+		if err != nil {
+			t.Fatal("DialUDP:", err)
+		}
+		defer conn.Close()
+
+		header := []byte{1, 127, 0, 0, 1, byte(echoPort >> 8), byte(echoPort)}
+
+		for i := 0; i < 3; i++ {
+			payload := []byte(fmt.Sprintf("multi-pkt-%d", i))
+			conn.Write(append(header, payload...))
+
+			resp := make([]byte, 4096)
+			conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+			n, err := conn.Read(resp)
+			if err != nil {
+				t.Fatalf("pkt %d: %v", i, err)
+			}
+			got := string(resp[7:n])
+			if got != string(payload) {
+				t.Errorf("pkt %d: expected %q, got %q", i, payload, got)
+			}
+		}
+		t.Log("2022 multipacket: all OK")
+	})
 }

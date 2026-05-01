@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"sync"
 	"time"
@@ -11,7 +12,12 @@ import (
 	"github.com/ccsexyz/shadowsocks-go/crypto"
 	"github.com/ccsexyz/shadowsocks-go/internal/utils"
 	"github.com/ccsexyz/shadowsocks-go/redir"
+	"github.com/ccsexyz/shadowsocks-go/zerocopy"
 )
+
+var udpWriteBufPool = sync.Pool{
+	New: func() any { return make([]byte, 2048) },
+}
 
 // Note: UDPConn will drop any packet that is longer than 1500
 
@@ -21,6 +27,14 @@ type UDPConn struct {
 	cfg  *Config
 	dst  Addr
 	host string
+
+	packerOnce   sync.Once
+	cachedPacker zerocopy.Packer
+	packerErr    error
+
+	unpackerOnce   sync.Once
+	cachedUnpacker zerocopy.Unpacker
+	unpackerErr    error
 }
 
 func (c *UDPConn) GetCfg() *Config     { return c.cfg }
@@ -90,37 +104,54 @@ func (c *UDPConn) fakeReadFrom(b []byte) (int, net.Addr, error) {
 	return n, nil, err
 }
 
+func (c *UDPConn) getPacker() (zerocopy.Packer, error) {
+	c.packerOnce.Do(func() {
+		c.cachedPacker, c.packerErr = crypto.NewPacker(c.cfg.Method, c.cfg.Password, c.PacketConn != nil)
+	})
+	return c.cachedPacker, c.packerErr
+}
+
+func (c *UDPConn) getUnpacker() (zerocopy.Unpacker, error) {
+	c.unpackerOnce.Do(func() {
+		c.cachedUnpacker, c.unpackerErr = crypto.NewUnpacker(c.cfg.Method, c.cfg.Password)
+	})
+	return c.cachedUnpacker, c.unpackerErr
+}
+
 func (c *UDPConn) readImpl(b []byte, readfrom func([]byte) (int, net.Addr, error)) (int, net.Addr, error) {
-	cb, err := crypto.NewCipherBlock(c.cfg.Method, c.cfg.Password)
+	unpacker, err := c.getUnpacker()
 	if err != nil {
 		return 0, nil, err
 	}
 
-	b2 := make([]byte, len(b))
 	for {
 		n, addr, err := readfrom(b)
 		if err != nil {
 			return 0, addr, err
 		}
 
-		p, iv, err := cb.Decrypt(b2, b[:n])
+		payloadStart, payloadLen, err := unpacker.UnpackInPlace(b, 0, n)
 		if err != nil {
 			if err == io.ErrShortBuffer {
 				continue
 			}
-
+			log.Printf("udp readImpl: decrypt error method=%s len=%d err=%v", c.cfg.Method, n, err)
 			return 0, addr, err
 		}
 
-		if len(iv) > 0 {
-			exists := c.cfg.udpFilterTestAndAdd(iv)
-			if exists {
-				continue
+		if iu, ok := unpacker.(zerocopy.IVUnpacker); ok {
+			if iv := iu.IV(); len(iv) > 0 {
+				if c.cfg.udpFilterTestAndAdd(iv) {
+					continue
+				}
 			}
 		}
 
-		n = copy(b, p)
-		return n, addr, err
+		if payloadStart > 0 {
+			n = copy(b, b[payloadStart:payloadStart+payloadLen])
+			return n, addr, nil
+		}
+		return payloadLen, addr, nil
 	}
 }
 
@@ -134,18 +165,36 @@ func (c *UDPConn) Read(b []byte) (n int, err error) {
 }
 
 func (c *UDPConn) WriteTo(b []byte, addr net.Addr) (n int, err error) {
-	cb, err := crypto.NewCipherBlock(c.cfg.Method, c.cfg.Password)
+	packer, err := c.getPacker()
 	if err != nil {
+		log.Printf("udp WriteTo: NewPacker failed method=%s err=%v", c.cfg.Method, err)
 		return
 	}
-	b2, _, err := cb.Encrypt(nil, b)
-	if err != nil {
-		return
-	}
-	if addr != nil {
-		_, err = c.PacketConn.WriteTo(b2, addr)
+
+	hr := packer.Headroom()
+	buf := udpWriteBufPool.Get().([]byte)
+	defer udpWriteBufPool.Put(buf)
+
+	totalLen := hr.Front + len(b) + hr.Rear
+	if cap(buf) < totalLen {
+		buf = make([]byte, totalLen)
 	} else {
-		_, err = c.Conn.Write(b2)
+		buf = buf[:totalLen]
+	}
+
+	copy(buf[hr.Front:], b)
+
+	packetStart, packetLen, err := packer.PackInPlace(buf, hr.Front, len(b))
+	if err != nil {
+		log.Printf("udp WriteTo: PackInPlace failed method=%s len=%d err=%v", c.cfg.Method, len(b), err)
+		return
+	}
+
+	pkt := buf[packetStart : packetStart+packetLen]
+	if addr != nil {
+		_, err = c.PacketConn.WriteTo(pkt, addr)
+	} else {
+		_, err = c.Conn.Write(pkt)
 	}
 	if err == nil {
 		n = len(b)
@@ -182,6 +231,27 @@ func NewMultiUDPConn(conn net.PacketConn, c *Config) *MultiUDPConn {
 	}
 }
 
+type multiSession struct {
+	cfg      *Config
+	packer   zerocopy.Packer
+	unpacker zerocopy.Unpacker
+	once     sync.Once
+	initErr  error
+}
+
+func (c *MultiUDPConn) getSession(addrStr string, cfg *Config) *multiSession {
+	v, _ := c.sessions.LoadOrStore(addrStr, &multiSession{cfg: cfg})
+	s := v.(*multiSession)
+	s.once.Do(func() {
+		s.packer, s.initErr = crypto.NewPacker(cfg.Method, cfg.Password, true)
+		if s.initErr != nil {
+			return
+		}
+		s.unpacker, s.initErr = crypto.NewUnpacker(cfg.Method, cfg.Password)
+	})
+	return s
+}
+
 func (c *MultiUDPConn) ReadFrom(b []byte) (n int, addr net.Addr, err error) {
 	b2 := utils.GetBuf(buffersize)
 	defer utils.PutBuf(b2)
@@ -192,64 +262,78 @@ func (c *MultiUDPConn) ReadFrom(b []byte) (n int, addr net.Addr, err error) {
 		}
 		v, ok := c.sessions.Load(addr.String())
 		if !ok {
-			ctx, err := ParseAddrWithMultipleBackendsForUDP(b2[:n], c.c.Backends)
-			if err != nil {
+			ctx, perr := ParseAddrWithMultipleBackendsForUDP(b2[:n], c.c.Backends)
+			if perr != nil {
+				log.Printf("udp multi ReadFrom: ParseAddrWithMultipleBackendsForUDP failed: %v", perr)
 				continue
 			}
-			exists := ctx.chs.udpFilterTestAndAdd(ctx.iv)
-			if exists {
-				continue
+			if len(ctx.iv) > 0 {
+				if ctx.chs.udpFilterTestAndAdd(ctx.iv) {
+					continue
+				}
 			}
-			c.sessions.Store(addr.String(), ctx.chs)
-			// *(chs.Any.(*int))++
+			c.getSession(addr.String(), ctx.chs)
 			ctx.chs.LogD("udp mode choose", ctx.chs.Method, ctx.chs.Password)
 			n = copy(b, ctx.addr.Hdr)
 			n += copy(b[n:], ctx.data)
 		} else {
-			cfg := v.(*Config)
-			var cb crypto.CipherBlock
-			cb, err = crypto.NewCipherBlock(cfg.Method, cfg.Password)
-			if err != nil {
+			s := v.(*multiSession)
+			if s.initErr != nil {
+				log.Printf("udp multi ReadFrom: session init failed: %v", s.initErr)
+				err = s.initErr
 				return
 			}
-			var p []byte
-			var iv []byte
-			p, iv, err = cb.Decrypt(b, b2[:n])
-			if err != nil {
+			payloadStart, payloadLen, uerr := s.unpacker.UnpackInPlace(b2, 0, n)
+			if uerr != nil {
+				log.Printf("udp multi ReadFrom: decrypt failed method=%s err=%v", s.cfg.Method, uerr)
+				err = uerr
 				return
 			}
-			if len(iv) > 0 {
-				exists := cfg.udpFilterTestAndAdd(iv)
-				if exists {
-					continue
+			if iu, ok := s.unpacker.(zerocopy.IVUnpacker); ok {
+				if iv := iu.IV(); len(iv) > 0 {
+					if s.cfg.udpFilterTestAndAdd(iv) {
+						continue
+					}
 				}
 			}
-			n = copy(b, p)
+			n = copy(b, b2[payloadStart:payloadStart+payloadLen])
 		}
 		return
 	}
 }
 
-func (c *MultiUDPConn) WriteTo(b []byte, addr net.Addr) (n int, err error) {
-	defer func() {
-		if err == nil {
-			n = len(b)
-		}
-	}()
+func (c *MultiUDPConn) WriteTo(b []byte, addr net.Addr) (int, error) {
 	v, ok := c.sessions.Load(addr.String())
 	if !ok {
-		return
+		return 0, nil
 	}
-	cfg := v.(*Config)
-	cb, err := crypto.NewCipherBlock(cfg.Method, cfg.Password)
+	s := v.(*multiSession)
+	if s.initErr != nil {
+		return 0, s.initErr
+	}
+
+	hr := s.packer.Headroom()
+	buf := udpWriteBufPool.Get().([]byte)
+	defer udpWriteBufPool.Put(buf)
+
+	totalLen := hr.Front + len(b) + hr.Rear
+	if cap(buf) < totalLen {
+		buf = make([]byte, totalLen)
+	} else {
+		buf = buf[:totalLen]
+	}
+
+	copy(buf[hr.Front:], b)
+
+	packetStart, packetLen, perr := s.packer.PackInPlace(buf, hr.Front, len(b))
+	if perr != nil {
+		return 0, perr
+	}
+	_, err := c.PacketConn.WriteTo(buf[packetStart:packetStart+packetLen], addr)
 	if err != nil {
-		return
+		return 0, err
 	}
-	b2, _, err := cb.Encrypt(nil, b)
-	if err != nil {
-		return
-	}
-	return c.PacketConn.WriteTo(b2, addr)
+	return len(b), nil
 }
 
 func (c *MultiUDPConn) RemoveAddr(addr net.Addr) {

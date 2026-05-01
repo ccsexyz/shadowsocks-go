@@ -78,6 +78,7 @@ func (b *baseCipherStream) initDecrypter(ivLen int, dw dataWriter) {
 	b.ivLen = ivLen
 	b.isEnc = false
 	b.dw = dw
+	b.iv = make([]byte, 0, ivLen)
 }
 
 func (b *baseCipherStream) Read(p []byte) (n int, err error) {
@@ -91,6 +92,20 @@ func (b *baseCipherStream) Write(p []byte) (n int, err error) {
 	}
 	n += n1
 	p = p[n1:]
+
+	// Pre-grow buffer to avoid repeated growSlice during encrypted writes.
+	// Each 1024-byte AEAD chunk adds 2+2*overhead framing bytes.
+	const estChunkSize = 1024
+	numChunks := (len(p) + estChunkSize - 1) / estChunkSize
+	if numChunks == 0 {
+		numChunks = 1
+	}
+	if b.isEnc {
+		extra := numChunks * 50 // generous estimate for per-chunk framing overhead
+		b.b.Grow(len(p) + extra)
+	} else {
+		b.b.Grow(len(p))
+	}
 
 	for len(p) > 0 {
 		p2 := p
@@ -127,7 +142,15 @@ func (b *baseCipherStream) GetIV() []byte {
 	return b.iv
 }
 
+var kdfCache sync.Map // map[string][]byte: "password:keyLen" → master key
+
 func kdf(password string, keyLen int) []byte {
+	cacheKey := fmt.Sprintf("%s:%d", password, keyLen)
+	if v, ok := kdfCache.Load(cacheKey); ok {
+		// Return a copy so callers can't mutate the cached value
+		return append([]byte{}, v.([]byte)...)
+	}
+
 	var b, prev []byte
 	h := md5.New()
 	for len(b) < keyLen {
@@ -137,7 +160,9 @@ func kdf(password string, keyLen int) []byte {
 		prev = b[len(b)-h.Size():]
 		h.Reset()
 	}
-	return b[:keyLen]
+	result := b[:keyLen]
+	kdfCache.Store(cacheKey, append([]byte{}, result...))
+	return result
 }
 
 func NewPlainEncrypter(_, _ []byte) (CipherStream, error) {
@@ -169,16 +194,19 @@ var cipherMethod = map[string]cipherMethodEntry{
 	"aes-128-gcm":                   {16, 16, NewAESGCMEncrypter, NewAESGCMDecrypter, NewAESGCMCipherBlock, false},
 	"aes-192-gcm":                   {24, 24, NewAESGCMEncrypter, NewAESGCMDecrypter, NewAESGCMCipherBlock, false},
 	"aes-256-gcm":                   {32, 32, NewAESGCMEncrypter, NewAESGCMDecrypter, NewAESGCMCipherBlock, false},
+	"chacha20-ietf-poly1305":        {32, 32, NewChacha20Poly1305Encrypter, NewChacha20Poly1305Decrypter, NewChaCha20Poly1305CipherBlock, false},
+	"chacha20-poly1305":             {32, 32, NewChacha20Poly1305Encrypter, NewChacha20Poly1305Decrypter, NewChaCha20Poly1305CipherBlock, false},
 	"chacha20poly1305":              {32, 32, NewChacha20Poly1305Encrypter, NewChacha20Poly1305Decrypter, NewChaCha20Poly1305CipherBlock, false},
 	"plain":                         {0, 0, NewPlainEncrypter, NewPlainDecrypter, NewPlainCipherBlock, false},
-	"2022-blake3-aes-128-gcm":       {16, 16, newNotSupportedEncrypter, newNotSupportedDecrypter, New2022AESGCMCipherBlock, true},
-	"2022-blake3-aes-256-gcm":       {32, 32, newNotSupportedEncrypter, newNotSupportedDecrypter, New2022AESGCMCipherBlock, true},
-	"2022-blake3-chacha20-poly1305": {32, 32, newNotSupportedEncrypter, newNotSupportedDecrypter, New2022Chacha20Poly1305CipherBlock, true},
+	"2022-blake3-aes-128-gcm":       {16, 16, newNotSupportedEncrypter, newNotSupportedDecrypter, newUdp2022AESCipherBlock, true},
+	"2022-blake3-aes-256-gcm":       {32, 32, newNotSupportedEncrypter, newNotSupportedDecrypter, newUdp2022AESCipherBlock, true},
+	"2022-blake3-chacha20-poly1305": {32, 32, newNotSupportedEncrypter, newNotSupportedDecrypter, newUdp2022ChaChaCipherBlock, true},
 }
 
 func IsAEAD(method string) bool {
 	switch method {
-	case "aes-128-gcm", "aes-192-gcm", "aes-256-gcm", "chacha20poly1305",
+	case "aes-128-gcm", "aes-192-gcm", "aes-256-gcm",
+		"chacha20-ietf-poly1305", "chacha20-poly1305", "chacha20poly1305",
 		"2022-blake3-aes-128-gcm", "2022-blake3-aes-256-gcm", "2022-blake3-chacha20-poly1305":
 		return true
 	default:

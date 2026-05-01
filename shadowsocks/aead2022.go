@@ -116,6 +116,13 @@ func ss2022AcceptHandler(conn Conn, lis *listener) AcceptResult {
 		return AcceptResult{AcceptReject, nil}
 	}
 
+	// SIP022: check salt for replay. Store incoming salts and reject duplicates.
+	saltStr := utils.SliceToString(salt)
+	if !lis.c.getTCPIvChecker().check(saltStr) {
+		lis.c.Log("reject replayed salt from", conn.RemoteAddr().String())
+		return AcceptResult{AcceptReject, nil}
+	}
+
 	addrLen := int(binary.BigEndian.Uint16(hdr1[9:11]))
 
 	hdr2Len := addrLen + ciph.Overhead()
@@ -150,6 +157,11 @@ func ss2022AcceptHandler(conn Conn, lis *listener) AcceptResult {
 	}
 	if len(rest) < 2+padSize {
 		lis.c.Log("header shorter than padding size")
+		return AcceptResult{AcceptReject, nil}
+	}
+	// SIP022: reject requests with zero padding and zero initial payload
+	if padSize == 0 && len(rest) == 2 {
+		lis.c.Log("reject: zero padding and zero payload")
 		return AcceptResult{AcceptReject, nil}
 	}
 	data := rest[2+padSize:]
@@ -296,6 +308,10 @@ func tryDecodeAead2022(b []byte, cfg *Config) (*parseContext, error) {
 		return nil, errInvalidHeader
 	}
 	if len(rest) < 2+padSize {
+		return nil, errInvalidHeader
+	}
+	// SIP022: reject requests with zero padding and zero initial payload
+	if padSize == 0 && len(rest) == 2 {
 		return nil, errInvalidHeader
 	}
 

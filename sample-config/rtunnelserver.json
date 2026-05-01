@@ -16,7 +16,7 @@
                 "rtunnelservice": ":8081"
             },
             {
-                "method": "chacha20-poly1305",
+                "method": "chacha20-ietf-poly1305",
                 "password": "password-for-alice",
                 "rtunnelservice": ":8082"
             },

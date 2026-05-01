@@ -455,6 +455,13 @@ func ssMultiAcceptHandler(conn Conn, lis *listener) AcceptResult {
 func ss2022MultiAcceptHandler2(conn Conn, lis *listener, ctx *parseContext) (c Conn) {
 	chs := ctx.chs
 
+	// SIP022: check salt for replay before accepting
+	saltStr := utils.SliceToString(ctx.cliSalt)
+	if !chs.getTCPIvChecker().check(saltStr) {
+		chs.Log("reject replayed salt from", conn.RemoteAddr().String())
+		return
+	}
+
 	psk, err := crypto.DecodePSK(chs.Password, chs.Ivlen)
 	if err != nil {
 		lis.c.Log("decode PSK failed:", err)

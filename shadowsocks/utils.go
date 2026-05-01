@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"os"
 	"strconv"
@@ -96,7 +97,8 @@ func ParseAddrWithMultipleBackendsForUDP(b []byte, configs []*Config) (*parseCon
 
 	b2 := make([]byte, len(b))
 
-	for _, cfg := range configs {
+	for i, cfg := range configs {
+		_ = i
 		cb, err := crypto.NewCipherBlock(cfg.Method, cfg.Password)
 		if err != nil {
 			continue
@@ -107,9 +109,19 @@ func ParseAddrWithMultipleBackendsForUDP(b []byte, configs []*Config) (*parseCon
 			continue
 		}
 
-		addr, data, err := ParseAddr(p)
-		if err != nil {
-			continue
+		var addr *SockAddr
+		var data []byte
+
+		// Try SIP022 format first, then fall back to legacy ATYP format
+		sipHdr, _, _, payload, perr := crypto.ParseSIP022(p)
+		if perr == nil {
+			addr = &SockAddr{Hdr: DupBuffer(sipHdr)}
+			data = payload
+		} else {
+			addr, data, err = ParseAddr(p)
+			if err != nil {
+				continue
+			}
 		}
 
 		ctx := new(parseContext)
@@ -123,6 +135,7 @@ func ParseAddrWithMultipleBackendsForUDP(b []byte, configs []*Config) (*parseCon
 	}
 
 	if len(ctxs) == 0 {
+		log.Printf("udp multi: all %d backends failed to decrypt (packet len=%d)", len(configs), len(b))
 		return nil, errInvalidHeader
 	}
 
@@ -441,43 +454,46 @@ func DialTCPConn(address string, cfg *cfg) (Conn, error) {
 	return conn, nil
 }
 
+const ivCheckerBuckets = 4
+
 type ivChecker struct {
-	ivs1    map[string]bool
-	ivs2    map[string]bool
-	ivs3    map[string]bool
+	buckets [ivCheckerBuckets]map[string]bool
+	head    int
 	expires time.Time
 	lock    sync.Mutex
 	once    sync.Once
 }
 
-func (c *ivChecker) check(iv string) bool {
+func (c *ivChecker) ensureInit() {
 	c.once.Do(func() {
-		c.ivs1 = make(map[string]bool)
-		c.ivs2 = make(map[string]bool)
-		c.ivs3 = make(map[string]bool)
-		c.expires = time.Now().Add(time.Second * time.Duration(domain.IvExpireSecond) * 3)
+		for i := range ivCheckerBuckets {
+			c.buckets[i] = make(map[string]bool)
+		}
+		c.expires = time.Now().Add(time.Second * time.Duration(domain.IvExpireSecond))
 	})
+}
+
+func (c *ivChecker) rotate() {
+	if !time.Now().After(c.expires) {
+		return
+	}
+	c.head = (c.head + 1) % ivCheckerBuckets
+	c.buckets[c.head] = make(map[string]bool)
+	c.expires = time.Now().Add(time.Second * time.Duration(domain.IvExpireSecond))
+}
+
+func (c *ivChecker) check(iv string) bool {
 	c.lock.Lock()
 	defer c.lock.Unlock()
-	if time.Now().After(c.expires) {
-		c.expires = time.Now().Add(time.Second * time.Duration(domain.IvExpireSecond) * 3)
-		c.ivs1 = c.ivs2
-		c.ivs2 = c.ivs3
-		c.ivs3 = make(map[string]bool)
+	c.ensureInit()
+	c.rotate()
+
+	for i := range ivCheckerBuckets {
+		if c.buckets[i][iv] {
+			return false
+		}
 	}
-	_, ok := c.ivs1[iv]
-	if ok {
-		return false
-	}
-	_, ok = c.ivs2[iv]
-	if ok {
-		return false
-	}
-	_, ok = c.ivs3[iv]
-	if ok {
-		return false
-	}
-	c.ivs3[iv] = true
+	c.buckets[c.head][iv] = true
 	return true
 }
 
