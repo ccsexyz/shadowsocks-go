@@ -2,7 +2,7 @@ package server
 
 import (
 	"net"
-
+	"strings"
 	"sync"
 
 	"github.com/ccsexyz/shadowsocks-go/internal/utils"
@@ -40,6 +40,28 @@ func RunTCPServer(address string, c *ss.Config,
 				<-die
 				lis.Close()
 			}()
+			if !strings.HasPrefix(address, "@") {
+				vl := ss.RegisterVirtualForce("@"+address, c.Nickname)
+				vlis := ss.NewListener(vl, c, handlers)
+				go func() {
+					<-c.DieChan()
+					vlis.Close()
+				}()
+				go func() {
+					for {
+						conn, err := vlis.Accept()
+						if err != nil {
+							return
+						}
+						ac, ok := conn.(*ss.AcceptedConn)
+						if !ok {
+							conn.Close()
+							return
+						}
+						go handler(ac)
+					}
+				}()
+			}
 			for {
 				conn, err := lis.Accept()
 				if err != nil {

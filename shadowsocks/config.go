@@ -43,6 +43,7 @@ type NetworkConfig struct {
 	NoIPv6         bool     `json:"no_ipv6"`
 	LocalResolve   bool     `json:"local_resolve"`
 	RtunnelService string   `json:"rtunnelservice"`
+	Forward        string   `json:"forward,omitempty"`
 }
 
 // HttpConfig groups HTTP-related configuration.
@@ -121,6 +122,8 @@ type Config struct {
 	ParityShard    int       `json:"parityshard"`
 	SSProxy        bool      `json:"ssproxy"`
 	AdminAddr      string    `json:"adminaddr"`
+	ActiveBackend  string    `json:"active,omitempty"`
+	Target         string    `json:"target,omitempty"`
 
 	CryptoConfig
 	ObfsConfig

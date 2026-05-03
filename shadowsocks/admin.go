@@ -114,6 +114,8 @@ func StartAdminServer(addr string) {
 	mux.HandleFunc("PUT /api/configs/{index}/backends/{nickname}", handleUpdateBackend)
 	mux.HandleFunc("DELETE /api/configs/{index}/backends/{nickname}", handleDeleteBackend)
 	mux.HandleFunc("POST /api/configs/{index}/backends", handleAddBackend)
+	mux.HandleFunc("GET /api/configs/{index}/active", handleGetActiveBackend)
+	mux.HandleFunc("PUT /api/configs/{index}/active", handleSetActiveBackend)
 
 	mux.Handle("GET /", http.FileServer(http.FS(adminUI)))
 
@@ -152,6 +154,7 @@ type configSummary struct {
 	AutoProxy        bool             `json:"autoproxy"`
 	LogHTTP          bool             `json:"loghttp"`
 	Method           string           `json:"method"`
+	ActiveBackend    string           `json:"active,omitempty"`
 	Backends         []backendSummary `json:"backends"`
 }
 
@@ -160,6 +163,8 @@ type backendSummary struct {
 	RemoteAddr     string `json:"remoteaddr"`
 	Disabled       bool   `json:"disabled"`
 	Method         string `json:"method"`
+	Target         string `json:"target,omitempty"`
+	Forward        string `json:"forward,omitempty"`
 	Connections    int32  `json:"connections"`
 	TotalReadBytes int64  `json:"totalReadBytes"`
 	TotalWritBytes int64  `json:"totalWritBytes"`
@@ -175,15 +180,16 @@ type aggregateStats struct {
 
 func buildConfigSummary(i int, c *Config, numConfigs int) configSummary {
 	s := configSummary{
-		Index:      i,
-		Nickname:   c.Nickname,
-		Type:       c.Type,
-		LocalAddr:  c.Localaddr,
-		RemoteAddr: c.Remoteaddr,
-		Disabled:   c.isDisabled(),
-		AutoProxy:  c.AutoProxy,
-		LogHTTP:    c.LogHTTP,
-		Method:     c.Method,
+		Index:         i,
+		Nickname:      c.Nickname,
+		Type:          c.Type,
+		LocalAddr:     c.Localaddr,
+		RemoteAddr:    c.Remoteaddr,
+		Disabled:      c.isDisabled(),
+		AutoProxy:     c.AutoProxy,
+		LogHTTP:       c.LogHTTP,
+		Method:        c.Method,
+		ActiveBackend: c.ActiveBackend,
 	}
 	if c.getStat() != nil {
 		s.Connections = atomic.LoadInt32(&c.getStat().connections)
@@ -214,6 +220,8 @@ func buildConfigSummary(i int, c *Config, numConfigs int) configSummary {
 			RemoteAddr: b.Remoteaddr,
 			Disabled:   b.isDisabled(),
 			Method:     b.Method,
+			Target:     b.Target,
+			Forward:    b.Forward,
 		}
 		if b.getStat() != nil {
 			bs.Connections = atomic.LoadInt32(&b.getStat().connections)
@@ -902,6 +910,57 @@ func toString(v interface{}) (string, error) {
 
 func handleListVirtual(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, ListVirtualServices())
+}
+
+func handleGetActiveBackend(w http.ResponseWriter, r *http.Request) {
+	idxStr := r.PathValue("index")
+	idx, err := strconv.Atoi(idxStr)
+	if err != nil {
+		http.Error(w, "invalid index", http.StatusBadRequest)
+		return
+	}
+	cfgs := getAdminConfigs()
+	if idx < 0 || idx >= len(cfgs) {
+		http.Error(w, "index out of range", http.StatusNotFound)
+		return
+	}
+	writeJSON(w, map[string]string{"active": cfgs[idx].ActiveBackend})
+}
+
+func handleSetActiveBackend(w http.ResponseWriter, r *http.Request) {
+	idxStr := r.PathValue("index")
+	idx, err := strconv.Atoi(idxStr)
+	if err != nil {
+		http.Error(w, "invalid index", http.StatusBadRequest)
+		return
+	}
+	cfgs := getAdminConfigs()
+	if idx < 0 || idx >= len(cfgs) {
+		http.Error(w, "index out of range", http.StatusNotFound)
+		return
+	}
+	var body struct{ Nickname string }
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	if body.Nickname == "" {
+		http.Error(w, "nickname is required", http.StatusBadRequest)
+		return
+	}
+	found := false
+	for _, b := range cfgs[idx].Backends {
+		if b.Nickname == body.Nickname {
+			found = true
+			break
+		}
+	}
+	if !found {
+		http.Error(w, "backend not found", http.StatusNotFound)
+		return
+	}
+	cfgs[idx].ActiveBackend = body.Nickname
+	writeJSON(w, map[string]string{"status": "ok", "active": body.Nickname})
 }
 
 func writeJSON(w http.ResponseWriter, v interface{}) {

@@ -414,6 +414,38 @@ body.dark .badge-socksproxy { color: #f07eb4; background: #3e1515; }
 .badge-tcptun, .badge-udptun { color: var(--success); background: var(--success-container); }
 .badge-wstunnel { color: #c2410c; background: #fef0e6; }
 body.dark .badge-wstunnel { color: #f0a060; background: #3d1e0a; }
+.badge-switch { color: #007b83; background: #e0f7f9; }
+body.dark .badge-switch { color: #5ed9d9; background: #0a2a2d; }
+
+.switch-bar {
+  margin: 0 24px 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.switch-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.switch-select {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--primary);
+  background: var(--primary-container);
+  border: 1px solid var(--outline);
+  border-radius: var(--radius-sm);
+  padding: 4px 10px;
+  cursor: pointer;
+  outline: none;
+  transition: all var(--transition-fast);
+}
+
+.switch-select:hover { border-color: var(--primary); }
 
 .card-meta {
   font-size: 12px;
@@ -592,6 +624,12 @@ body.dark .badge-wstunnel { color: #f0a060; background: #3d1e0a; }
   font-size: 12px;
 }
 
+.backend-item .active-radio {
+  display: inline-block;
+  vertical-align: middle;
+  margin-right: 6px;
+}
+
 .backend-item .binfo {
   color: var(--text-tertiary);
   font-size: 11px;
@@ -610,6 +648,32 @@ body.dark .badge-wstunnel { color: #f0a060; background: #3d1e0a; }
 .backend-item .bstats b {
   color: var(--text);
   font-weight: 600;
+}
+
+.backend-item.active {
+  background: var(--primary-container);
+  margin: 0 -8px;
+  padding-left: 8px;
+  padding-right: 8px;
+  border-radius: var(--radius-sm);
+}
+
+.active-radio {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid var(--outline);
+  flex-shrink: 0;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.active-radio:hover { border-color: var(--primary); }
+
+.active-radio.on {
+  border-color: var(--primary);
+  background: var(--primary);
+  box-shadow: inset 0 0 0 3px var(--surface);
 }
 
 /* Card Actions */
@@ -879,6 +943,11 @@ body.dark .badge-wstunnel { color: #f0a060; background: #3d1e0a; }
 
 .detail-backend-item .bname { font-weight: 600; color: var(--text); }
 .detail-backend-item .binfo { color: var(--text-tertiary); font-size: 12px; }
+.detail-backend-item .active-radio {
+  display: inline-block;
+  vertical-align: middle;
+  margin-right: 6px;
+}
 .detail-backend-item .bstats {
   display: flex;
   gap: 16px;
@@ -888,6 +957,14 @@ body.dark .badge-wstunnel { color: #f0a060; background: #3d1e0a; }
 }
 
 .detail-backend-item .bstats b { color: var(--text); font-weight: 600; }
+
+.detail-backend-item.active {
+  background: var(--primary-container);
+  margin: 0 -12px;
+  padding-left: 12px;
+  padding-right: 12px;
+  border-radius: var(--radius-sm);
+}
 
 /* Backend actions */
 .backend-actions { display: flex; gap: 6px; }
@@ -1422,7 +1499,7 @@ function fmtDuration(s) {
 
 function badgeClass(type) {
   const map = { local: 'local', server: 'server', redir: 'redir', multiserver: 'multiserver',
-    ssproxy: 'ssproxy', socksproxy: 'socksproxy', tcptun: 'tcptun', udptun: 'udptun', wstunnel: 'wstunnel' };
+    ssproxy: 'ssproxy', socksproxy: 'socksproxy', tcptun: 'tcptun', udptun: 'udptun', wstunnel: 'wstunnel', switch: 'switch' };
   return 'badge badge-' + (map[type] || 'server');
 }
 
@@ -1481,7 +1558,7 @@ function createCard(cfg) {
   card.className = 'card';
   card.id = 'card-' + cfg.index;
   card.onclick = function(e) {
-    if (e.target.closest('.toggle') || e.target.closest('button') || e.target.closest('.btn')) return;
+    if (e.target.closest('.toggle') || e.target.closest('button') || e.target.closest('.btn') || e.target.closest('.active-radio') || e.target.closest('select')) return;
     window.location.hash = '#/config/' + cfg.index;
   };
 
@@ -1495,6 +1572,10 @@ function createCard(cfg) {
       <span><span class="meta-label">Local</span> <span id="cl-${cfg.index}"></span></span>
       <span><span class="meta-label">Remote</span> <span id="cr-${cfg.index}"></span></span>
       <span><span class="meta-label">Method</span> <span id="cm-${cfg.index}"></span></span>
+    </div>
+    <div class="switch-bar" id="swbar-${cfg.index}" style="display:none" onclick="event.stopPropagation()">
+      <span class="switch-label">Active</span>
+      <select class="switch-select" id="swsel-${cfg.index}" onchange="onSetActive(${cfg.index}, this.value)" onclick="event.stopPropagation()"></select>
     </div>
     <div class="sparkline" id="sp-${cfg.index}"></div>
     <div class="card-stats">
@@ -1556,6 +1637,24 @@ function updateCard(cfg, trafficSamples, cardEntry) {
   setText('swrit-' + i, fmtBytes(cfg.totalWritBytes));
   renderSparkline(document.getElementById('sp-' + i), trafficSamples);
 
+  const swbar = document.getElementById('swbar-' + i);
+  const swsel = document.getElementById('swsel-' + i);
+  if (swbar && swsel && cfg.type === 'switch' && cfg.backends && cfg.backends.length) {
+    swbar.style.display = '';
+    if (swsel.options.length !== cfg.backends.length) {
+      swsel.innerHTML = '';
+      for (const b of cfg.backends) {
+        const opt = document.createElement('option');
+        opt.value = b.nickname;
+        opt.textContent = b.nickname;
+        swsel.appendChild(opt);
+      }
+    }
+    swsel.value = cfg.active || '';
+  } else if (swbar) {
+    swbar.style.display = 'none';
+  }
+
   if (shouldUpdateToggle(cardEntry, 'enabled')) {
     const el = document.getElementById('tgl-enabled-' + i); if (el) el.checked = !cfg.disabled;
   }
@@ -1565,10 +1664,10 @@ function updateCard(cfg, trafficSamples, cardEntry) {
   if (shouldUpdateToggle(cardEntry, 'loghttp')) {
     const el = document.getElementById('tgl-loghttp-' + i); if (el) el.checked = cfg.loghttp;
   }
-  updateBackendsSummary(i, cfg.backends, cardEntry);
+  updateBackendsSummary(i, cfg.type, cfg.active, cfg.backends, cardEntry);
 }
 
-function updateBackendsSummary(i, backends, cardEntry) {
+function updateBackendsSummary(i, cfgType, active, backends, cardEntry) {
   const bk = document.getElementById('bk-' + i);
   const btn = document.getElementById('btn-bk-' + i);
   if (!backends || !backends.length) {
@@ -1580,13 +1679,20 @@ function updateBackendsSummary(i, backends, cardEntry) {
   if (!bk) return;
   bk.style.display = cardEntry.backendsOpen ? 'block' : 'none';
   let html = '';
+  const isSwitch = (cfgType === 'switch');
   for (const b of backends) {
-    html +=
-      `<div class="backend-item" id="bki-${i}-${sanitize(b.nickname)}">
-        <div><span class="bname">${esc(b.nickname)}</span> <span class="binfo">&rarr; ${esc(b.remoteaddr)} [${esc(b.method)}]</span></div>
-        <div class="bstats"><b>${b.connections || 0}</b> conns &darr;<b>${fmtBytes(b.totalReadBytes)}</b> &uarr;<b>${fmtBytes(b.totalWritBytes)}</b></div>
-        <label class="toggle"><input type="checkbox" id="btgl-${i}-${sanitize(b.nickname)}" ${b.disabled ? '' : 'checked'} onchange="onToggleBackend(${i},'${escAttr(b.nickname)}',this)"><span class="toggle-slider"></span></label>
-      </div>`;
+    const target = b.target || '';
+    const addr = target || b.remoteaddr;
+    const info = target ? '&rarr; ' + esc(target) : ('&rarr; ' + esc(b.remoteaddr) + ' [' + esc(b.method) + ']');
+    html += '<div class="backend-item' + (isSwitch && b.nickname === active ? ' active' : '') + '" id="bki-' + i + '-' + sanitize(b.nickname) + '">';
+    html += '<div>';
+    if (isSwitch) {
+      html += '<span class="active-radio' + (b.nickname === active ? ' on' : '') + '" onclick="event.stopPropagation();onSetActive(' + i + ',\'' + escAttr(b.nickname) + '\')" title="Set as active backend"></span>';
+    }
+    html += '<span class="bname">' + esc(b.nickname) + '</span> <span class="binfo">' + info + '</span></div>' +
+      '<div class="bstats"><b>' + (b.connections || 0) + '</b> conns &darr;<b>' + fmtBytes(b.totalReadBytes) + '</b> &uarr;<b>' + fmtBytes(b.totalWritBytes) + '</b></div>' +
+      '<label class="toggle"><input type="checkbox" id="btgl-' + i + '-' + sanitize(b.nickname) + '" ' + (b.disabled ? '' : 'checked') + ' onchange="onToggleBackend(' + i + ',\'' + escAttr(b.nickname) + '\',this)"><span class="toggle-slider"></span></label>' +
+      '</div>';
   }
   bk.innerHTML = html;
 }
@@ -1692,13 +1798,13 @@ function buildSafeConfigForDisplay(cfg) {
 function refreshDetailAfterBackendChange(index) {
   fetch('/api/configs/' + index).then(r => r.json()).then(cfg => {
     if (detailIndex !== index) return;
-    rebuildDetailBackends(index, cfg.backends);
+    rebuildDetailBackends(index, cfg.type, cfg.active, cfg.backends);
     updateDetailStatsInPlace(cfg, []);
     pollActiveConns(index);
   }).catch(() => {});
 }
 
-function rebuildDetailBackends(i, backends) {
+function rebuildDetailBackends(i, cfgType, active, backends) {
   const section = document.getElementById('dg-backends-' + i);
   if (!section) return;
   if (!backends || !backends.length) {
@@ -1708,10 +1814,18 @@ function rebuildDetailBackends(i, backends) {
     return;
   }
   let html = '';
+  const isSwitch = (cfgType === 'switch');
   for (const b of backends) {
-    html +=
-      '<div class="detail-backend-item" id="dbe-' + i + '-' + sanitize(b.nickname) + '">' +
-      '<div><span class="bname">' + esc(b.nickname) + '</span> <span class="binfo">&rarr; ' + esc(b.remoteaddr) + ' [' + esc(b.method) + ']</span></div>' +
+    const isActive = isSwitch && b.nickname === active;
+    const target = b.target || '';
+    const addr = target || b.remoteaddr;
+    const info = target ? '&rarr; ' + esc(target) : ('&rarr; ' + esc(b.remoteaddr) + ' [' + esc(b.method) + ']');
+    html += '<div class="detail-backend-item' + (isActive ? ' active' : '') + '" id="dbe-' + i + '-' + sanitize(b.nickname) + '">';
+    html += '<div>';
+    if (isSwitch) {
+      html += '<span class="active-radio' + (isActive ? ' on' : '') + '" onclick="event.stopPropagation();onSetActive(' + i + ',\'' + escAttr(b.nickname) + '\')" title="Set as active backend"></span>';
+    }
+    html += '<span class="bname">' + esc(b.nickname) + '</span> <span class="binfo">' + info + '</span></div>' +
       '<div class="bstats"><b>' + (b.connections || 0) + '</b> conns &darr;<b>' + fmtBytes(b.totalReadBytes) + '</b> &uarr;<b>' + fmtBytes(b.totalWritBytes) + '</b></div>' +
       '<label class="toggle"><input type="checkbox" id="dbtgl-' + i + '-' + sanitize(b.nickname) + '" ' + (b.disabled ? '' : 'checked') + ' onchange="onToggleBackend(' + i + ',\'' + escAttr(b.nickname) + '\',this)"><span class="toggle-slider"></span></label>' +
       '<div class="backend-actions">' +
@@ -1799,16 +1913,20 @@ function buildDetailHTML(cfg, trafficSamples, rawCfg) {
       </div>` : ''}
       <div class="detail-section" id="dg-backends-${i}">
         <h3>Upstreams${cfg.backends && cfg.backends.length ? ' (' + cfg.backends.length + ')' : ''}</h3>
-        ${cfg.backends && cfg.backends.length ? cfg.backends.map(b => `
-          <div class="detail-backend-item" id="dbe-${i}-${sanitize(b.nickname)}">
-            <div><span class="bname">${esc(b.nickname)}</span> <span class="binfo">&rarr; ${esc(b.remoteaddr)} [${esc(b.method)}]</span></div>
-            <div class="bstats"><b>${b.connections || 0}</b> conns &darr;<b>${fmtBytes(b.totalReadBytes)}</b> &uarr;<b>${fmtBytes(b.totalWritBytes)}</b></div>
-            <label class="toggle"><input type="checkbox" id="dbtgl-${i}-${sanitize(b.nickname)}" ${b.disabled ? '' : 'checked'} onchange="onToggleBackend(${i},'${escAttr(b.nickname)}',this)"><span class="toggle-slider"></span></label>
-            <div class="backend-actions">
-              <button onclick="editBackend(${i},'${escAttr(b.nickname)}','${escAttr(b.remoteaddr)}','${escAttr(b.method)}','')">Edit</button>
-              <button class="danger" onclick="deleteBackend(${i},'${escAttr(b.nickname)}')">Del</button>
-            </div>
-          </div>`).join('') : '<div class="conn-empty">No upstreams configured</div>'}
+        ${cfg.backends && cfg.backends.length ? cfg.backends.map(b => {
+          const isActive = cfg.type === 'switch' && cfg.active === b.nickname;
+          const target = b.target || '';
+          const addr = target || b.remoteaddr;
+          const info = target ? '&rarr; ' + esc(target) : ('&rarr; ' + esc(b.remoteaddr) + ' [' + esc(b.method) + ']');
+          return '<div class="detail-backend-item' + (isActive ? ' active' : '') + '" id="dbe-' + i + '-' + sanitize(b.nickname) + '">' +
+            '<div>' + (cfg.type === 'switch' ? '<span class="active-radio' + (isActive ? ' on' : '') + '" onclick="event.stopPropagation();onSetActive(' + i + ',\'' + escAttr(b.nickname) + '\')" title="Set as active backend"></span>' : '') + '<span class="bname">' + esc(b.nickname) + '</span> <span class="binfo">' + info + '</span></div>' +
+            '<div class="bstats"><b>' + (b.connections || 0) + '</b> conns &darr;<b>' + fmtBytes(b.totalReadBytes) + '</b> &uarr;<b>' + fmtBytes(b.totalWritBytes) + '</b></div>' +
+            '<label class="toggle"><input type="checkbox" id="dbtgl-' + i + '-' + sanitize(b.nickname) + '" ' + (b.disabled ? '' : 'checked') + ' onchange="onToggleBackend(' + i + ',\'' + escAttr(b.nickname) + '\',this)"><span class="toggle-slider"></span></label>' +
+            '<div class="backend-actions">' +
+            '<button onclick="editBackend(' + i + ',\'' + escAttr(b.nickname) + '\',\'' + escAttr(b.remoteaddr) + '\',\'' + escAttr(b.method) + '\',\'\')">Edit</button>' +
+            '<button class="danger" onclick="deleteBackend(' + i + ',\'' + escAttr(b.nickname) + '\')">Del</button>' +
+            '</div></div>';
+        }).join('') : '<div class="conn-empty">No upstreams configured</div>'}
         <div id="be-form-${i}"></div>
         <div class="detail-actions" style="margin-top:8px">
           <button class="btn" onclick="showAddBackend(${i})">+ Add Upstream</button>
@@ -1854,6 +1972,34 @@ function toggleBackends(index) {
   const ce = cards.get(index);
   if (!ce) return;
   ce.backendsOpen = !ce.backendsOpen;
+}
+
+async function onSetActive(index, nickname) {
+  try {
+    const r = await fetch('/api/configs/' + index + '/active', {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({nickname: nickname})
+    });
+    if (!r.ok) { showError('set active failed: ' + r.status); return; }
+    await refreshSingleCard(index);
+    if (detailIndex === index && detail.classList.contains('open')) {
+      showDetail(index);
+    }
+  } catch (e) { showError(e.message); }
+}
+
+async function refreshSingleCard(index) {
+  try {
+    const [cfg, traffic] = await Promise.all([
+      fetch('/api/configs/' + index).then(r => r.json()),
+      fetch('/api/traffic').then(r => r.json()).catch(() => [])
+    ]);
+    const ce = cards.get(index);
+    if (!ce) return;
+    const ts = (traffic && traffic[index]) ? traffic[index] : [];
+    updateCard(cfg, ts, ce);
+  } catch (e) { /* ignore */ }
 }
 
 /* =========================================================
@@ -2226,6 +2372,11 @@ async function pollOverview() {
     document.getElementById('totalWrit').textContent = fmtBytes(stats.totalWritBytes);
     document.getElementById('uptime').textContent = fmtDuration(stats.uptimeSeconds);
 
+    configs.sort((a, b) => {
+      if (a.type === 'switch' && b.type !== 'switch') return -1;
+      if (a.type !== 'switch' && b.type === 'switch') return 1;
+      return a.index - b.index;
+    });
     const seen = new Set();
     for (const cfg of configs) {
       seen.add(cfg.index);

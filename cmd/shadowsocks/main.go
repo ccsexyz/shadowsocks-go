@@ -240,5 +240,11 @@ func runServer(c *ss.Config) {
 		}
 		c.Log("run rtunnel server at", c.Localaddr)
 		server.RunRtunnelServer(c)
+	case "switch":
+		if c.ActiveBackend == "" && len(c.Backends) > 0 {
+			c.ActiveBackend = c.Backends[0].Nickname
+		}
+		c.Log("run switch server at", c.Localaddr, "active:", c.ActiveBackend)
+		server.RunSwitchServer(c)
 	}
 }
