@@ -8,9 +8,9 @@ var bufPools [11]sync.Pool
 
 func init() {
 	for it := 0; it < len(bufPools); it++ {
-		getnew := func(i int) func() interface{} {
+		getnew := func(i int) func() any {
 			length := 1 << uint(i+6)
-			return func() interface{} {
+			return func() any {
 				return make([]byte, length)
 			}
 		}

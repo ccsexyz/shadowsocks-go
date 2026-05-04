@@ -7,15 +7,18 @@ import (
 	"io"
 	"log"
 	"net"
+	"net/netip"
 	"os"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ccsexyz/shadowsocks-go/crypto"
 	"github.com/ccsexyz/shadowsocks-go/domain"
 	"github.com/ccsexyz/shadowsocks-go/internal/utils"
+	"github.com/gaissmai/bart"
 )
 
 const (
@@ -47,7 +50,7 @@ var (
 
 func init() {
 	bufPool = &sync.Pool{
-		New: func() interface{} {
+		New: func() any {
 			return make([]byte, buffersize)
 		},
 	}
@@ -97,8 +100,7 @@ func ParseAddrWithMultipleBackendsForUDP(b []byte, configs []*Config) (*parseCon
 
 	b2 := make([]byte, len(b))
 
-	for i, cfg := range configs {
-		_ = i
+		for _, cfg := range configs {
 		cb, err := crypto.NewCipherBlock(cfg.Method, cfg.Password)
 		if err != nil {
 			continue
@@ -211,7 +213,7 @@ func Pipe(c1, c2 net.Conn, c *Config) {
 	defer c2.Close()
 	c1die := make(chan bool)
 	c2die := make(chan bool)
-	var alive utils.AtomicFlag
+	var alive atomic.Bool
 	var timeout int
 	if c != nil && c.Timeout > 0 {
 		timeout = c.Timeout
@@ -232,15 +234,15 @@ func Pipe(c1, c2 net.Conn, c *Config) {
 			if n > 0 || err == nil {
 				if timeout > 0 {
 					dst.SetWriteDeadline(time.Now().Add(time.Duration(timeout) * time.Second))
-					alive.Set(true)
+					alive.Store(true)
 				}
 				_, err = dst.Write(buf[:n])
 				if err != nil {
 					c.LogD("pipe write error:", err, "from", src.LocalAddr(), "to", dst.RemoteAddr())
 				}
 			}
-			if err != nil && IsTimeoutError(err) && alive.Test() {
-				alive.Set(false)
+			if err != nil && IsTimeoutError(err) && alive.Load() {
+				alive.Store(false)
 				c.LogD("pipe read error:", err, "from", src.RemoteAddr(), "to", src.LocalAddr())
 				err = nil
 			}
@@ -581,16 +583,13 @@ func (ap *autoProxy) checkIfByPass(host string) bool {
 }
 
 type chnRouteList struct {
-	tree *utils.IPTree
+	tree bart.Lite
 	lock sync.RWMutex
 }
 
 func (route *chnRouteList) load(path string) (err error) {
 	route.lock.Lock()
 	defer route.lock.Unlock()
-	if route.tree == nil {
-		route.tree = utils.NewIPTree()
-	}
 	f, err := os.Open(path)
 	if err != nil {
 		return
@@ -598,7 +597,17 @@ func (route *chnRouteList) load(path string) (err error) {
 	defer f.Close()
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
-		route.tree.Insert(scanner.Text())
+		pfx, perr := netip.ParsePrefix(scanner.Text())
+		if perr != nil {
+			// try as single IP
+			addr, aerr := netip.ParseAddr(scanner.Text())
+			if aerr == nil {
+				pfx = netip.PrefixFrom(addr, addr.BitLen())
+			} else {
+				continue
+			}
+		}
+		route.tree.Insert(pfx)
 	}
 	err = scanner.Err()
 	return
@@ -607,7 +616,11 @@ func (route *chnRouteList) load(path string) (err error) {
 func (route *chnRouteList) testIP(ip net.IP) bool {
 	route.lock.RLock()
 	defer route.lock.RUnlock()
-	return route.tree.TestIP(ip)
+	addr, ok := netip.AddrFromSlice(ip)
+	if !ok {
+		return false
+	}
+	return route.tree.Contains(addr.Unmap())
 }
 
 type bytesFilter interface {

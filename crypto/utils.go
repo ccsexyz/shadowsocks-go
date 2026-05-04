@@ -1,23 +1,18 @@
 package crypto
 
 import (
-	"crypto/rand"
+	"github.com/ccsexyz/shadowsocks-go/internal/utils"
 )
 
 const DefaultMethod = "aes-128-gcm"
 
 func PutRandomBytes(b []byte) {
-	rand.Read(b)
+	utils.PutRandomBytes(b)
 }
 
 // GetRandomBytes returns a slice of n random bytes.
 func GetRandomBytes(n int) []byte {
-	if n <= 0 {
-		return nil
-	}
-	data := make([]byte, n)
-	PutRandomBytes(data)
-	return data
+	return utils.GetRandomBytes(n)
 }
 
 func EnsureCopy(dst, src []byte) []byte {

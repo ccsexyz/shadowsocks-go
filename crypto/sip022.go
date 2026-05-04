@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"net"
+	"strconv"
 	"time"
 )
 
@@ -59,12 +60,6 @@ func buildSIP022(b []byte, sipType byte, clientSID uint64) []byte {
 	binary.BigEndian.PutUint16(out[9+extra:11+extra], uint16(padLen))
 	copy(out[11+extra+padLen:], b)
 	return out
-}
-
-// BuildSIP022 wraps a SOCKS5-style UDP relay packet into SIP022 format (request, Type=0).
-// Deprecated: use BuildSIP022Request.
-func BuildSIP022(b []byte) []byte {
-	return BuildSIP022Request(b)
 }
 
 // ParseSIP022 parses a SIP022-formatted UDP packet.
@@ -129,7 +124,7 @@ func ParseSIP022(b []byte) (hdr []byte, host string, port int, payload []byte, e
 
 	hdr = b[:skip+len(rest)-len(data)]
 	host = addr.Host()
-	port, _ = strconvPort(addr.Port())
+	port, _ = strconv.Atoi(addr.Port())
 	payload = data
 	return
 }
@@ -194,12 +189,6 @@ func (s *sipAddr) Port() string {
 		return fmt.Sprintf("%d", binary.BigEndian.Uint16(s.hdr[2+dlen:2+dlen+2]))
 	}
 	return ""
-}
-
-func strconvPort(s string) (int, error) {
-	var p int
-	_, err := fmt.Sscanf(s, "%d", &p)
-	return p, err
 }
 
 // BuildSOCKS5Response builds a SOCKS5 UDP response from SIP022 parsed fields.

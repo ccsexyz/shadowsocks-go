@@ -33,15 +33,6 @@
         "limitperconn": 65536
     },
     {
-        "type": "local",
-        "localaddr": ":1083",
-        "remoteaddr": "server.example.com:8080",
-        "method": "aes-256-gcm",
-        "password": "your-password",
-        "datashard": 10,
-        "parityshard": 3
-    },
-    {
         "type": "wstunnel",
         "localaddr": ":8080",
         "method": "aes-256-gcm",

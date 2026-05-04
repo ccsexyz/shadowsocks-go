@@ -41,8 +41,6 @@ func main() {
 	flag.IntVar(&c.NetworkConfig.Timeout, "timeout", 0, "set the timeout of tcp connection")
 	flag.BoolVar(&c.CryptoConfig.Safe, "safe", false, "runs under safe mode, server won't validate iv if safe is enabled")
 	flag.BoolVar(&c.ProxyConfig.MITM, "mitm", false, "enable MITM-based http/https proxy")
-	flag.IntVar(&c.DataShard, "ds", 0, "set datashard - fec")
-	flag.IntVar(&c.ParityShard, "ps", 0, "set parityshard - fec")
 	flag.StringVar(&c.ObfsConfig.ObfsMethod, "om", "", "set the method for obfs(http/websocket/tls)")
 	flag.BoolVar(&c.SSProxy, "ssproxy", false, "enable ss proxy for local server")
 	flag.BoolVar(&c.HttpConfig.AllowHTTP, "allow_http", false, "allow http wstunel connection")
@@ -211,7 +209,7 @@ func runServer(c *ss.Config) {
 		c.Log("run tcp tunnel at", c.Localaddr, "to", c.Remoteaddr)
 		server.RunTCPTunServer(c)
 	case "udptun":
-		if len(c.Localaddr) == 0 || c.Backend == nil || (len(c.Backend.Remoteaddr) == 0 && len(c.Backend.FakeTCPAddr) == 0) {
+		if len(c.Localaddr) == 0 || c.Backend == nil || len(c.Backend.Remoteaddr) == 0 {
 			break
 		}
 		c.Log("run udp tunnel at", c.Localaddr, "to", c.Remoteaddr)

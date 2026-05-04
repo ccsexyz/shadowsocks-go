@@ -11,12 +11,6 @@ import (
 	"time"
 )
 
-// AddrCtx carries a ctx inteface and can sotre some control message
-type AddrCtx struct {
-	net.Addr
-	Ctx interface{}
-}
-
 // UDPServerCtx is the control centor of the udp server
 type UDPServerCtx struct {
 	Mtu     int

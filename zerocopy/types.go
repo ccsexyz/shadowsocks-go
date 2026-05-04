@@ -10,14 +10,6 @@ type Headroom struct {
 	Rear  int
 }
 
-// MaxHeadroom returns the maximum headroom of a and b.
-func MaxHeadroom(a, b Headroom) Headroom {
-	return Headroom{
-		Front: max(a.Front, b.Front),
-		Rear:  max(a.Rear, b.Rear),
-	}
-}
-
 // Packer encrypts a plaintext payload in-place within a pre-allocated buffer.
 // Protocol headers and nonces are written into the Front headroom;
 // AEAD tags extend into the Rear headroom.
@@ -35,14 +27,6 @@ type Unpacker interface {
 	// UnpackInPlace decrypts b[packetStart:packetStart+packetLen] in-place.
 	// Returns the start and length of the plaintext payload within b.
 	UnpackInPlace(b []byte, packetStart, packetLen int) (payloadStart, payloadLen int, err error)
-}
-
-// SessionUnpacker is an Unpacker that can create a Packer for the reverse
-// direction (response) within the same session. Used by 2022 servers where
-// the server session key is derived after receiving the first client packet.
-type SessionUnpacker interface {
-	Unpacker
-	NewPacker() (Packer, error)
 }
 
 // IVUnpacker is an optional interface implemented by Unpackers that expose

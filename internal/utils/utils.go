@@ -3,7 +3,7 @@ package utils
 import (
 	"crypto/rand"
 	"net"
-	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,52 +23,12 @@ func GetRandomBytes(len int) []byte {
 	return data
 }
 
-type ExitCleaner struct {
-	lock   sync.Mutex
-	runner []func()
-	once   sync.Once
+func SliceToString(b []byte) string {
+	return unsafe.String(unsafe.SliceData(b), len(b))
 }
 
-func (c *ExitCleaner) Push(f func()) int {
-	c.lock.Lock()
-	defer c.lock.Unlock()
-	n := len(c.runner)
-	c.runner = append(c.runner, f)
-	return n
-}
-
-func (c *ExitCleaner) Exit() {
-	flag := true
-	c.once.Do(func() { flag = false })
-	if flag {
-		return
-	}
-	c.lock.Lock()
-	defer c.lock.Unlock()
-	for i := len(c.runner) - 1; i >= 0; i-- {
-		f := c.runner[i]
-		if f == nil {
-			continue
-		}
-		f()
-	}
-}
-
-func SliceToString(b []byte) (s string) {
-	pbytes := (*reflect.SliceHeader)(unsafe.Pointer(&b))
-	pstring := (*reflect.StringHeader)(unsafe.Pointer(&s))
-	pstring.Data = pbytes.Data
-	pstring.Len = pbytes.Len
-	return
-}
-
-func StringToSlice(s string) (b []byte) {
-	pbytes := (*reflect.SliceHeader)(unsafe.Pointer(&b))
-	pstring := (*reflect.StringHeader)(unsafe.Pointer(&s))
-	pbytes.Data = pstring.Data
-	pbytes.Len = pstring.Len
-	pbytes.Cap = pstring.Len
-	return
+func StringToSlice(s string) []byte {
+	return unsafe.Slice(unsafe.StringData(s), len(s))
 }
 
 // DomainRoot is a simple trie tree
@@ -89,13 +49,6 @@ func NewDomainRoot() *DomainRoot {
 	return &DomainRoot{node: &domainNode{nodes: make(map[string]*domainNode)}}
 }
 
-func reverse(ss []string) {
-	last := len(ss) - 1
-	for i := 0; i < len(ss)/2; i++ {
-		ss[i], ss[last-i] = ss[last-i], ss[i]
-	}
-}
-
 func (node *domainNode) markAny() {
 	node.any = true
 	node.hit = true
@@ -112,7 +65,7 @@ func (root *DomainRoot) Put(host string) {
 	if len(domains) < 2 {
 		return
 	}
-	reverse(domains)
+	slices.Reverse(domains)
 	node := root.node
 	for _, domain := range domains {
 		if len(domain) == 0 {
@@ -148,7 +101,7 @@ func (root *DomainRoot) Test(host string) bool {
 	if len(domains) < 2 {
 		return false
 	}
-	reverse(domains)
+	slices.Reverse(domains)
 	node := root.node
 	for _, domain := range domains {
 		if len(domain) == 0 {

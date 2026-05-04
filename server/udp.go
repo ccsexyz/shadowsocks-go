@@ -6,6 +6,7 @@ import (
 	"log"
 	"math/rand/v2"
 	"net"
+	"strconv"
 
 	"github.com/ccsexyz/shadowsocks-go/crypto"
 	"github.com/ccsexyz/shadowsocks-go/internal/utils"
@@ -95,7 +96,7 @@ func (conn *udpRemoteConn) Write(b []byte) (n int, err error) {
 
 func getCreateFuncOfUDPRemoteServer(c *ss.Config) func(*utils.SubConn) (net.Conn, net.Conn, error) {
 	return func(subconn *utils.SubConn) (c1, c2 net.Conn, err error) {
-		conn := newFECConn(subconn, c)
+		conn := net.Conn(subconn)
 		buf := utils.GetBuf(2048)
 		defer utils.PutBuf(buf)
 		n, err := conn.Read(buf)
@@ -119,7 +120,7 @@ func getCreateFuncOfUDPRemoteServer(c *ss.Config) func(*utils.SubConn) (net.Conn
 				return
 			}
 			host = addr.Host()
-			port, _ = strconvAddrPort(addr.Port())
+			port, _ = strconv.Atoi(addr.Port())
 			sipHdr = b[:len(b)-len(data)] // legacy header: ATYP+ADDR+PORT
 		}
 
@@ -175,12 +176,6 @@ func makeATYPHeader(host string, port int) []byte {
 	return hdr
 }
 
-func strconvAddrPort(s string) (int, error) {
-	var p int
-	_, err := fmt.Sscanf(s, "%d", &p)
-	return p, err
-}
-
 func portStr(port int) string { return fmt.Sprintf("%d", port) }
 
 func RunUDPRemoteServer(c *ss.Config) {
@@ -215,7 +210,7 @@ func getCreateFuncOfUDPLocalServer(c *ss.Config) func(*utils.SubConn) (net.Conn,
 			return
 		}
 		c1 = conn
-		c2 = &udpLocalConn{Conn: newFECConn(rconn, subconfig)}
+		c2 = &udpLocalConn{Conn: rconn}
 		return
 	}
 }
@@ -227,11 +222,4 @@ func RunUDPLocalServer(c *ss.Config) {
 	}
 	defer listener.Close()
 	RunUDPServer(listener, c, getCreateFuncOfUDPLocalServer)
-}
-
-func newFECConn(conn net.Conn, cfg *ss.Config) net.Conn {
-	if cfg != nil && cfg.DataShard > 0 && cfg.ParityShard > 0 {
-		return utils.NewFecConn(conn, cfg.DataShard, cfg.ParityShard)
-	}
-	return conn
 }

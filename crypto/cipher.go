@@ -20,7 +20,7 @@ type cipherMemBlock struct {
 }
 
 var cipherBlockPool = sync.Pool{
-	New: func() interface{} {
+	New: func() any {
 		return &cipherMemBlock{}
 	},
 }

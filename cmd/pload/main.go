@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -35,7 +36,7 @@ func main() {
 	if err != nil {
 		log.Fatal("invalid target:", err)
 	}
-	targetPort, err := parsePort(targetPortStr)
+	targetPort, err := strconv.Atoi(targetPortStr)
 	if err != nil {
 		log.Fatal("invalid target port:", err)
 	}
@@ -165,10 +166,4 @@ func socks5Handshake(conn net.Conn, host string, port int) error {
 		return fmt.Errorf("SOCKS5 connect failed: rep=%d", buf[1])
 	}
 	return nil
-}
-
-func parsePort(s string) (int, error) {
-	var p int
-	_, err := fmt.Sscanf(s, "%d", &p)
-	return p, err
 }

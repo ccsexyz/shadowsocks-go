@@ -181,61 +181,6 @@ func (u *udp2022AESUnpacker) UnpackInPlace(b []byte, packetStart, packetLen int)
 	return packetStart + 16 + (len(body) - len(plaintext) - aead.Overhead()), len(plaintext), nil
 }
 
-func (u *udp2022AESUnpacker) NewPacker() (zerocopy.Packer, error) {
-	s := u.session
-	if s == nil {
-		return nil, io.ErrShortBuffer
-	}
-
-	salt := make([]byte, 8)
-	PutRandomBytes(salt)
-	ssid := binary.BigEndian.Uint64(salt)
-
-	aead, err := getAESGCMErr(s.sessionKey)
-	if err != nil {
-		return nil, err
-	}
-
-	blk, err := aes.NewCipher(u.psk)
-	if err != nil {
-		return nil, err
-	}
-
-	return &udp2022AESServerPacker{
-		ssid:  ssid,
-		aead:  aead,
-		block: blk,
-	}, nil
-}
-
-type udp2022AESServerPacker struct {
-	ssid  uint64
-	aead  cipher.AEAD
-	block cipher.Block
-	spid  uint64
-}
-
-func (p *udp2022AESServerPacker) Headroom() zerocopy.Headroom {
-	return zerocopy.Headroom{Front: 16, Rear: 16}
-}
-
-func (p *udp2022AESServerPacker) PackInPlace(b []byte, payloadStart, payloadLen int) (packetStart, packetLen int, err error) {
-	pid := p.spid
-	p.spid++
-
-	sepHdr := b[payloadStart-16 : payloadStart]
-	binary.BigEndian.PutUint64(sepHdr[0:8], p.ssid)
-	binary.BigEndian.PutUint64(sepHdr[8:16], pid)
-
-	nonce := sepHdr[4:16]
-
-	plaintext := b[payloadStart : payloadStart+payloadLen]
-	p.aead.Seal(plaintext[:0], nonce, plaintext, nil)
-
-	p.block.Encrypt(sepHdr, sepHdr)
-	return payloadStart - 16, 16 + payloadLen + p.aead.Overhead(), nil
-}
-
 // --- 2022 ChaCha20-Poly1305 ---
 
 type udp2022ChaChaPacker struct {
@@ -323,50 +268,6 @@ func (u *udp2022ChaChaUnpacker) UnpackInPlace(b []byte, packetStart, packetLen i
 	return packetStart + 24 + (len(body) - len(plaintext) - aead.Overhead()), len(plaintext), nil
 }
 
-func (u *udp2022ChaChaUnpacker) NewPacker() (zerocopy.Packer, error) {
-	s := u.session
-	if s == nil {
-		return nil, io.ErrShortBuffer
-	}
-	return &udp2022ChaChaServerPacker{
-		ssid: randomSessionID(),
-		psk:  u.psk,
-		aead: nil,
-	}, nil
-}
-
-type udp2022ChaChaServerPacker struct {
-	ssid uint64
-	psk  []byte
-	aead cipher.AEAD
-	spid uint64
-}
-
-func (p *udp2022ChaChaServerPacker) Headroom() zerocopy.Headroom {
-	return zerocopy.Headroom{Front: 40, Rear: 16}
-}
-
-func (p *udp2022ChaChaServerPacker) PackInPlace(b []byte, payloadStart, payloadLen int) (packetStart, packetLen int, err error) {
-	if p.aead == nil {
-		p.aead, err = chacha20poly1305.NewX(p.psk)
-		if err != nil {
-			return 0, 0, err
-		}
-	}
-
-	pid := p.spid
-	p.spid++
-
-	nonce := b[payloadStart-40 : payloadStart-16]
-	PutRandomBytes(nonce)
-
-	prefixed := b[payloadStart-16 : payloadStart+payloadLen]
-	binary.BigEndian.PutUint64(prefixed[0:8], p.ssid)
-	binary.BigEndian.PutUint64(prefixed[8:16], pid)
-
-	body := p.aead.Seal(prefixed[:0], nonce, prefixed, nil)
-	return payloadStart - 40, 24 + len(body), nil
-}
 
 // --- helpers ---
 

@@ -22,7 +22,7 @@ func getCreateFuncOfUDPTunServer(c *ss.Config) func(*utils.SubConn) (net.Conn, n
 		}
 		hdrlen := ss.PutHeader(buf, addr.IP.String(), addr.Port)
 		header := buf[:hdrlen]
-		c1 = newFECConn(rconn, c.Backend)
+		c1 = rconn
 		c2 = &udpRemoteConn{Conn: conn, header: header}
 		return
 	}

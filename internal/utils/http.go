@@ -3,8 +3,6 @@ package utils
 import (
 	"bytes"
 	"fmt"
-
-	"github.com/pkg/errors"
 )
 
 const (
@@ -178,7 +176,7 @@ func (p *HTTPHeaderParser) Read(b []byte) (ok bool, err error) {
 		it := bufslice.length
 		c := buf[it]
 		if !isValidChar(c) {
-			err = errors.Wrapf(errInvalidChar, "%d %d", c, bufslice.length)
+			err = fmt.Errorf("%d %d: %w", c, bufslice.length, errInvalidChar)
 			return
 		}
 		bufslice.length++

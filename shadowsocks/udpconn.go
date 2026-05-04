@@ -380,3 +380,11 @@ func (conn *UDPTProxyConn) Read(b []byte) (n int, err error) {
 	n, _, err = conn.ReadFrom(b)
 	return
 }
+
+func listenUDP(c *Config) (net.PacketConn, error) {
+	return utils.NewUDPListener(c.Localaddr)
+}
+
+func dialUDP(c *Config) (net.Conn, error) {
+	return net.Dial("udp", c.Remoteaddr)
+}

@@ -299,8 +299,6 @@ func handleGetConfigRaw(w http.ResponseWriter, r *http.Request) {
 		LocalResolve bool     `json:"local_resolve"`
 		Limit        int      `json:"limit"`
 		LimitPerConn int      `json:"limitperconn"`
-		DataShard    int      `json:"datashard"`
-		ParityShard  int      `json:"parityshard"`
 		AdminAddr    string   `json:"adminaddr,omitempty"`
 		BackendCount int      `json:"backendCount"`
 	}
@@ -332,8 +330,6 @@ func handleGetConfigRaw(w http.ResponseWriter, r *http.Request) {
 		LocalResolve: c.LocalResolve,
 		Limit:        c.Limit,
 		LimitPerConn: c.LimitPerConn,
-		DataShard:    c.DataShard,
-		ParityShard:  c.ParityShard,
 		AdminAddr:    c.AdminAddr,
 		BackendCount: len(c.Backends),
 	}
@@ -457,7 +453,7 @@ func handleAggregateStats(w http.ResponseWriter, r *http.Request) {
 func handleTrafficHistory(w http.ResponseWriter, r *http.Request) {
 	cfgs := getAdminConfigs()
 	if len(cfgs) == 0 {
-		writeJSON(w, []interface{}{})
+		writeJSON(w, []any{})
 		return
 	}
 	trafficHistory.mu.Lock()
@@ -514,7 +510,7 @@ func handleActiveConnections(w http.ResponseWriter, r *http.Request) {
 	}
 	c := cfgs[idx]
 	if c.getStat() == nil || c.getStat().tracker == nil {
-		writeJSON(w, []interface{}{})
+		writeJSON(w, []any{})
 		return
 	}
 	writeJSON(w, c.getStat().tracker.Active())
@@ -573,7 +569,7 @@ func handleConnectionHistory(w http.ResponseWriter, r *http.Request) {
 	}
 	c := cfgs[idx]
 	if c.getStat() == nil || c.getStat().tracker == nil {
-		writeJSON(w, []interface{}{})
+		writeJSON(w, []any{})
 		return
 	}
 	writeJSON(w, c.getStat().tracker.History())
@@ -593,7 +589,7 @@ func handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	c := cfgs[idx]
 
-	var body map[string]interface{}
+	var body map[string]any
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid body", http.StatusBadRequest)
 		return
@@ -714,10 +710,10 @@ func handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 			applied = append(applied, key)
 		}
 	}
-	writeJSON(w, map[string]interface{}{"status": "ok", "applied": applied})
+	writeJSON(w, map[string]any{"status": "ok", "applied": applied})
 }
 
-func toBool(v interface{}) (bool, error) {
+func toBool(v any) (bool, error) {
 	switch val := v.(type) {
 	case bool:
 		return val, nil
@@ -729,7 +725,7 @@ func toBool(v interface{}) (bool, error) {
 	return false, strconv.ErrSyntax
 }
 
-func toInt(v interface{}) (int, error) {
+func toInt(v any) (int, error) {
 	switch val := v.(type) {
 	case float64:
 		return int(val), nil
@@ -769,7 +765,7 @@ func handleUpdateBackend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var body map[string]interface{}
+	var body map[string]any
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid body", http.StatusBadRequest)
 		return
@@ -803,7 +799,7 @@ func handleUpdateBackend(w http.ResponseWriter, r *http.Request) {
 			applied = append(applied, key)
 		}
 	}
-	writeJSON(w, map[string]interface{}{"status": "ok", "applied": applied})
+	writeJSON(w, map[string]any{"status": "ok", "applied": applied})
 }
 
 func handleDeleteBackend(w http.ResponseWriter, r *http.Request) {
@@ -893,10 +889,10 @@ func handleAddBackend(w http.ResponseWriter, r *http.Request) {
 		b.initRuntime().limiters = append(b.initRuntime().limiters, parentLimiters...)
 	}
 	c.Backends = append(c.Backends, b)
-	writeJSON(w, map[string]interface{}{"status": "ok", "index": len(c.Backends) - 1})
+	writeJSON(w, map[string]any{"status": "ok", "index": len(c.Backends) - 1})
 }
 
-func toString(v interface{}) (string, error) {
+func toString(v any) (string, error) {
 	switch val := v.(type) {
 	case string:
 		return val, nil
@@ -963,7 +959,7 @@ func handleSetActiveBackend(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]string{"status": "ok", "active": body.Nickname})
 }
 
-func writeJSON(w http.ResponseWriter, v interface{}) {
+func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(v)
 }

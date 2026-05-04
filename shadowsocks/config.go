@@ -78,7 +78,7 @@ type runtime struct {
 	Dlogger       *log.Logger
 	Logger        *log.Logger
 	logfile       *os.File
-	Any           interface{}
+	Any           any
 	Die           chan bool
 	pool          *ConnPool
 	closers       []cb
@@ -114,12 +114,6 @@ type Config struct {
 	FilterCapacity int       `json:"filtcap"`
 	Backend        *Config   `json:"backend"`
 	Backends       []*Config `json:"backends"`
-	UseMul         bool      `json:"usemul"`
-	UseUDP         bool      `json:"useudp"`
-	MulConn        int       `json:"mulconn"`
-	FakeTCPAddr    string    `json:"faketcpaddr"`
-	DataShard      int       `json:"datashard"`
-	ParityShard    int       `json:"parityshard"`
 	SSProxy        bool      `json:"ssproxy"`
 	AdminAddr      string    `json:"adminaddr"`
 	ActiveBackend  string    `json:"active,omitempty"`
@@ -492,19 +486,19 @@ func CheckConfig(c *Config) {
 	}
 }
 
-func (c *Config) LogV(v ...interface{}) {
+func (c *Config) LogV(v ...any) {
 	if vl := c.getVLogger(); vl != nil {
 		vl.Output(2, fmt.Sprintln(v...))
 	}
 }
 
-func (c *Config) LogD(v ...interface{}) {
+func (c *Config) LogD(v ...any) {
 	if dl := c.getDLogger(); dl != nil {
 		dl.Output(2, fmt.Sprintln(v...))
 	}
 }
 
-func (c *Config) Log(v ...interface{}) {
+func (c *Config) Log(v ...any) {
 	if l := c.getLogger(); l != nil {
 		l.Output(2, fmt.Sprintln(v...))
 	}

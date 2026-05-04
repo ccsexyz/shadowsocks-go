@@ -124,34 +124,6 @@ func init() {
 	}()
 }
 
-// strip2022Header removes the SIP022 UDP main header (type + timestamp + paddingLen + padding)
-// from b, returning the remaining bytes (ATYP + address + port + payload).
-// Returns b unchanged if the header doesn't look like a valid 2022 header.
-func strip2022Header(b []byte) []byte {
-	if len(b) < 12 || (b[0] != 0 && b[0] != 1) {
-		return b
-	}
-	// Timestamp check: ±30 seconds as required by spec
-	ts := int64(binary.BigEndian.Uint64(b[1:9]))
-	now := time.Now().Unix()
-	diff := now - ts
-	if diff < 0 {
-		diff = -diff
-	}
-	if diff > 30 {
-		return b // timestamp too far off, not a valid 2022 header
-	}
-	padLen := int(binary.BigEndian.Uint16(b[9:11]))
-	if padLen > 900 {
-		return b // padding exceeds SIP022 max
-	}
-	skip := 11 + padLen
-	if len(b) < skip+1 {
-		return b
-	}
-	return b[skip:]
-}
-
 func randomSessionID() uint64 {
 	var b [8]byte
 	if _, err := crand.Read(b[:]); err != nil {
@@ -168,11 +140,6 @@ func randomSessionID() uint64 {
 
 var clientOutSIDs sync.Map // string(psk) → uint64
 var serverOutSIDs sync.Map // string(psk) → uint64
-
-// SessionRole marks a CipherBlock as client-side or server-side.
-type SessionRole interface {
-	SetServer()
-}
 
 func outSIDsFor(role byte) *sync.Map {
 	if role == 0 {
