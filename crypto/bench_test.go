@@ -165,7 +165,7 @@ func BenchmarkZerocopyRoundtrip(b *testing.B) {
 					b.Fatal(err)
 				}
 				ph, uh := p.Headroom(), u.Headroom()
-					hr := zerocopy.Headroom{Front: max(ph.Front, uh.Front), Rear: max(ph.Rear, uh.Rear)}
+				hr := zerocopy.Headroom{Front: max(ph.Front, uh.Front), Rear: max(ph.Rear, uh.Rear)}
 				payload := makePayload(sz)
 				buf := make([]byte, hr.Front+sz+hr.Rear)
 				b.SetBytes(int64(sz))

@@ -470,6 +470,7 @@ func ss2022MultiAcceptHandler2(conn Conn, lis *listener, ctx *parseContext) (c C
 
 	svSalt := utils.GetRandomBytes(chs.Ivlen)
 	ssConn := newCryptoConn(conn, newServerAead2022Codec(chs.Method, psk, svSalt, ctx.cliSalt, ctx.cliCipher))
+	ssConn.DeferClose()
 	conn = ssConn
 	if len(ctx.data) != 0 {
 		conn = &RemainConn{Conn: ssConn, remain: ctx.data}

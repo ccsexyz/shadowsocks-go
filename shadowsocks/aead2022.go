@@ -168,6 +168,7 @@ func ss2022AcceptHandler(conn Conn, lis *listener) AcceptResult {
 
 	svSalt := utils.GetRandomBytes(saltLen)
 	ssConn := newCryptoConn(conn, newServerAead2022Codec(lis.c.Method, psk, svSalt, salt, ciph))
+	ssConn.DeferClose()
 	conn.SetDst(addr)
 
 	if len(data) > 0 {

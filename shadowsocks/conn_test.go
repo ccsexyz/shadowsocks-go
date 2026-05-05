@@ -821,3 +821,88 @@ func TestAEAD2022ConcurrentReadWrite(t *testing.T) {
 		t.Error(e)
 	}
 }
+
+// --- DeferClose tests ---
+
+func TestDeferClose_DelaysClose(t *testing.T) {
+	server, client := net.Pipe()
+
+	cc := newCryptoConn(newBaseConn(client, nil), nil)
+	cc.DeferClose()
+
+	start := time.Now()
+	cc.Close()
+	elapsed := time.Since(start)
+
+	// Close() should return immediately (it spawns a goroutine for the delay)
+	if elapsed > 50*time.Millisecond {
+		t.Errorf("Close() took %v, expected immediate return (deferred to goroutine)", elapsed)
+	}
+
+	// net.Pipe: if client end is closed, Read on server returns ErrClosedPipe.
+	// If client end is NOT closed, Read blocks until timeout.
+	// After DeferClose, client.Close is scheduled in 8-71s, so Read should
+	// block (conn still alive) and hit the deadline.
+	server.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+	buf := make([]byte, 1)
+	_, err := server.Read(buf)
+
+	if nerr, ok := err.(net.Error); ok && nerr.Timeout() {
+		t.Log("read timed out — pipe still open, DeferClose working")
+	} else if err != nil {
+		t.Errorf("underlying conn saw close too early: %v (expected timeout)", err)
+	}
+}
+
+func TestDeferClose_NoDeferClosesImmediately(t *testing.T) {
+	server, client := net.Pipe()
+
+	cc := newCryptoConn(newBaseConn(client, nil), nil)
+
+	cc.Close()
+
+	// net.Pipe: when client end is closed, server Read returns ErrClosedPipe
+	server.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+	buf := make([]byte, 1)
+	_, err := server.Read(buf)
+	if err == nil {
+		t.Error("underlying conn still open, expected it to be closed")
+	} else if nerr, ok := err.(net.Error); ok && nerr.Timeout() {
+		t.Error("read timed out — conn should be closed, not just idle")
+	}
+}
+
+func TestDeferClose_CancelRestoresImmediate(t *testing.T) {
+	server, client := net.Pipe()
+
+	cc := newCryptoConn(newBaseConn(client, nil), nil)
+	cc.DeferClose()
+	cc.CancelDeferClose()
+
+	cc.Close()
+
+	server.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+	buf := make([]byte, 1)
+	_, err := server.Read(buf)
+	if err == nil {
+		t.Error("underlying conn still open after CancelDeferClose + Close")
+	} else if nerr, ok := err.(net.Error); ok && nerr.Timeout() {
+		t.Error("read timed out — conn should be closed after CancelDeferClose")
+	}
+}
+
+func TestDeferClose_FlagToggle(t *testing.T) {
+	server, _ := net.Pipe()
+
+	cc := newCryptoConn(newBaseConn(server, nil), nil)
+	cc.DeferClose()
+
+	if !cc.deferClose {
+		t.Error("DeferClose() did not set deferClose flag")
+	}
+
+	cc.CancelDeferClose()
+	if cc.deferClose {
+		t.Error("CancelDeferClose() did not clear deferClose flag")
+	}
+}

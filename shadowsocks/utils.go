@@ -100,7 +100,7 @@ func ParseAddrWithMultipleBackendsForUDP(b []byte, configs []*Config) (*parseCon
 
 	b2 := make([]byte, len(b))
 
-		for _, cfg := range configs {
+	for _, cfg := range configs {
 		cb, err := crypto.NewCipherBlock(cfg.Method, cfg.Password)
 		if err != nil {
 			continue

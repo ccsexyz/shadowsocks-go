@@ -268,7 +268,6 @@ func (u *udp2022ChaChaUnpacker) UnpackInPlace(b []byte, packetStart, packetLen i
 	return packetStart + 24 + (len(body) - len(plaintext) - aead.Overhead()), len(plaintext), nil
 }
 
-
 // --- helpers ---
 
 func getAESGCM(key []byte) cipher.AEAD {
