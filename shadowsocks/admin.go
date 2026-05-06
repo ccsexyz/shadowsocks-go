@@ -1,12 +1,16 @@
 package ss
 
 import (
+	"bytes"
 	"embed"
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"log"
 	"net/http"
+	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -24,6 +28,122 @@ var adminRegistry struct {
 
 var adminStartTime = time.Now()
 
+// SSE hub for real-time event streaming.
+var sseHub = newSSEHub()
+
+type sseBroker struct {
+	mu      sync.RWMutex
+	clients map[chan []byte]struct{}
+}
+
+func newSSEHub() *sseBroker {
+	return &sseBroker{clients: make(map[chan []byte]struct{})}
+}
+
+func (h *sseBroker) subscribe() chan []byte {
+	ch := make(chan []byte, 64)
+	h.mu.Lock()
+	h.clients[ch] = struct{}{}
+	h.mu.Unlock()
+	return ch
+}
+
+func (h *sseBroker) unsubscribe(ch chan []byte) {
+	h.mu.Lock()
+	delete(h.clients, ch)
+	h.mu.Unlock()
+}
+
+func (h *sseBroker) publish(event string, data []byte) {
+	msg := make([]byte, 0, len(event)+len(data)+16)
+	msg = append(msg, "event: "...)
+	msg = append(msg, event...)
+	msg = append(msg, "\ndata: "...)
+	msg = append(msg, data...)
+	msg = append(msg, "\n\n"...)
+	h.mu.RLock()
+	for ch := range h.clients {
+		select {
+		case ch <- msg:
+		default: // drop if client is slow
+		}
+	}
+	h.mu.RUnlock()
+}
+
+// Per-connection event hub: connID → set of subscriber channels
+var connEventHub = struct {
+	mu   sync.RWMutex
+	subs map[uint64]map[chan []byte]struct{}
+}{
+	subs: make(map[uint64]map[chan []byte]struct{}),
+}
+
+func connEventSubscribe(connID uint64) chan []byte {
+	ch := make(chan []byte, 64)
+	connEventHub.mu.Lock()
+	if connEventHub.subs[connID] == nil {
+		connEventHub.subs[connID] = make(map[chan []byte]struct{})
+	}
+	connEventHub.subs[connID][ch] = struct{}{}
+	connEventHub.mu.Unlock()
+	return ch
+}
+
+func connEventUnsubscribe(connID uint64, ch chan []byte) {
+	connEventHub.mu.Lock()
+	if m := connEventHub.subs[connID]; m != nil {
+		delete(m, ch)
+		if len(m) == 0 {
+			delete(connEventHub.subs, connID)
+		}
+	}
+	connEventHub.mu.Unlock()
+}
+
+func connEventPublish(connID uint64, event string, data []byte) {
+	msg := make([]byte, 0, len(event)+len(data)+16)
+	msg = append(msg, "event: "...)
+	msg = append(msg, event...)
+	msg = append(msg, "\ndata: "...)
+	msg = append(msg, data...)
+	msg = append(msg, "\n\n"...)
+	connEventHub.mu.RLock()
+	for ch := range connEventHub.subs[connID] {
+		select {
+		case ch <- msg:
+		default:
+		}
+	}
+	connEventHub.mu.RUnlock()
+}
+
+func adminConfigIndex(c *Config) int {
+	cfgs := getAdminConfigs()
+	for i, cfg := range cfgs {
+		if cfg == c {
+			return i
+		}
+	}
+	return -1
+}
+
+func ssePublishConfig(event string, c *Config, data any) {
+	i := adminConfigIndex(c)
+	if i < 0 {
+		return
+	}
+	ssePublishIndex(event, i, data)
+}
+
+func ssePublishIndex(event string, idx int, data any) {
+	b, err := json.Marshal(data)
+	if err != nil {
+		return
+	}
+	sseHub.publish(event, b)
+}
+
 // traffic history — circular buffer of per-index rate samples for sparklines
 const trafficHistorySize = 60
 
@@ -34,6 +154,23 @@ var trafficHistory = struct {
 	filled bool
 }{
 	buf: make([]trafficSample, trafficHistorySize*64), // up to 64 configs
+}
+
+const minuteHistorySize = 30
+const minuteInterval = 30
+
+var minuteHistory = struct {
+	mu      sync.Mutex
+	buf     []trafficSample
+	pos     int
+	filled  bool
+	tick    int
+	accRead []int64
+	accWrit []int64
+}{
+	buf:     make([]trafficSample, minuteHistorySize*64),
+	accRead: make([]int64, 64),
+	accWrit: make([]int64, 64),
 }
 
 type trafficSample struct {
@@ -76,6 +213,9 @@ func sampleTraffic() {
 	}
 	for i, c := range cfgs {
 		if c.getStat() != nil {
+			if c.getStat().configIndex < 0 {
+				c.getStat().configIndex = i
+			}
 			rr, wr, cr := c.getStat().Snap()
 			trafficHistory.buf[base+i] = trafficSample{
 				readRate:  rr,
@@ -91,6 +231,61 @@ func sampleTraffic() {
 		trafficHistory.filled = true
 	}
 	trafficHistory.mu.Unlock()
+
+	// Aggregate into minute-level history
+	minuteHistory.mu.Lock()
+	// ensure accumulator arrays are large enough
+	for len(minuteHistory.accRead) < len(cfgs) {
+		minuteHistory.accRead = append(minuteHistory.accRead, 0)
+		minuteHistory.accWrit = append(minuteHistory.accWrit, 0)
+	}
+	for i := range cfgs {
+		trafficHistory.mu.Lock()
+		bi := trafficHistory.pos
+		if bi == 0 && trafficHistory.filled {
+			bi = trafficHistorySize
+		}
+		bi = (bi - 1 + trafficHistorySize) % trafficHistorySize
+		idx := bi*len(cfgs) + i
+		if idx < len(trafficHistory.buf) {
+			minuteHistory.accRead[i] += trafficHistory.buf[idx].readRate
+			minuteHistory.accWrit[i] += trafficHistory.buf[idx].writRate
+		}
+		trafficHistory.mu.Unlock()
+	}
+	minuteHistory.tick++
+	if minuteHistory.tick >= minuteInterval {
+		minuteHistory.tick = 0
+		base := minuteHistory.pos * len(cfgs)
+		need := (minuteHistory.pos + 1) * len(cfgs)
+		for len(minuteHistory.buf) < need {
+			minuteHistory.buf = append(minuteHistory.buf, make([]trafficSample, minuteHistorySize*len(cfgs))...)
+		}
+		for i := range cfgs {
+			minuteHistory.buf[base+i] = trafficSample{
+				readRate: minuteHistory.accRead[i],
+				writRate: minuteHistory.accWrit[i],
+			}
+			minuteHistory.accRead[i] = 0
+			minuteHistory.accWrit[i] = 0
+		}
+		minuteHistory.pos++
+		if minuteHistory.pos >= minuteHistorySize {
+			minuteHistory.pos = 0
+			minuteHistory.filled = true
+		}
+	}
+	minuteHistory.mu.Unlock()
+
+	// emit SSE event for each config
+	for i, c := range cfgs {
+		ssePublishIndex("stats_updated", i, map[string]interface{}{
+			"configIndex": i,
+			"connections": atomic.LoadInt32(&c.getStat().connections),
+			"readRate":    trafficHistory.buf[base+i].readRate,
+			"writRate":    trafficHistory.buf[base+i].writRate,
+		})
+	}
 }
 
 // StartAdminServer starts the admin HTTP server on addr.
@@ -116,8 +311,20 @@ func StartAdminServer(addr string) {
 	mux.HandleFunc("POST /api/configs/{index}/backends", handleAddBackend)
 	mux.HandleFunc("GET /api/configs/{index}/active", handleGetActiveBackend)
 	mux.HandleFunc("PUT /api/configs/{index}/active", handleSetActiveBackend)
+	mux.HandleFunc("GET /api/configs/{index}/rejects", handleRejectCounters)
+	mux.HandleFunc("GET /api/configs/{index}/targets", handleTargets)
+	mux.HandleFunc("GET /api/configs/{index}/targets/top", handleTargetsTop)
+	mux.HandleFunc("GET /api/configs/{index}/connections/top", handleConnectionsTop)
+	mux.HandleFunc("GET /api/configs/{index}/connections/distribution", handleConnDistribution)
+	mux.HandleFunc("GET /api/traffic/minutes", handleMinuteHistory)
+	mux.HandleFunc("GET /api/process", handleProcessHistory)
+	mux.HandleFunc("GET /api/process/minutes", handleProcessMinuteHistory)
+	mux.HandleFunc("GET /api/configs/{index}/connection/{id}/events", handleConnSSE)
+	mux.HandleFunc("GET /api/events", handleSSE)
 
 	mux.Handle("GET /", http.FileServer(http.FS(adminUI)))
+
+	StartProcessMonitor()
 
 	// background traffic sampling every 2s
 	go func() {
@@ -130,44 +337,56 @@ func StartAdminServer(addr string) {
 
 	go func() {
 		log.Printf("admin webui listening on %s", addr)
-		if err := http.ListenAndServe(addr, mux); err != nil {
+		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+			w.Header().Set("Pragma", "no-cache")
+			w.Header().Set("Expires", "0")
+			mux.ServeHTTP(w, r)
+		})
+		if err := http.ListenAndServe(addr, handler); err != nil {
 			log.Printf("admin server error: %v", err)
 		}
 	}()
 }
 
 type configSummary struct {
-	Index            int              `json:"index"`
-	Nickname         string           `json:"nickname"`
-	Type             string           `json:"type"`
-	LocalAddr        string           `json:"localaddr"`
-	RemoteAddr       string           `json:"remoteaddr"`
-	Disabled         bool             `json:"disabled"`
-	Connections      int32            `json:"connections"`
-	TotalConnections int64            `json:"totalConnections"`
-	PeakConnections  int32            `json:"peakConnections"`
-	ConnRate         int64            `json:"connRate"`
-	TotalReadBytes   int64            `json:"totalReadBytes"`
-	TotalWritBytes   int64            `json:"totalWritBytes"`
-	ReadRate         int64            `json:"readRate"`
-	WritRate         int64            `json:"writRate"`
-	AutoProxy        bool             `json:"autoproxy"`
-	LogHTTP          bool             `json:"loghttp"`
-	Method           string           `json:"method"`
-	ActiveBackend    string           `json:"active,omitempty"`
-	Backends         []backendSummary `json:"backends"`
+	Index            int                    `json:"index"`
+	Nickname         string                 `json:"nickname"`
+	Type             string                 `json:"type"`
+	LocalAddr        string                 `json:"localaddr"`
+	RemoteAddr       string                 `json:"remoteaddr"`
+	Disabled         bool                   `json:"disabled"`
+	Connections      int32                  `json:"connections"`
+	TotalConnections int64                  `json:"totalConnections"`
+	PeakConnections  int32                  `json:"peakConnections"`
+	ConnRate         int64                  `json:"connRate"`
+	TotalReadBytes   int64                  `json:"totalReadBytes"`
+	TotalWritBytes   int64                  `json:"totalWritBytes"`
+	ReadRate         int64                  `json:"readRate"`
+	WritRate         int64                  `json:"writRate"`
+	AutoProxy        bool                   `json:"autoproxy"`
+	LogHTTP          bool                   `json:"loghttp"`
+	Method           string                 `json:"method"`
+	ActiveBackend    string                 `json:"active,omitempty"`
+	MethodStats      map[string]*methodStat `json:"methodStats,omitempty"`
+	Backends         []backendSummary       `json:"backends"`
 }
 
 type backendSummary struct {
-	Nickname       string `json:"nickname"`
-	RemoteAddr     string `json:"remoteaddr"`
-	Disabled       bool   `json:"disabled"`
-	Method         string `json:"method"`
-	Target         string `json:"target,omitempty"`
-	Forward        string `json:"forward,omitempty"`
-	Connections    int32  `json:"connections"`
-	TotalReadBytes int64  `json:"totalReadBytes"`
-	TotalWritBytes int64  `json:"totalWritBytes"`
+	Nickname         string  `json:"nickname"`
+	RemoteAddr       string  `json:"remoteaddr"`
+	Disabled         bool    `json:"disabled"`
+	Method           string  `json:"method"`
+	Target           string  `json:"target,omitempty"`
+	Forward          string  `json:"forward,omitempty"`
+	Connections      int32   `json:"connections"`
+	TotalReadBytes   int64   `json:"totalReadBytes"`
+	TotalWritBytes   int64   `json:"totalWritBytes"`
+	DialSuccess      int64   `json:"dialSuccess,omitempty"`
+	DialFail         int64   `json:"dialFail,omitempty"`
+	DialTimeout      int64   `json:"dialTimeout,omitempty"`
+	DialAvgLatencyMs float64 `json:"dialAvgLatencyMs,omitempty"`
+	HealthStatus     string  `json:"healthStatus,omitempty"`
 }
 
 type aggregateStats struct {
@@ -214,6 +433,9 @@ func buildConfigSummary(i int, c *Config, numConfigs int) configSummary {
 		}
 	}
 	trafficHistory.mu.Unlock()
+	if c.getStat() != nil {
+		s.MethodStats = c.getStat().getMethodStats()
+	}
 	for _, b := range c.Backends {
 		bs := backendSummary{
 			Nickname:   b.Nickname,
@@ -227,6 +449,19 @@ func buildConfigSummary(i int, c *Config, numConfigs int) configSummary {
 			bs.Connections = atomic.LoadInt32(&b.getStat().connections)
 			bs.TotalReadBytes = atomic.LoadInt64(&b.getStat().totalReadBytes)
 			bs.TotalWritBytes = atomic.LoadInt64(&b.getStat().totalWritBytes)
+		}
+		if b.initRuntime().dialHealth != nil {
+			bs.DialSuccess, bs.DialFail, bs.DialTimeout, bs.DialAvgLatencyMs = b.initRuntime().dialHealth.snapshot()
+			total := bs.DialSuccess + bs.DialFail
+			if total == 0 {
+				bs.HealthStatus = "unknown"
+			} else if bs.DialFail == 0 {
+				bs.HealthStatus = "green"
+			} else if float64(bs.DialFail)/float64(total) < 0.1 {
+				bs.HealthStatus = "yellow"
+			} else {
+				bs.HealthStatus = "red"
+			}
 		}
 		s.Backends = append(s.Backends, bs)
 	}
@@ -361,6 +596,10 @@ func handleToggleConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cfgs[idx].setDisabled(body.Disabled)
+	ssePublishIndex("config_status_changed", idx, map[string]any{
+		"configIndex": idx,
+		"disabled":    body.Disabled,
+	})
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
@@ -427,6 +666,11 @@ func handleToggleBackend(w http.ResponseWriter, r *http.Request) {
 	for _, b := range cfgs[idx].Backends {
 		if b.Nickname == nickname {
 			b.setDisabled(body.Disabled)
+			ssePublishIndex("backend_status_changed", idx, map[string]any{
+				"configIndex": idx,
+				"nickname":    nickname,
+				"disabled":    body.Disabled,
+			})
 			writeJSON(w, map[string]string{"status": "ok"})
 			return
 		}
@@ -496,6 +740,56 @@ func handleTrafficHistory(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, result)
 }
 
+func handleProcessHistory(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, getProcessHistory())
+}
+
+func handleProcessMinuteHistory(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, getProcessMinuteHistory())
+}
+
+func handleMinuteHistory(w http.ResponseWriter, r *http.Request) {
+	cfgs := getAdminConfigs()
+	if len(cfgs) == 0 {
+		writeJSON(w, []any{})
+		return
+	}
+	minuteHistory.mu.Lock()
+	defer minuteHistory.mu.Unlock()
+
+	type sample struct {
+		ReadRate  int64 `json:"readRate"`
+		WritRate  int64 `json:"writRate"`
+		ConnRate  int64 `json:"connRate"`
+		ConnCount int32 `json:"connCount"`
+	}
+
+	size := minuteHistorySize
+	if !minuteHistory.filled {
+		size = minuteHistory.pos
+	}
+
+	result := make([][]sample, len(cfgs))
+	for ci := range cfgs {
+		result[ci] = make([]sample, size)
+		for si := 0; si < size; si++ {
+			idx := si
+			if minuteHistory.filled {
+				idx = (minuteHistory.pos + si) % minuteHistorySize
+			}
+			base := idx * len(cfgs)
+			if base+ci < len(minuteHistory.buf) {
+				ts := minuteHistory.buf[base+ci]
+				result[ci][si] = sample{
+					ReadRate: ts.readRate,
+					WritRate: ts.writRate,
+				}
+			}
+		}
+	}
+	writeJSON(w, result)
+}
+
 func handleActiveConnections(w http.ResponseWriter, r *http.Request) {
 	idxStr := r.PathValue("index")
 	idx, err := strconv.Atoi(idxStr)
@@ -513,7 +807,13 @@ func handleActiveConnections(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, []any{})
 		return
 	}
-	writeJSON(w, c.getStat().tracker.Active())
+	conns := c.getStat().tracker.Active()
+	q := r.URL.Query()
+	if search := q.Get("q"); search != "" {
+		conns = filterConns(conns, search)
+	}
+	sortConns(conns, q.Get("sort"), q.Get("order"))
+	writeJSON(w, conns)
 }
 
 func handleGetConnection(w http.ResponseWriter, r *http.Request) {
@@ -572,7 +872,13 @@ func handleConnectionHistory(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, []any{})
 		return
 	}
-	writeJSON(w, c.getStat().tracker.History())
+	conns := c.getStat().tracker.History()
+	q := r.URL.Query()
+	if search := q.Get("q"); search != "" {
+		conns = filterConns(conns, search)
+	}
+	sortConns(conns, q.Get("sort"), q.Get("order"))
+	writeJSON(w, conns)
 }
 
 func handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
@@ -622,6 +928,15 @@ func handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		case "ssproxy":
 			if v, e := toBool(val); e == nil {
 				c.SSProxy = v
+				ok = true
+			}
+		case "disable":
+			if v, e := toBool(val); e == nil {
+				c.setDisabled(v)
+				ssePublishIndex("config_status_changed", idx, map[string]any{
+					"configIndex": idx,
+					"disabled":    v,
+				})
 				ok = true
 			}
 		case "mitm":
@@ -957,6 +1272,341 @@ func handleSetActiveBackend(w http.ResponseWriter, r *http.Request) {
 	}
 	cfgs[idx].ActiveBackend = body.Nickname
 	writeJSON(w, map[string]string{"status": "ok", "active": body.Nickname})
+}
+
+func handleRejectCounters(w http.ResponseWriter, r *http.Request) {
+	idxStr := r.PathValue("index")
+	idx, err := strconv.Atoi(idxStr)
+	if err != nil {
+		http.Error(w, "invalid index", http.StatusBadRequest)
+		return
+	}
+	cfgs := getAdminConfigs()
+	if idx < 0 || idx >= len(cfgs) {
+		http.Error(w, "index out of range", http.StatusNotFound)
+		return
+	}
+	s := cfgs[idx].getStat()
+	if s == nil {
+		writeJSON(w, RejectCounters{})
+		return
+	}
+	writeJSON(w, s.getRejectCounters())
+}
+
+func handleTargets(w http.ResponseWriter, r *http.Request) {
+	idxStr := r.PathValue("index")
+	idx, err := strconv.Atoi(idxStr)
+	if err != nil {
+		http.Error(w, "invalid index", http.StatusBadRequest)
+		return
+	}
+	cfgs := getAdminConfigs()
+	if idx < 0 || idx >= len(cfgs) {
+		http.Error(w, "index out of range", http.StatusNotFound)
+		return
+	}
+	tt := cfgs[idx].GetTargetTracker()
+	if tt == nil {
+		writeJSON(w, []*TargetStats{})
+		return
+	}
+	writeJSON(w, tt.All())
+}
+
+func handleTargetsTop(w http.ResponseWriter, r *http.Request) {
+	idxStr := r.PathValue("index")
+	idx, err := strconv.Atoi(idxStr)
+	if err != nil {
+		http.Error(w, "invalid index", http.StatusBadRequest)
+		return
+	}
+	cfgs := getAdminConfigs()
+	if idx < 0 || idx >= len(cfgs) {
+		http.Error(w, "index out of range", http.StatusNotFound)
+		return
+	}
+	tt := cfgs[idx].GetTargetTracker()
+	if tt == nil {
+		writeJSON(w, []*TargetStats{})
+		return
+	}
+	n := 10
+	if v := r.URL.Query().Get("n"); v != "" {
+		if p, e := strconv.Atoi(v); e == nil && p > 0 {
+			n = p
+		}
+	}
+	by := r.URL.Query().Get("by")
+	if by == "connections" {
+		writeJSON(w, tt.TopByConns(n))
+	} else {
+		writeJSON(w, tt.Top(n))
+	}
+}
+
+func handleConnectionsTop(w http.ResponseWriter, r *http.Request) {
+	idxStr := r.PathValue("index")
+	idx, err := strconv.Atoi(idxStr)
+	if err != nil {
+		http.Error(w, "invalid index", http.StatusBadRequest)
+		return
+	}
+	cfgs := getAdminConfigs()
+	if idx < 0 || idx >= len(cfgs) {
+		http.Error(w, "index out of range", http.StatusNotFound)
+		return
+	}
+	c := cfgs[idx]
+	if c.getStat() == nil || c.getStat().tracker == nil {
+		writeJSON(w, []any{})
+		return
+	}
+	conns := c.getStat().tracker.Active()
+	n := 5
+	if v := r.URL.Query().Get("n"); v != "" {
+		if p, e := strconv.Atoi(v); e == nil && p > 0 {
+			n = p
+		}
+	}
+	by := r.URL.Query().Get("by")
+	sort.Slice(conns, func(i, j int) bool {
+		switch by {
+		case "writBytes":
+			return conns[i].WritBytes > conns[j].WritBytes
+		case "duration":
+			di := time.Since(conns[i].StartTime)
+			dj := time.Since(conns[j].StartTime)
+			return di > dj
+		default: // readBytes
+			return conns[i].ReadBytes > conns[j].ReadBytes
+		}
+	})
+	if len(conns) > n {
+		conns = conns[:n]
+	}
+	writeJSON(w, conns)
+}
+
+type connDistribution struct {
+	P50Ms  float64 `json:"p50Ms"`
+	P95Ms  float64 `json:"p95Ms"`
+	P99Ms  float64 `json:"p99Ms"`
+	MinMs  float64 `json:"minMs"`
+	MaxMs  float64 `json:"maxMs"`
+	MeanMs float64 `json:"meanMs"`
+	Count  int     `json:"count"`
+}
+
+func handleConnDistribution(w http.ResponseWriter, r *http.Request) {
+	idxStr := r.PathValue("index")
+	idx, err := strconv.Atoi(idxStr)
+	if err != nil {
+		http.Error(w, "invalid index", http.StatusBadRequest)
+		return
+	}
+	cfgs := getAdminConfigs()
+	if idx < 0 || idx >= len(cfgs) {
+		http.Error(w, "index out of range", http.StatusNotFound)
+		return
+	}
+	c := cfgs[idx]
+	if c.getStat() == nil || c.getStat().tracker == nil {
+		writeJSON(w, connDistribution{})
+		return
+	}
+	history := c.getStat().tracker.History()
+	durations := make([]float64, 0, len(history))
+	for _, rec := range history {
+		if rec.EndTime != nil {
+			durMs := float64(rec.EndTime.Sub(rec.StartTime).Microseconds()) / 1000.0
+			if durMs >= 0 {
+				durations = append(durations, durMs)
+			}
+		}
+	}
+	if len(durations) == 0 {
+		writeJSON(w, connDistribution{Count: 0})
+		return
+	}
+	sort.Float64s(durations)
+	n := len(durations)
+	var sum float64
+	for _, d := range durations {
+		sum += d
+	}
+	writeJSON(w, connDistribution{
+		P50Ms:  durations[n*50/100],
+		P95Ms:  durations[n*95/100],
+		P99Ms:  durations[n*99/100],
+		MinMs:  durations[0],
+		MaxMs:  durations[n-1],
+		MeanMs: sum / float64(n),
+		Count:  n,
+	})
+}
+
+func filterConns(conns []*ConnRecord, search string) []*ConnRecord {
+	search = strings.ToLower(search)
+	filtered := make([]*ConnRecord, 0, len(conns))
+	for _, cr := range conns {
+		if strings.Contains(strings.ToLower(cr.Host), search) ||
+			strings.Contains(strings.ToLower(cr.DstAddr), search) ||
+			strings.Contains(strings.ToLower(cr.SrcAddr), search) {
+			filtered = append(filtered, cr)
+		}
+	}
+	return filtered
+}
+
+func sortConns(conns []*ConnRecord, sortBy, order string) {
+	desc := order != "asc"
+	sort.Slice(conns, func(i, j int) bool {
+		var less bool
+		switch sortBy {
+		case "writBytes":
+			less = conns[i].WritBytes < conns[j].WritBytes
+		case "duration":
+			di := time.Since(conns[i].StartTime)
+			dj := time.Since(conns[j].StartTime)
+			less = di < dj
+		case "target":
+			ti := conns[i].DstAddr
+			tj := conns[j].DstAddr
+			if conns[i].Host != "" {
+				ti = conns[i].Host
+			}
+			if conns[j].Host != "" {
+				tj = conns[j].Host
+			}
+			less = ti < tj
+		case "lastActive":
+			less = conns[i].LastActivity < conns[j].LastActivity
+		default: // readBytes
+			less = conns[i].ReadBytes < conns[j].ReadBytes
+		}
+		if desc {
+			return !less
+		}
+		return less
+	})
+}
+
+func handleConnSSE(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming not supported", http.StatusInternalServerError)
+		return
+	}
+	idStr := r.PathValue("id")
+	cid, err := strconv.ParseUint(idStr, 10, 64)
+	if err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	idxStr := r.PathValue("index")
+	idx, err := strconv.Atoi(idxStr)
+	if err != nil {
+		http.Error(w, "invalid index", http.StatusBadRequest)
+		return
+	}
+	cfgs := getAdminConfigs()
+	if idx < 0 || idx >= len(cfgs) {
+		http.Error(w, "index out of range", http.StatusNotFound)
+		return
+	}
+	c := cfgs[idx]
+	if c.getStat() == nil || c.getStat().tracker == nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+
+	// Find the connection record
+	var rec *ConnRecord
+	for _, r := range c.getStat().tracker.Active() {
+		if r.ID == cid {
+			rec = r
+			break
+		}
+	}
+	if rec == nil {
+		for _, r := range c.getStat().tracker.History() {
+			if r.ID == cid {
+				rec = r
+				break
+			}
+		}
+	}
+	if rec == nil {
+		http.Error(w, "connection not found", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-store")
+
+	// Send initial full data
+	b, _ := json.Marshal(rec)
+	fmt.Fprintf(w, "event: init\ndata: %s\n\n", b)
+	flusher.Flush()
+
+	// If already closed, send closed and exit
+	if rec.EndTime != nil {
+		fmt.Fprintf(w, "event: closed\ndata: %s\n\n", b)
+		flusher.Flush()
+		return
+	}
+
+	ch := connEventSubscribe(cid)
+	defer connEventUnsubscribe(cid, ch)
+
+	for {
+		select {
+		case msg, ok := <-ch:
+			if !ok {
+				return
+			}
+			w.Write(msg)
+			flusher.Flush()
+			// If the event is "closed", stop streaming
+			if bytes.Contains(msg, []byte("event: closed")) {
+				return
+			}
+		case <-r.Context().Done():
+			return
+		}
+	}
+}
+
+func handleSSE(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming not supported", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	ch := sseHub.subscribe()
+	defer sseHub.unsubscribe(ch)
+
+	// initial keepalive
+	fmt.Fprintf(w, "event: connected\ndata: {}\n\n")
+	flusher.Flush()
+
+	for {
+		select {
+		case msg, ok := <-ch:
+			if !ok {
+				return
+			}
+			w.Write(msg)
+			flusher.Flush()
+		case <-r.Context().Done():
+			return
+		}
+	}
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

@@ -30,6 +30,11 @@
   --primary-container: #e8f0fe;
   --on-primary: #ffffff;
 
+  --dl: #1a73e8;
+  --dl-container: #e8f0fe;
+  --ul: #1e8e3e;
+  --ul-container: #e6f4ea;
+
   --success: #1e8e3e;
   --success-container: #e6f4ea;
   --error: #d93025;
@@ -66,6 +71,11 @@ body.dark {
 
   --primary: #8ab4f8;
   --primary-container: #1a2a3a;
+
+  --dl: #8ab4f8;
+  --dl-container: #1a2a3a;
+  --ul: #81c995;
+  --ul-container: #1a3a22;
 
   --success: #81c995;
   --success-container: #1a3a22;
@@ -387,16 +397,17 @@ body.dark .error-banner {
   letter-spacing: -0.3px;
 }
 
-.badge {
+.badge, .range-pill {
   font-size: 11px;
   padding: 4px 12px;
   border-radius: var(--radius-full);
   font-weight: 600;
   letter-spacing: 0.02em;
-  flex-shrink: 0;
+  transition: all var(--transition-fast);
   border: 1px solid transparent;
-  transition: transform var(--transition-fast);
 }
+
+.badge { flex-shrink: 0; }
 
 .card:hover .badge { transform: scale(1.05); }
 
@@ -806,62 +817,63 @@ body.dark .badge-switch { color: #5ed9d9; background: #0a2a2d; }
   font-weight: 600;
 }
 
-.detail-sparkline {
+/* Process monitor */
+.range-pill {
+  cursor: pointer; user-select: none;
+  background: var(--surface-variant); color: var(--text-secondary);
+  border: 1px solid var(--outline-variant);
+}
+.range-pill:hover { background: var(--primary-container); color: var(--primary); border-color: transparent; }
+
+/* Connection waterfall */
+.wf-wrap {
+  background: var(--surface); border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-md); overflow: hidden; margin-bottom: 16px;
+}
+.wf-legend { display: flex; gap: 16px; padding: 8px 12px; font-size: 10px; color: var(--text-tertiary); }
+
+.proc-panel {
   display: flex;
-  align-items: flex-end;
-  gap: 2px;
-  height: 72px;
-  margin-bottom: 24px;
-  padding: 6px 0;
-  background: var(--surface-variant);
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+.proc-chart {
+  background: var(--surface);
+  border: 1px solid var(--outline-variant);
   border-radius: var(--radius-md);
-  padding: 12px;
+  padding: 8px 12px 4px;
+  width: 100%;
+  box-sizing: border-box;
 }
+.proc-chart canvas { width: 100%; display: block; }
 
-.detail-sparkline .bar {
-  flex: 1;
-  min-width: 3px;
-  border-radius: 3px 3px 0 0;
-  transition: height 0.4s var(--transition-slow);
-  opacity: 0.75;
+.detail-chart {
+  margin-bottom: 24px;
+  background: var(--surface);
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+  overflow: hidden;
 }
-
-.detail-sparkline .bar.read { background: linear-gradient(to top, var(--success), color-mix(in srgb, var(--success) 50%, transparent)); }
-.detail-sparkline .bar.write { background: linear-gradient(to top, var(--primary), color-mix(in srgb, var(--primary) 50%, transparent)); }
+.detail-chart canvas { width: 100%; height: 160px; display: block; }
+.detail-chart-legend { display: flex; gap: 16px; justify-content: center; margin-top: 8px; font-size: 11px; color: var(--text-secondary); }
+.detail-chart-legend span { display: flex; align-items: center; gap: 4px; }
+.detail-chart-legend .swatch { width: 10px; height: 10px; border-radius: 2px; }
+.swatch-read { background: var(--dl-container); border: 1px solid var(--dl); }
+.swatch-write { background: var(--ul-container); border: 1px solid var(--ul); }
 
 .detail-stats {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1px;
   margin-bottom: 32px;
+  background: var(--outline-variant);
 }
-
-.detail-stats .stat-cell {
-  padding: 16px 12px;
-  background: var(--surface-variant);
-  border-radius: var(--radius-md);
-  border: 1px solid var(--outline-variant);
-  transition: all var(--transition-fast);
-}
-
-.detail-stats .stat-cell:hover {
-  background: var(--surface-hover);
-  transform: translateY(-2px);
-  box-shadow: var(--shadow-1);
-}
-
-.detail-stats .stat-value {
-  font-size: 24px;
-  font-weight: 700;
-  letter-spacing: -0.5px;
-  color: var(--text);
-  margin-bottom: 2px;
-}
-
-.detail-stats .stat-sub {
-  font-size: 16px;
-  font-weight: 600;
-}
+.detail-stats .stat-cell { padding: 14px 8px; }
+.detail-stats .stat-cell:hover { background: var(--surface-hover); }
+.detail-stats .stat-value { font-size: 16px; }
+.detail-stats .stat-sub  { font-size: 16px; }
 
 .detail-section {
   margin-bottom: 32px;
@@ -1407,6 +1419,30 @@ body.dark .bw-bar-fill.w { background: var(--primary); }
   .stats { gap: 8px; }
   .stat-chip { padding: 5px 10px; font-size: 11px; }
 }
+/* --- toolbar --- */
+.toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+.toolbar input, .toolbar select { padding: 6px 10px; border: 1px solid var(--outline); border-radius: 6px; background: var(--surface); color: var(--text); font-size: 12px; }
+.toolbar input { flex: 1; min-width: 140px; }
+/* --- health --- */
+.health-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
+.health-green { background: #34a853; } .health-yellow { background: #fbbc04; } .health-red { background: #ea4335; } .health-unknown { background: #9aa0a6; }
+/* --- canvas --- */
+.bw-canvas { width: 100%; height: 180px; border: 1px solid var(--outline); border-radius: 8px; margin: 8px 0; display: block; }
+/* --- reject/dist --- */
+.info-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 6px; margin: 8px 0; }
+.info-item { background: var(--surface-variant); padding: 8px 10px; border-radius: 6px; font-size: 12px; }
+.info-item .label { color: var(--text-secondary); } .info-item .value { font-weight: 600; font-family: var(--font-mono); }
+/* --- skeleton --- */
+@keyframes skel { 0%,100% { opacity: 0.4; } 50% { opacity: 0.8; } }
+.skel { background: var(--outline-variant); border-radius: var(--radius-sm); animation: skel 1.5s ease-in-out infinite; }
+/* --- sticky table --- */
+.conn-table thead { position: sticky; top: 0; z-index: 1; }
+.conn-table thead th { background: var(--surface); }
+/* --- empty state --- */
+.conn-empty { text-align: center; padding: 32px 16px; color: var(--text-tertiary); font-size: 13px; }
+.conn-empty::before { content: ''; display: block; width: 36px; height: 36px; margin: 0 auto 12px; border-radius: 50%; background: var(--outline-variant); opacity: 0.5; }
+/* --- detail rhythm --- */
+.detail-section + .detail-section { padding-top: 24px; border-top: 1px solid var(--outline-variant); margin-top: 8px; }
 </style>
 </head>
 <body>
@@ -1429,6 +1465,25 @@ body.dark .bw-bar-fill.w { background: var(--primary); }
   <div class="container">
     <!-- Overview -->
     <div id="overview">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+        <span style="font-size:10px;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:0.05em">Process</span>
+        <span class="range-pill" id="range60" onclick="switchProcRange('60s')" style="background:var(--primary);color:#fff">60s</span>
+        <span class="range-pill" id="range30m" onclick="switchProcRange('30m')">30m</span>
+      </div>
+      <div class="proc-panel" id="procPanel">
+        <div class="proc-chart">
+          <div style="font-size:10px;color:var(--text-tertiary);margin-bottom:2px">CPU <span class="proc-label" id="proc-label-cpu">60s</span></div>
+          <canvas id="proc-cpu" height="80"></canvas>
+        </div>
+        <div class="proc-chart">
+          <div style="font-size:10px;color:var(--text-tertiary);margin-bottom:2px">Heap <span class="proc-label" id="proc-label-heap">60s</span></div>
+          <canvas id="proc-heap" height="80"></canvas>
+        </div>
+        <div class="proc-chart" id="procFDChart">
+          <div style="font-size:10px;color:var(--text-tertiary);margin-bottom:2px">FDs <span class="proc-label" id="proc-label-fd">60s</span></div>
+          <canvas id="proc-fd" height="80"></canvas>
+        </div>
+      </div>
       <div class="grid" id="grid"></div>
       <div class="empty" id="emptyMsg" style="display:none">No servers configured</div>
     </div>
@@ -1538,16 +1593,55 @@ function renderSparkline(el, trafficSamples) {
   el.innerHTML = html;
 }
 
-function renderLargeSparkline(el, trafficSamples) {
-  if (!el) return;
-  if (!trafficSamples || !trafficSamples.length) { el.innerHTML = ''; return; }
-  const max = Math.max(1, ...trafficSamples.map(s => Math.max(s.readRate, s.writRate)));
-  let html = '';
-  for (const s of trafficSamples) {
-    html += '<div class="bar read" style="height:' + Math.max(1, (s.readRate / max * 100).toFixed(0)) + '%"></div>';
-    html += '<div class="bar write" style="height:' + Math.max(1, (s.writRate / max * 100).toFixed(0)) + '%"></div>';
+// Canvas area chart for download (blue, dspd) and upload (green, dspu)
+function drawAreaChart(canvas, trafficSamples, field, color, alpha) {
+  if (!canvas) return;
+  var ctx = canvas.getContext('2d');
+  if (!trafficSamples || !trafficSamples.length) {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    return;
   }
-  el.innerHTML = html;
+  var rect = canvas.parentElement.getBoundingClientRect();
+  var w = rect.width - 32;
+  if (w < 100) w = 400;
+  var h = 100;
+  canvas.width = w;
+  canvas.style.width = w + 'px';
+
+  var n = trafficSamples.length;
+  var stepX = w / Math.max(1, n - 1);
+  var peak = 1;
+  for (var i = 0; i < n; i++) {
+    var v = trafficSamples[i][field] || 0;
+    if (v > peak) peak = v;
+  }
+
+  ctx.clearRect(0, 0, w, h);
+  ctx.beginPath();
+  ctx.moveTo(0, h);
+  for (var i = 0; i < n; i++) {
+    var vh = ((trafficSamples[i][field] || 0) / peak) * (h - 2);
+    ctx.lineTo(i * stepX, h - vh);
+  }
+  ctx.lineTo((n - 1) * stepX, h);
+  ctx.closePath();
+  ctx.fillStyle = alpha;
+  ctx.fill();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  // peak label
+  ctx.fillStyle = 'rgba(0,0,0,0.45)';
+  ctx.font = '10px Inter, sans-serif';
+  ctx.fillText('peak ' + fmtBytes(peak) + '/s', 4, 12);
+}
+
+function renderLargeSparkline(el, trafficSamples) {
+  // legacy: el may be the old div, find canvases by conventional IDs
+  var i = el ? el.id : '';
+  if (i && i.indexOf('dsp') === 0) i = i.substring(3);
+  drawAreaChart(document.getElementById('dspd-' + i), trafficSamples, 'readRate', '#1a73e8', 'rgba(26,115,232,0.2)');
+  drawAreaChart(document.getElementById('dspu-' + i), trafficSamples, 'writRate', '#1e8e3e', 'rgba(30,142,62,0.2)');
 }
 
 /* =========================================================
@@ -1719,19 +1813,26 @@ function showDetail(index) {
   Promise.all([
     fetch('/api/configs/' + index).then(r => r.json()),
     fetch('/api/traffic').then(r => r.json()).catch(() => []),
+    fetch('/api/traffic/minutes').then(r => r.json()).catch(() => []),
     fetch('/api/configs/' + index + '/config').then(r => r.json()).catch(() => null)
-  ]).then(([cfg, traffic, rawCfg]) => {
+  ]).then(([cfg, traffic, minTraffic, rawCfg]) => {
     if (detailIndex !== index) return;
     const ts = (traffic && traffic[index]) ? traffic[index] : [];
-    renderDetailShell(cfg, ts, rawCfg);
+    const mts = (minTraffic && minTraffic[index]) ? minTraffic[index] : [];
+    renderDetailShell(cfg, ts, mts, rawCfg);
     pollActiveConns(index);
   }).catch(e => showError(e.message));
 }
 
-function renderDetailShell(cfg, trafficSamples, rawCfg) {
+function renderDetailShell(cfg, trafficSamples, minTrafficSamples, rawCfg) {
   if (!detail) return;
   detail.innerHTML = buildDetailHTML(cfg, trafficSamples, rawCfg);
-  renderLargeSparkline(document.getElementById('dsp-' + cfg.index), trafficSamples);
+  drawAreaChart(document.getElementById('dspd-' + cfg.index), trafficSamples, 'readRate', '#1a73e8', 'rgba(26,115,232,0.2)');
+  drawAreaChart(document.getElementById('dspu-' + cfg.index), trafficSamples, 'writRate', '#1e8e3e', 'rgba(30,142,62,0.2)');
+  if (minTrafficSamples) {
+    drawAreaChart(document.getElementById('dspd30-' + cfg.index), minTrafficSamples, 'readRate', '#1a73e8', 'rgba(26,115,232,0.2)');
+    drawAreaChart(document.getElementById('dspu30-' + cfg.index), minTrafficSamples, 'writRate', '#1e8e3e', 'rgba(30,142,62,0.2)');
+  }
 }
 
 function updateDetailData() {
@@ -1739,15 +1840,38 @@ function updateDetailData() {
   if (i < 0 || !detail.classList.contains('open')) return;
   Promise.all([
     fetch('/api/configs/' + i).then(r => r.json()),
-    fetch('/api/traffic').then(r => r.json()).catch(() => [])
-  ]).then(([cfg, traffic]) => {
+    fetch('/api/traffic').then(r => r.json()).catch(() => []),
+    fetch('/api/traffic/minutes').then(r => r.json()).catch(() => []),
+    fetch('/api/configs/' + i + '/rejects').then(r => r.json()).catch(() => ({})),
+    fetch('/api/configs/' + i + '/connections/distribution').then(r => r.json()).catch(() => ({})),
+    fetch('/api/configs/' + i + '/targets/top?n=10').then(r => r.json()).catch(() => [])
+  ]).then(([cfg, traffic, minTraffic, rejects, dist, targets]) => {
     if (detailIndex !== i) return;
     const ts = (traffic && traffic[i]) ? traffic[i] : [];
-    updateDetailStatsInPlace(cfg, ts);
+    const mts = (minTraffic && minTraffic[i]) ? minTraffic[i] : [];
+    updateDetailStatsInPlace(cfg, ts, mts);
+    renderRejectCounters(i, rejects);
+    renderDurationDist(i, dist);
+    renderTopTargets(i, targets);
   }).catch(() => {});
 }
 
-function updateDetailStatsInPlace(cfg, trafficSamples) {
+// Direct DOM updates from SSE data — zero HTTP calls
+function updateCardRates(i, connections, readRate, writRate) {
+  setText('sconn-' + i, connections);
+  setText('sconnrate-' + i, (readRate + writRate > 0 ? '+' : '') + ' update');
+  setText('sreadrate-' + i, fmtRate(readRate));
+  setText('swritrate-' + i, fmtRate(writRate));
+}
+
+function updateDetailRates(i, connections, readRate, writRate) {
+  setText('dsconn-' + i, connections);
+  setText('dsconnrate-' + i, 'update');
+  setText('dsreadrate-' + i, fmtRate(readRate));
+  setText('dswritrate-' + i, fmtRate(writRate));
+}
+
+function updateDetailStatsInPlace(cfg, trafficSamples, minTrafficSamples) {
   const i = cfg.index;
   setText('dsconn-' + i, cfg.connections);
   setText('dsconnrate-' + i, (cfg.connRate || 0) + '/s');
@@ -1757,7 +1881,14 @@ function updateDetailStatsInPlace(cfg, trafficSamples) {
   setText('dswritrate-' + i, fmtRate(cfg.writRate));
   setText('dsread-' + i, fmtBytes(cfg.totalReadBytes));
   setText('dswrit-' + i, fmtBytes(cfg.totalWritBytes));
-  renderLargeSparkline(document.getElementById('dsp-' + i), trafficSamples);
+  // 60s charts (2s interval)
+  drawAreaChart(document.getElementById('dspd-' + i), trafficSamples, 'readRate', '#1a73e8', 'rgba(26,115,232,0.2)');
+  drawAreaChart(document.getElementById('dspu-' + i), trafficSamples, 'writRate', '#1e8e3e', 'rgba(30,142,62,0.2)');
+  // 30min charts (1min interval)
+  if (minTrafficSamples) {
+    drawAreaChart(document.getElementById('dspd30-' + i), minTrafficSamples, 'readRate', '#1a73e8', 'rgba(26,115,232,0.2)');
+    drawAreaChart(document.getElementById('dspu30-' + i), minTrafficSamples, 'writRate', '#1e8e3e', 'rgba(30,142,62,0.2)');
+  }
   updateDetailBackendStats(i, cfg.backends);
   const cfgPanel = document.getElementById('dgcfg-' + i);
   if (cfgPanel && cfgPanel.style.display !== 'none') {
@@ -1772,9 +1903,63 @@ function updateDetailBackendStats(i, backends) {
     const be = document.getElementById('dbe-' + i + '-' + sanitize(b.nickname));
     if (!be) continue;
     const bstats = be.querySelector('.bstats');
+    const hs = b.healthStatus || 'unknown';
+    const avgMs = b.dialAvgLatencyMs ? Math.round(b.dialAvgLatencyMs) + 'ms' : '';
     if (bstats) bstats.innerHTML =
-      '<b>' + (b.connections || 0) + '</b> conns &darr;<b>' + fmtBytes(b.totalReadBytes) + '</b> &uarr;<b>' + fmtBytes(b.totalWritBytes) + '</b>';
+      '<span class="health-dot health-' + hs + '" title="' + (b.dialSuccess||0) + ' ok / ' + (b.dialFail||0) + ' fail' + (avgMs?' avg ' + avgMs:'') + '"></span>' +
+      '<b>' + (b.connections || 0) + '</b> conns &darr;<b>' + fmtBytes(b.totalReadBytes) + '</b> &uarr;<b>' + fmtBytes(b.totalWritBytes) + '</b>' +
+      (avgMs ? ' · ' + avgMs : '');
   }
+}
+
+function renderRejectCounters(i, r) {
+  const el = document.getElementById('drej-' + i);
+  if (!el) return;
+  if (!r || (r.decryptFail||0)+(r.timestampExpired||0)+(r.replay||0)+(r.cipherMismatch||0)+(r.parseFail||0)+(r.other||0) === 0) {
+    el.innerHTML = '<h3>Rejection Counters</h3><div class="conn-empty">No rejections</div>';
+    return;
+  }
+  el.innerHTML = '<h3>Rejection Counters</h3><div class="info-grid">' +
+    '<div class="info-item"><div class="label">Decrypt Fail</div><div class="value">' + (r.decryptFail||0) + '</div></div>' +
+    '<div class="info-item"><div class="label">Timestamp</div><div class="value">' + (r.timestampExpired||0) + '</div></div>' +
+    '<div class="info-item"><div class="label">Replay</div><div class="value">' + (r.replay||0) + '</div></div>' +
+    '<div class="info-item"><div class="label">Cipher</div><div class="value">' + (r.cipherMismatch||0) + '</div></div>' +
+    '<div class="info-item"><div class="label">Parse</div><div class="value">' + (r.parseFail||0) + '</div></div>' +
+    '<div class="info-item"><div class="label">Other</div><div class="value">' + (r.other||0) + '</div></div>' +
+    '</div>';
+}
+
+function renderDurationDist(i, d) {
+  const el = document.getElementById('ddst-' + i);
+  if (!el) return;
+  if (!d || d.count === 0 || !d.p50Ms) {
+    el.innerHTML = '<h3>Duration Distribution</h3><div class="conn-empty">No completed connections yet</div>';
+    return;
+  }
+  el.innerHTML = '<h3>Duration Distribution</h3><div class="info-grid">' +
+    '<div class="info-item"><div class="label">P50</div><div class="value">' + Math.round(d.p50Ms) + 'ms</div></div>' +
+    '<div class="info-item"><div class="label">P95</div><div class="value">' + Math.round(d.p95Ms) + 'ms</div></div>' +
+    '<div class="info-item"><div class="label">P99</div><div class="value">' + Math.round(d.p99Ms) + 'ms</div></div>' +
+    '<div class="info-item"><div class="label">Mean</div><div class="value">' + Math.round(d.meanMs) + 'ms</div></div>' +
+    '<div class="info-item"><div class="label">Min</div><div class="value">' + Math.round(d.minMs) + 'ms</div></div>' +
+    '<div class="info-item"><div class="label">Max</div><div class="value">' + Math.round(d.maxMs) + 'ms</div></div>' +
+    '<div class="info-item"><div class="label">Samples</div><div class="value">' + d.count + '</div></div>' +
+    '</div>';
+}
+
+function renderTopTargets(i, targets) {
+  const el = document.getElementById('dtgt-' + i);
+  if (!el) return;
+  if (!targets || !targets.length) { el.style.display = 'none'; return; }
+  el.style.display = '';
+  var h = '<div class="conn-table-wrap"><table class="conn-table"><thead><tr><th>Target</th><th>Host</th><th class="bytes">↓ Read</th><th class="bytes">↑ Write</th><th>Conns</th></tr></thead><tbody>';
+  for (const t of targets) {
+    h += '<tr><td class="addr">' + esc(t.target || '-') + '</td><td>' + esc(t.host || '') + '</td>' +
+      '<td class="bytes">' + fmtBytes(t.totalReadBytes||0) + '</td><td class="bytes">' + fmtBytes(t.totalWritBytes||0) + '</td>' +
+      '<td>' + (t.connectionCount||0) + '</td></tr>';
+  }
+  h += '</tbody></table></div>';
+  el.innerHTML = h;
 }
 
 function buildSafeConfigForDisplay(cfg) {
@@ -1799,7 +1984,7 @@ function refreshDetailAfterBackendChange(index) {
   fetch('/api/configs/' + index).then(r => r.json()).then(cfg => {
     if (detailIndex !== index) return;
     rebuildDetailBackends(index, cfg.type, cfg.active, cfg.backends);
-    updateDetailStatsInPlace(cfg, []);
+    updateDetailStatsInPlace(cfg, [], []);
     pollActiveConns(index);
   }).catch(() => {});
 }
@@ -1855,7 +2040,22 @@ function buildDetailHTML(cfg, trafficSamples, rawCfg) {
         <span><span class="meta-label">Timeout</span> <b>${rawCfg ? rawCfg.timeout + 's' : '-'}</b></span>
         <span><span class="meta-label">UDP</span> <b>${rawCfg ? (rawCfg.udprelay ? 'On' : 'Off') : '-'}</b></span>
       </div>
-      <div class="detail-sparkline" id="dsp-${i}"></div>
+      <div class="detail-chart">
+        <div style="font-size:11px;color:var(--text-secondary);margin-bottom:4px">&darr; Download · last 60s</div>
+        <canvas id="dspd-${i}" height="100"></canvas>
+      </div>
+      <div class="detail-chart">
+        <div style="font-size:11px;color:var(--text-secondary);margin-bottom:4px">&darr; Download · last 30m</div>
+        <canvas id="dspd30-${i}" height="100"></canvas>
+      </div>
+      <div class="detail-chart">
+        <div style="font-size:11px;color:var(--text-secondary);margin-bottom:4px">&uarr; Upload · last 60s</div>
+        <canvas id="dspu-${i}" height="100"></canvas>
+      </div>
+      <div class="detail-chart">
+        <div style="font-size:11px;color:var(--text-secondary);margin-bottom:4px">&uarr; Upload · last 30m</div>
+        <canvas id="dspu30-${i}" height="100"></canvas>
+      </div>
       <div class="detail-stats">
         <div class="stat-cell"><div class="stat-value" id="dsconn-${i}">${cfg.connections}</div><div class="stat-label">Active Conns</div></div>
         <div class="stat-cell"><div class="stat-sub up" id="dsconnrate-${i}">${cfg.connRate || 0}/s</div><div class="stat-label">Conn Rate</div></div>
@@ -1918,9 +2118,10 @@ function buildDetailHTML(cfg, trafficSamples, rawCfg) {
           const target = b.target || '';
           const addr = target || b.remoteaddr;
           const info = target ? '&rarr; ' + esc(target) : ('&rarr; ' + esc(b.remoteaddr) + ' [' + esc(b.method) + ']');
+          const hs2 = b.healthStatus || 'unknown';
           return '<div class="detail-backend-item' + (isActive ? ' active' : '') + '" id="dbe-' + i + '-' + sanitize(b.nickname) + '">' +
             '<div>' + (cfg.type === 'switch' ? '<span class="active-radio' + (isActive ? ' on' : '') + '" onclick="event.stopPropagation();onSetActive(' + i + ',\'' + escAttr(b.nickname) + '\')" title="Set as active backend"></span>' : '') + '<span class="bname">' + esc(b.nickname) + '</span> <span class="binfo">' + info + '</span></div>' +
-            '<div class="bstats"><b>' + (b.connections || 0) + '</b> conns &darr;<b>' + fmtBytes(b.totalReadBytes) + '</b> &uarr;<b>' + fmtBytes(b.totalWritBytes) + '</b></div>' +
+            '<div class="bstats"><span class="health-dot health-' + hs2 + '" title="Health: ' + hs2 + '"></span><b>' + (b.connections || 0) + '</b> conns &darr;<b>' + fmtBytes(b.totalReadBytes) + '</b> &uarr;<b>' + fmtBytes(b.totalWritBytes) + '</b></div>' +
             '<label class="toggle"><input type="checkbox" id="dbtgl-' + i + '-' + sanitize(b.nickname) + '" ' + (b.disabled ? '' : 'checked') + ' onchange="onToggleBackend(' + i + ',\'' + escAttr(b.nickname) + '\',this)"><span class="toggle-slider"></span></label>' +
             '<div class="backend-actions">' +
             '<button onclick="editBackend(' + i + ',\'' + escAttr(b.nickname) + '\',\'' + escAttr(b.remoteaddr) + '\',\'' + escAttr(b.method) + '\',\'\')">Edit</button>' +
@@ -1937,8 +2138,22 @@ function buildDetailHTML(cfg, trafficSamples, rawCfg) {
         <h3>Configuration</h3>
         <div class="detail-config" id="dgcfgtxt-${i}">${esc(JSON.stringify(rawCfg, null, 2))}</div>
       </div>` : ''}
+      <div class="detail-section" id="drej-${i}">
+        <h3>Rejection Counters</h3>
+        <div class="conn-empty">No rejections</div>
+      </div>
+      <div class="detail-section" id="ddst-${i}">
+        <h3>Duration Distribution</h3>
+        <div class="conn-empty">No completed connections yet</div>
+      </div>
+      <div class="detail-section" id="dtgt-${i}" style="display:none">
+        <h3>Top Targets</h3>
+      </div>
       <div class="detail-section">
         <h3>Active Connections</h3>
+        <div class="toolbar">
+          <input id="conn-search-${i}" type="search" placeholder="Search host, src, dst..." oninput="renderConnTableFromCache()">
+        </div>
         <div id="activeConns-${i}"><div class="conn-empty">Loading...</div></div>
       </div>
       <div class="detail-actions">
@@ -2065,11 +2280,42 @@ function sortArrow(col) {
   const cls = connSortAsc ? 'asc' : 'desc';
   return '<span class="sort-arrow ' + cls + '">' + (connSortAsc ? '▲' : '▼') + '</span>';
 }
+function escAttr(v) { return v.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// Cache of last-fetched connections for client-side filtering without re-fetch
+var cachedConns = null;
+var cachedConnsIdx = -1;
+var cachedConnsActive = false;
+
+function renderConnTableFromCache() {
+  if (!cachedConns) {
+    var el = document.getElementById('activeConns-' + detailIndex);
+    if (el) el.innerHTML = '<div class="conn-empty">Connections not loaded yet</div>';
+    return;
+  }
+  var el = document.getElementById('activeConns-' + cachedConnsIdx);
+  renderConnTable(el, cachedConns, cachedConnsActive, cachedConnsIdx);
+}
 
 function renderConnTable(el, conns, isActive, configIndex) {
   if (!el) return;
+  // Cache for client-side filtering
+  if (isActive && configIndex >= 0) {
+    cachedConns = conns; cachedConnsIdx = configIndex; cachedConnsActive = isActive;
+  }
+
+  // Client-side search filter (reads from static input, not rebuilt by polling)
+  const q = isActive ? (document.getElementById('conn-search-' + configIndex)?.value || '').toLowerCase() : '';
+  if (q && conns) {
+    conns = conns.filter(function(c) {
+      return (c.host && c.host.toLowerCase().indexOf(q) >= 0) ||
+             (c.dstAddr && c.dstAddr.toLowerCase().indexOf(q) >= 0) ||
+             (c.srcAddr && c.srcAddr.toLowerCase().indexOf(q) >= 0);
+    });
+  }
+
   if (!conns || !conns.length) {
-    el.innerHTML = '<div class="conn-empty">' + (isActive ? 'No active connections' : 'No history') + '</div>';
+    el.innerHTML = '<div class="conn-empty">' + (isActive ? 'No active connections' : 'No history') + (q ? ' matching "' + esc(q) + '"' : '') + '</div>';
     return;
   }
   const paired = new Map();
@@ -2119,10 +2365,14 @@ function renderConnTable(el, conns, isActive, configIndex) {
   const th = (col, label) =>
     '<th class="sortable" onclick="sortBy(\'' + col + '\')">' + label + sortArrow(col) + '</th>';
 
-  let html = '<div class="conn-table-wrap"><table class="conn-table"><tr>' +
+  const filterLabel = q ? ' matching "' + esc(q) + '"' : '';
+  const sortInfo = connSortCol ? ' sorted by ' + connSortCol + ' ' + (connSortAsc ? 'asc' : 'desc') : '';
+
+  let html = '<div class="conn-summary" style="font-size:12px;color:var(--text-secondary);margin-bottom:8px">' + rows.length + ' connections' + filterLabel + sortInfo + '</div>' +
+    '<div class="conn-table-wrap"><table class="conn-table"><thead><tr>' +
     th('id','ID') + th('status','Status') + th('src','Source') + th('dst','Target') +
     th('dur',isActive?'Duration':'Start') + th('read','↓ Read') + th('write','↑ Write') +
-    '</tr>';
+    '</tr></thead><tbody>';
   const now = Date.now();
 
   function statusBadge(s) {
@@ -2163,7 +2413,7 @@ function renderConnTable(el, conns, isActive, configIndex) {
         '</tr>';
     }
   }
-  html += '</table></div>';
+  html += '</tbody></table></div>';
   el.innerHTML = html;
 }
 
@@ -2291,6 +2541,16 @@ function fmtDurationMs(ms) {
    History page
    ========================================================= */
 let historyCfgIndex = -1;
+var historyViewMode = 'table';
+
+function switchHistoryView(mode, index) {
+  historyViewMode = mode;
+  document.getElementById('hviewtable').style.background = mode === 'table' ? 'var(--primary)' : 'var(--surface-variant)';
+  document.getElementById('hviewtable').style.color = mode === 'table' ? '#fff' : 'var(--text-secondary)';
+  document.getElementById('hviewtl').style.background = mode === 'timeline' ? 'var(--primary)' : 'var(--surface-variant)';
+  document.getElementById('hviewtl').style.color = mode === 'timeline' ? '#fff' : 'var(--text-secondary)';
+  pollHistory(index);
+}
 
 function showHistoryPage(index) {
   overview.style.display = 'none';
@@ -2302,7 +2562,13 @@ function showHistoryPage(index) {
   historyCfgIndex = index;
   hp.innerHTML = `
     <div class="back-btn" onclick="window.location.hash='#/config/${index}'">&larr; Back to server detail</div>
-    <h2 id="hpTitle">Connection History</h2>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+      <h2 id="hpTitle" style="margin:0">Connection History</h2>
+      <span style="display:flex;gap:4px">
+        <span class="range-pill" id="hviewtable" onclick="switchHistoryView('table',${index})" style="background:var(--primary);color:#fff">Table</span>
+        <span class="range-pill" id="hviewtl" onclick="switchHistoryView('timeline',${index})">Timeline</span>
+      </span>
+    </div>
     <div id="historyTable"><div class="conn-empty">Loading...</div></div>`;
   fetch('/api/configs/' + index).then(r => r.json()).then(cfg => {
     if (historyCfgIndex !== index) return;
@@ -2322,7 +2588,9 @@ function pollHistory(index) {
     .then(conns => {
       if (historyCfgIndex !== index) return;
       const el = document.getElementById('historyTable');
-      if (el) renderConnTable(el, conns, false, index);
+      if (!conns || !conns.length) { el.innerHTML = '<div class="conn-empty">No connection history yet</div>'; return; }
+      if (historyViewMode === 'timeline') renderTimeline(el, conns, index);
+      else renderConnTable(el, conns, false, index);
     }).catch(() => {});
 }
 
@@ -2410,23 +2678,133 @@ function pollHistoryActive() {
    ========================================================= */
 let connDetailCfg = -1;
 let connDetailID = -1;
+var connDetailES = null;
+
+var connDetailFrom = ''; // 'detail' or 'history' — where we came from
 
 function viewConnection(configIndex, connID) {
+  var hp = document.getElementById('historyPage');
+  if (hp && hp.classList.contains('open')) connDetailFrom = 'history';
+  else if (detail.classList.contains('open')) connDetailFrom = 'detail';
   window.location.hash = '#/config/' + configIndex + '/connection/' + connID;
 }
 
 function showConnDetail(configIndex, connID) {
   overview.style.display = 'none';
+  if (!connDetailFrom) connDetailFrom = (historyCfgIndex >= 0) ? 'history' : 'detail';
   detail.classList.remove('open');
-  detailIndex = -1;
   document.getElementById('historyPage').classList.remove('open');
   const cd = document.getElementById('connDetail');
   cd.classList.add('open');
-  cd.innerHTML = '<div class="conn-empty">Loading...</div>';
   connDetailCfg = configIndex;
   connDetailID = connID;
-  pollConnDetail(configIndex, connID);
+  detailIndex = configIndex;
+  cd.innerHTML = '<div class="conn-empty">Loading...</div>';
+
+  // Close previous SSE
+  if (connDetailES) { connDetailES.close(); connDetailES = null; }
+
+  connDetailES = new EventSource('/api/configs/' + configIndex + '/connection/' + connID + '/events');
+  connDetailES.addEventListener('init', function(e) {
+    try {
+      var rec = JSON.parse(e.data);
+      if (connDetailCfg !== configIndex || connDetailID !== connID) return;
+      window._bwRec = rec;
+      if (rec.pairedID) {
+        fetch('/api/configs/' + configIndex + '/connection/' + rec.pairedID)
+          .then(function(r) { return r.ok ? r.json() : null; })
+          .then(function(paired) { renderConnDetail(rec, paired, configIndex); })
+          .catch(function() { renderConnDetail(rec, null, configIndex); });
+      } else {
+        renderConnDetail(rec, null, configIndex);
+      }
+    } catch(_) {}
+  });
+  connDetailES.addEventListener('update', function(e) {
+    try {
+      var d = JSON.parse(e.data);
+      var rec = window._bwRec;
+      if (!rec) return;
+      // Apply delta to cached record
+      rec.readBytes = d.readBytes;
+      rec.writBytes = d.writBytes;
+      rec.lastActive = d.lastActive;
+      if (d.si != null && rec.samples && rec.samples[d.si]) {
+        rec.samples[d.si].r = d.sr;
+        rec.samples[d.si].w = d.sw;
+      }
+      var cd2 = document.getElementById('connDetail');
+      if (!cd2 || !cd2.classList.contains('open')) return;
+      // Update duration
+      var durEl = cd2.querySelector('.conn-duration');
+      if (durEl && rec.startTime && !rec.endTime) {
+        durEl.textContent = fmtDurationMs(Date.now() - new Date(rec.startTime).getTime());
+      }
+      // Update byte counters
+      var vals = cd2.querySelectorAll('.v');
+      for (var i = 0; i < vals.length; i++) {
+        var prevEl = vals[i].previousElementSibling;
+        if (prevEl && prevEl.textContent === '\u2193 Read') vals[i].textContent = fmtBytes(rec.readBytes);
+        if (prevEl && prevEl.textContent === '\u2191 Written') vals[i].textContent = fmtBytes(rec.writBytes);
+      }
+      // Redraw chart in-place (no DOM replacement — avoids flicker)
+      var a = bwAnalysis(rec);
+      if (!a) return;
+      var mode = bwViewMode[rec.id] || 'bar';
+      var canvas;
+      if (mode === 'line') canvas = document.getElementById('bwline-' + rec.id);
+      else if (mode === 'bar') canvas = document.getElementById('bwbar-' + rec.id);
+      if (canvas) {
+        var ctx = canvas.getContext('2d');
+        var n = a.lastSec + 1;
+        if (mode === 'line') {
+          var dpr = window.devicePixelRatio || 1;
+          var w = canvas.width / dpr, h = canvas.height / dpr;
+          ctx.save(); ctx.scale(dpr, dpr); ctx.clearRect(0, 0, w, h);
+          var stepX = w / Math.max(1, n - 1);
+          ctx.strokeStyle = 'rgba(0,0,0,0.06)'; ctx.lineWidth = 0.5;
+          for (var g = 0; g <= 3; g++) { var gy = Math.round(h*g/3)+0.5; ctx.beginPath(); ctx.moveTo(0,gy); ctx.lineTo(w,gy); ctx.stroke(); }
+          ctx.beginPath();
+          for (var i = 0; i < n; i++) { var rh = ((rec.samples[i]?rec.samples[i].r:0)||0)/a.peak*(h-4); i===0 ? ctx.moveTo(i*stepX, h-rh) : ctx.lineTo(i*stepX, h-rh); }
+          ctx.strokeStyle = '#1a73e8'; ctx.lineWidth = 2; ctx.stroke();
+          ctx.beginPath();
+          for (var i = 0; i < n; i++) { var wh = ((rec.samples[i]?rec.samples[i].w:0)||0)/a.peak*(h-4); i===0 ? ctx.moveTo(i*stepX, h-wh) : ctx.lineTo(i*stepX, h-wh); }
+          ctx.strokeStyle = '#1e8e3e'; ctx.lineWidth = 2; ctx.stroke();
+          ctx.restore();
+        } else {
+          var w2 = canvas.width, h2 = canvas.height;
+          ctx.clearRect(0, 0, w2, h2);
+          var barW = Math.max(2, Math.floor(w2 / n));
+          for (var i = 0; i < n; i++) {
+            var s = rec.samples[i] || {r:0,w:0};
+            var rh2 = Math.max(1, Math.round(s.r / a.peak * h2));
+            var wh2 = Math.max(1, Math.round(s.w / a.peak * h2));
+            ctx.fillStyle = '#1a73e8'; ctx.fillRect(i * barW, h2 - rh2, Math.max(1, barW/2 - 0.5), rh2);
+            ctx.fillStyle = '#1e8e3e'; ctx.fillRect(i * barW + barW/2 + 0.5, h2 - wh2, Math.max(1, barW/2 - 0.5), wh2);
+          }
+        }
+      }
+    } catch(_) {}
+  });
+  connDetailES.addEventListener('closed', function(e) {
+    try {
+      var rec = JSON.parse(e.data);
+      if (connDetailCfg !== configIndex || connDetailID !== rec.id) return;
+      window._bwRec = rec;
+      if (rec.pairedID) {
+        fetch('/api/configs/' + configIndex + '/connection/' + rec.pairedID)
+          .then(function(r) { return r.ok ? r.json() : null; })
+          .then(function(paired) { renderConnDetail(rec, paired, configIndex); })
+          .catch(function() { renderConnDetail(rec, null, configIndex); });
+      } else {
+        renderConnDetail(rec, null, configIndex);
+      }
+      if (connDetailES) { connDetailES.close(); connDetailES = null; }
+    } catch(_) {}
+  });
+  connDetailES.onerror = function() {};
 }
+
 
 function pollConnDetail(configIndex, connID) {
   fetch('/api/configs/' + configIndex + '/connection/' + connID)
@@ -2448,6 +2826,7 @@ function pollConnDetail(configIndex, connID) {
 }
 
 function renderConnDetail(rec, paired, configIndex) {
+  window._bwRec = rec; // for renderBwView
   const cd = document.getElementById('connDetail');
   const isActive = !rec.endTime;
   const isIdle = isActive && rec.lastActive && (Date.now() - rec.lastActive / 1000000) > 1000;
@@ -2468,7 +2847,7 @@ function renderConnDetail(rec, paired, configIndex) {
         <div class="k">Target</div><div class="v">${esc(r.dstAddr || '-')}</div>
         <div class="k">Host</div><div class="v">${esc(r.host || '-')}</div>
         <div class="k">Started</div><div class="v">${new Date(r.startTime).toLocaleString()}</div>
-        <div class="k">${isActive ? 'Duration' : 'Ended'}</div><div class="v">${isActive ? sd : new Date(r.endTime).toLocaleString() + ' (' + sd + ')'}</div>
+        <div class="k">${isActive ? 'Duration' : 'Ended'}</div><div class="v"><span class="conn-duration">${isActive ? sd : new Date(r.endTime).toLocaleString() + ' (' + sd + ')'}</span></div>
         <div class="k">↓ Read</div><div class="v">${fmtBytes(r.readBytes)}</div>
         <div class="k">↑ Written</div><div class="v">${fmtBytes(r.writBytes)}</div>
       </div>
@@ -2476,72 +2855,517 @@ function renderConnDetail(rec, paired, configIndex) {
   }
 
   cd.innerHTML = `
-    <div class="back-btn" onclick="${detailIndex >= 0 ? 'window.location.hash=\'#/config/' + detailIndex + '\'' : 'window.location.hash=\'#\''}">&larr; Back</div>
+    <div class="back-btn" onclick="${connDetailFrom === 'history' ? 'window.location.hash=\'#/config/' + configIndex + '/history\'' : 'window.location.hash=\'#/config/' + configIndex + '\''}">&larr; Back</div>
     <h2>Connection #${rec.id}</h2>
     <span class="conn-status ${cStatus}">${cLabel}</span>
     ${paired ? '<div style="margin-top:20px">' + sideCard('Inbound', rec) + sideCard('Outbound', paired) + '</div>'
       : sideCard(cLabel + ' Connection', rec)}
-    ${buildBwChart(rec)}
+    <div style="margin-top:16px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+        <h3 style="margin:0;font-size:11px;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:0.08em">Bandwidth</h3>
+        <span style="display:flex;gap:4px">
+          <span class="range-pill" id="bwviewtable-${rec.id}" onclick="switchBwView('table',${rec.id})">Table</span>
+          <span class="range-pill" id="bwviewbar-${rec.id}" onclick="switchBwView('bar',${rec.id})">Bar</span>
+          <span class="range-pill" id="bwviewline-${rec.id}" onclick="switchBwView('line',${rec.id})">Line</span>
+        </span>
+      </div>
+      <div id="bwcontent-${rec.id}">${renderBwContent(rec)}</div>
+    </div>
     <div class="detail-actions" style="margin-top:16px">
       <a class="btn" href="#/config/${configIndex}">View Server Detail &rarr;</a>
     </div>`;
+  setTimeout(function(){ updateBwPills(rec.id); }, 0);
 }
 
-function buildBwChart(rec) {
-  if (!rec.samples || !rec.samples.length) return '';
-  let lastSec = 0; let hasData = false;
-  for (let i = 0; i < rec.samples.length; i++) {
-    const s = rec.samples[i];
-    if (s.r > 0 || s.w > 0) { lastSec = i; hasData = true; }
-  }
-  if (!hasData) return '';
-
-  let rows = '', totalR = 0, totalW = 0, activeSecs = 0, peak = 1;
-  for (let i = 0; i <= lastSec; i++) {
-    const s = rec.samples[i] || { r: 0, w: 0 };
-    if (s.r > 0 || s.w > 0) { totalR += s.r; totalW += s.w; activeSecs++; }
+function bwAnalysis(rec) {
+  if (!rec.samples || !rec.samples.length) return null;
+  var lastSec = 0, hasData = false, totalR = 0, totalW = 0, peak = 1;
+  for (var i = 0; i < rec.samples.length; i++) {
+    var s = rec.samples[i];
+    if (s.r > 0 || s.w > 0) { lastSec = i; hasData = true; totalR += s.r; totalW += s.w; }
     if (s.r > peak) peak = s.r;
     if (s.w > peak) peak = s.w;
-    rows += '<tr>' +
-      '<td>' + i + 's</td>' +
+  }
+  if (!hasData) return null;
+  return { lastSec: lastSec, totalR: totalR, totalW: totalW, peak: peak };
+}
+
+function bwSummary(a) {
+  if (!a) return '';
+  var avgR = a.totalR > 0 ? Math.round(a.totalR / (a.lastSec + 1)) : 0;
+  var avgW = a.totalW > 0 ? Math.round(a.totalW / (a.lastSec + 1)) : 0;
+  return '<div class="bw-summary"><span style="color:var(--dl)">↓ avg <b>' + fmtBytes(avgR) + '/s</b> total ' + fmtBytes(a.totalR) + '</span>' +
+    '<span style="color:var(--ul)">↑ avg <b>' + fmtBytes(avgW) + '/s</b> total ' + fmtBytes(a.totalW) + '</span></div>';
+}
+
+function buildBwTable(rec) {
+  var a = bwAnalysis(rec);
+  if (!a) return '';
+  var rows = '', peak = a.peak, lastSec = a.lastSec;
+  for (var i = 0; i <= lastSec; i++) {
+    var s = rec.samples[i] || {r:0,w:0};
+    rows += '<tr><td>' + i + 's</td>' +
       '<td class="bytes">' + (s.r > 0 ? fmtBytes(s.r) : '·') + '</td>' +
       '<td class="bytes">' + (s.w > 0 ? fmtBytes(s.w) : '·') + '</td>' +
-      '<td class="bytes">' + ((s.r + s.w) > 0 ? fmtBytes(s.r + s.w) : '·') + '</td>' +
-      '<td><div class="bw-bar-row"><div class="bw-bar-fill r" style="width:' + Math.round(s.r / peak * 100) + '%"></div></div></td>' +
-      '<td><div class="bw-bar-row"><div class="bw-bar-fill w" style="width:' + Math.round(s.w / peak * 100) + '%"></div></div></td>' +
-      '</tr>';
+      '<td class="bytes">' + ((s.r+s.w) > 0 ? fmtBytes(s.r+s.w) : '·') + '</td></tr>';
   }
-  const avgR = activeSecs > 0 ? Math.round(totalR / activeSecs) : 0;
-  const avgW = activeSecs > 0 ? Math.round(totalW / activeSecs) : 0;
-  return '<div class="side-card" style="margin-top:0">' +
-    '<h3>Bandwidth Timeline · ' + (lastSec + 1) + 's · peak ' + fmtBytes(peak) + '/s</h3>' +
-    '<div class="conn-table-wrap"><table class="conn-table">' +
-    '<tr><th>Time</th><th class="bytes">↓ Read</th><th class="bytes">↑ Write</th><th class="bytes">Total</th><th colspan="2">Distribution</th></tr>' +
-    rows + '</table></div>' +
-    '<div class="bw-summary">' +
-    '<span>↓ avg <b>' + fmtBytes(avgR) + '/s</b></span>' +
-    '<span>↑ avg <b>' + fmtBytes(avgW) + '/s</b></span>' +
-    '<span>↓ total <b>' + fmtBytes(totalR) + '</b></span>' +
-    '<span>↑ total <b>' + fmtBytes(totalW) + '</b></span>' +
-    '</div></div>';
+  return '<div class="conn-table-wrap"><table class="conn-table"><thead><tr>' +
+    '<th>Time</th><th class="bytes">↓ Read</th><th class="bytes">↑ Write</th><th class="bytes">Total</th></tr></thead><tbody>' +
+    rows + '</tbody></table></div>' + bwSummary(a);
+}
+
+function buildBwBar(rec) {
+  var a = bwAnalysis(rec);
+  if (!a) return '';
+  var cid = 'bwbar-' + rec.id;
+  setTimeout(function() {
+    var c = document.getElementById(cid);
+    if (!c) return;
+    var pw = c.parentElement.getBoundingClientRect().width - 32;
+    var w = Math.max(pw, 300), h = 180;
+    c.width = w; c.height = h;
+    var ctx = c.getContext('2d');
+    var barW = Math.max(2, Math.floor(w / (a.lastSec + 1)));
+    ctx.clearRect(0, 0, w, h);
+    for (var i = 0; i <= a.lastSec; i++) {
+      var s = rec.samples[i] || {r:0,w:0};
+      var rh = Math.max(1, Math.round(s.r / a.peak * h));
+      var wh = Math.max(1, Math.round(s.w / a.peak * h));
+      ctx.fillStyle = '#1a73e8'; ctx.fillRect(i * barW, h - rh, Math.max(1, barW/2 - 0.5), rh);
+      ctx.fillStyle = '#1e8e3e'; ctx.fillRect(i * barW + barW/2 + 0.5, h - wh, Math.max(1, barW/2 - 0.5), wh);
+    }
+  }, 50);
+  return '<canvas id="' + cid + '" class="bw-canvas"></canvas>' + bwSummary(a);
+}
+
+function buildBwLine(rec) {
+  var a = bwAnalysis(rec);
+  if (!a) return '';
+  var cid = 'bwline-' + rec.id;
+  setTimeout(function() {
+    var c = document.getElementById(cid);
+    if (!c) return;
+    var dpr = window.devicePixelRatio || 1;
+    var pw = c.parentElement.getBoundingClientRect().width - 32;
+    var w = Math.max(pw, 300), h = 180;
+    c.width = w * dpr; c.height = h * dpr; c.style.width = w + 'px'; c.style.height = h + 'px';
+    var ctx = c.getContext('2d');
+    ctx.scale(dpr, dpr);
+    ctx.clearRect(0, 0, w, h);
+    var n = a.lastSec + 1, stepX = w / Math.max(1, n - 1);
+
+    // Grid
+    ctx.strokeStyle = 'rgba(0,0,0,0.06)'; ctx.lineWidth = 0.5;
+    for (var g = 0; g <= 3; g++) {
+      var gy = Math.round(h * g / 3) + 0.5;
+      ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(w, gy); ctx.stroke();
+    }
+
+    // Download line
+    ctx.beginPath();
+    for (var i = 0; i < n; i++) {
+      var rh = ((rec.samples[i] ? rec.samples[i].r : 0) || 0) / a.peak * (h - 4);
+      if (i === 0) ctx.moveTo(i * stepX, h - rh); else ctx.lineTo(i * stepX, h - rh);
+    }
+    ctx.strokeStyle = '#1a73e8'; ctx.lineWidth = 2; ctx.stroke();
+
+    // Upload line
+    ctx.beginPath();
+    for (var i = 0; i < n; i++) {
+      var wh = ((rec.samples[i] ? rec.samples[i].w : 0) || 0) / a.peak * (h - 4);
+      if (i === 0) ctx.moveTo(i * stepX, h - wh); else ctx.lineTo(i * stepX, h - wh);
+    }
+    ctx.strokeStyle = '#1e8e3e'; ctx.lineWidth = 2; ctx.stroke();
+  }, 50);
+  return '<canvas id="' + cid + '" class="bw-canvas"></canvas>' + bwSummary(a);
+}
+
+var bwViewMode = {};
+function renderBwContent(rec) {
+  if (!bwAnalysis(rec)) return '';
+  var mode = bwViewMode[rec.id] || 'bar';
+  if (mode === 'table') return buildBwTable(rec);
+  if (mode === 'line') return buildBwLine(rec);
+  return buildBwBar(rec);
+}
+
+function updateBwPills(recId) {
+  var mode = bwViewMode[recId] || 'bar';
+  ['table','bar','line'].forEach(function(m) {
+    var el = document.getElementById('bwview' + m + '-' + recId);
+    if (!el) return;
+    el.style.background = m === mode ? 'var(--primary)' : 'var(--surface-variant)';
+    el.style.color = m === mode ? '#fff' : 'var(--text-secondary)';
+  });
+}
+
+function switchBwView(mode, recId) {
+  bwViewMode[recId] = mode;
+  updateBwPills(recId);
+  renderBwView(recId);
+}
+
+function renderBwView(recId) {
+  var content = document.getElementById('bwcontent-' + recId);
+  if (!content) return;
+  var rec = window._bwRec;
+  if (!rec || rec.id !== recId) return;
+  content.innerHTML = renderBwContent(rec);
 }
 
 function hideConnDetail() {
+  if (connDetailES) { connDetailES.close(); connDetailES = null; }
   document.getElementById('connDetail').classList.remove('open');
   connDetailCfg = -1;
   connDetailID = -1;
+  connDetailFrom = '';
 }
 
 /* =========================================================
-   Init
+   SSE — real-time event-driven updates (with polling fallback)
+   ========================================================= */
+(function initSSE() {
+  var evtSource = new EventSource('/api/events');
+  evtSource.addEventListener('stats_updated', function(e) {
+    try {
+      var d = JSON.parse(e.data);
+      var cfgIdx = d.configIndex;
+      // Update card rates directly from SSE data (no HTTP fetch needed)
+      updateCardRates(cfgIdx, d.connections, d.readRate, d.writRate);
+      // Update detail stats too if we're viewing this config
+      if (detailIndex === cfgIdx) updateDetailRates(cfgIdx, d.connections, d.readRate, d.writRate);
+    } catch(_) {}
+  });
+  evtSource.addEventListener('connection_opened', function(e) {
+    try {
+      var d = JSON.parse(e.data);
+      if (detailIndex === d.configIndex) pollActiveConns(detailIndex);
+    } catch(_) {}
+  });
+  evtSource.addEventListener('connection_closed', function(e) {
+    try {
+      var d = JSON.parse(e.data);
+      if (detailIndex === d.configIndex) pollActiveConns(detailIndex);
+      // If the closed connection is the one we're viewing, refresh once
+      if (connDetailCfg === d.configIndex && connDetailID === d.connId) {
+        pollConnDetail(d.configIndex, d.connId);
+      }
+    } catch(_) {}
+  });
+  evtSource.addEventListener('backend_status_changed', function(e) {
+    try {
+      var d = JSON.parse(e.data);
+      var cardEntry = cards.get(d.configIndex);
+      if (cardEntry) {
+        fetch('/api/configs/' + d.configIndex).then(function(r) { return r.json(); }).then(function(cfg) {
+          fetch('/api/traffic').then(function(r2) { return r2.json(); }).catch(function() { return []; }).then(function(traffic) {
+            var ts = (traffic && traffic[d.configIndex]) ? traffic[d.configIndex] : [];
+            updateCard(cfg, ts, cardEntry);
+          });
+        }).catch(function(){});
+      }
+    } catch(_) {}
+  });
+  evtSource.addEventListener('config_status_changed', function(e) {
+    try {
+      var d = JSON.parse(e.data);
+      var cardEntry = cards.get(d.configIndex);
+      if (cardEntry) {
+        fetch('/api/configs/' + d.configIndex).then(function(r) { return r.json(); }).then(function(cfg) {
+          fetch('/api/traffic').then(function(r2) { return r2.json(); }).catch(function() { return []; }).then(function(traffic) {
+            var ts = (traffic && traffic[d.configIndex]) ? traffic[d.configIndex] : [];
+            updateCard(cfg, ts, cardEntry);
+          });
+        }).catch(function(){});
+      }
+    } catch(_) {}
+  });
+  evtSource.addEventListener('process_updated', function(e) {
+    try { procSSEUpdate(JSON.parse(e.data)); } catch(_) {}
+  });
+  evtSource.addEventListener('reject_updated', function(e) {
+    try {
+      var d = JSON.parse(e.data);
+      if (detailIndex !== d.configIndex) return;
+      renderRejectCounters(d.configIndex, d.counters);
+    } catch(_) {}
+  });
+  evtSource.onerror = function() {
+    // SSE disconnected — fall back to polling after 5s
+    evtSource.close();
+    setTimeout(function() { initSSE(); }, 5000);
+  };
+})();
+
+/* =========================================================
+   Process history
+   ========================================================= */
+function procYLabel(peak, field) {
+  if (field === 'heapAlloc' || field === 'heapSys') return fmtBytes(peak);
+  if (field === 'cpuPercent') return peak.toFixed(1) + '%';
+  return String(Math.round(peak));
+}
+
+function drawProcChart(canvas, data, field, color, label) {
+  if (!canvas || !data || !data.length) return;
+  var ctx = canvas.getContext('2d');
+  var h = canvas.height || 80;
+  var yPadLeft = 36, yPadRight = 4;
+  var rect = canvas.parentElement.getBoundingClientRect();
+  var w = rect.width - 24; if (w < 200) w = 300;
+  canvas.width = w; canvas.style.width = w + 'px';
+
+  var n = data.length, peak = 1;
+  for (var i = 0; i < n; i++) { var v = data[i][field] || 0; if (v > peak) peak = v; }
+  var pw = w - yPadLeft - yPadRight;
+  var stepX = pw / Math.max(1, n - 1);
+
+  ctx.clearRect(0, 0, w, h);
+
+  // Y-axis grid lines + labels (3 levels: peak, peak/2, 0)
+  ctx.strokeStyle = 'rgba(0,0,0,0.06)'; ctx.lineWidth = 1;
+  ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.font = '9px Inter, sans-serif';
+  var levels = 3;
+  for (var l = 0; l <= levels; l++) {
+    var y = 2 + (h - 4) * l / levels;
+    ctx.beginPath(); ctx.moveTo(yPadLeft, y); ctx.lineTo(w - yPadRight, y); ctx.stroke();
+    var lv = peak * (levels - l) / levels;
+    var txt = procYLabel(lv, field);
+    ctx.fillText(txt, 2, y + 4);
+  }
+
+  // Area chart
+  ctx.beginPath(); ctx.moveTo(yPadLeft, h);
+  for (var i = 0; i < n; i++) { ctx.lineTo(yPadLeft + i * stepX, h - ((data[i][field] || 0) / peak) * (h - 4)); }
+  ctx.lineTo(yPadLeft + (n - 1) * stepX, h); ctx.closePath();
+  ctx.fillStyle = color + '18';
+  ctx.fill();
+  ctx.strokeStyle = color; ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // Current value label (right side)
+  ctx.fillStyle = color; ctx.font = 'bold 10px Inter, sans-serif';
+  var raw = data[n-1][field] || 0;
+  var valStr = procYLabel(raw, field);
+  var tw = ctx.measureText(valStr).width;
+  ctx.fillText(valStr, w - tw - yPadRight, 12);
+}
+
+var procRange = '60s';
+var procBuffer60s = [];
+var procBuffer60s = []; // local ring buffer for SSE-driven process data
+
+function switchProcRange(r) {
+  if (r === '30m') { procBuffer60s = []; } // reset buffer when switching range
+  procRange = r;
+  if (r === '30m') { procBuffer60s = []; pollProcess(); } // full reload for 30m
+  document.getElementById('range60').style.background = r === '60s' ? 'var(--primary)' : 'var(--surface-variant)';
+  document.getElementById('range60').style.color = r === '60s' ? '#fff' : 'var(--text-secondary)';
+  document.getElementById('range30m').style.background = r === '30m' ? 'var(--primary)' : 'var(--surface-variant)';
+  document.getElementById('range30m').style.color = r === '30m' ? '#fff' : 'var(--text-secondary)';
+  document.getElementById('proc-label-cpu').textContent = r;
+  document.getElementById('proc-label-heap').textContent = r;
+  document.getElementById('proc-label-fd').textContent = r;
+  pollProcess();
+}
+
+function pollProcess() {
+  var url = procRange === '30m' ? '/api/process/minutes' : '/api/process';
+  fetch(url).then(function(r) { return r.json(); }).then(function(data) {
+    if (!data || !data.length) return;
+    // For 60s view, update buffer from full data
+    if (procRange === '60s') procBuffer60s = data;
+    drawProcCharts(data);
+  }).catch(function(){});
+}
+
+// SSE-driven update for 60s view: append sample to local buffer
+function procSSEUpdate(s) {
+  if (procRange !== '60s') return;
+  procBuffer60s.push(s);
+  if (procBuffer60s.length > 30) procBuffer60s.shift();
+  drawProcCharts(procBuffer60s);
+}
+
+function drawProcCharts(data) {
+  if (!data || !data.length) return;
+  drawProcChart(document.getElementById('proc-cpu'), data, 'cpuPercent', '#7c3aed', 'C');
+  drawProcChart(document.getElementById('proc-heap'), data, 'heapAlloc', '#e67e22', 'H');
+  var fdCanvas = document.getElementById('proc-fd');
+  var fdChart = document.getElementById('procFDChart');
+  var hasFD = false;
+  for (var i = 0; i < data.length; i++) { if (data[i].numFD > 0) { hasFD = true; break; } }
+  if (fdChart) fdChart.style.display = hasFD ? '' : 'none';
+  if (hasFD) drawProcChart(fdCanvas, data, 'numFD', '#3498db', 'F');
+}
+
+
+/* =========================================================
+   Connection waterfall (Gantt canvas)
+   ========================================================= */
+var wfHover = null; // {conn, x, y, w, h}
+
+function renderTimeline(el, conns, configIndex) {
+  // Sort by StartTime ascending
+  conns.sort(function(a, b) {
+    return new Date(a.startTime) - new Date(b.startTime);
+  });
+
+  // Compute time range
+  var now = Date.now();
+  var tMin = Infinity, tMax = 0;
+  for (var i = 0; i < conns.length; i++) {
+    var st = new Date(conns[i].startTime).getTime();
+    var et = conns[i].endTime ? new Date(conns[i].endTime).getTime() : now;
+    if (st < tMin) tMin = st;
+    if (et > tMax) tMax = et;
+  }
+  if (!isFinite(tMin)) { el.innerHTML = '<div class="conn-empty">No data</div>'; return; }
+  // Pad range by 5%
+  var range = tMax - tMin || 1000;
+  tMin -= range * 0.05; tMax += range * 0.05; range = tMax - tMin;
+
+  var dpr = window.devicePixelRatio || 1;
+  var labelW = 160, rowH = 24, headerH = 32, barH = 18;
+  var rect = el.parentElement.getBoundingClientRect();
+  var w = Math.max(rect.width - 32, 300);
+  var chartW = w - labelW;
+  var h = headerH + conns.length * rowH + 4;
+
+  var html = '<div class="wf-wrap">' +
+    '<canvas id="wf-canvas" style="width:' + w + 'px;height:' + h + 'px"></canvas></div>';
+  el.innerHTML = html;
+
+  setTimeout(function() {
+    var canvas = document.getElementById('wf-canvas');
+    if (!canvas) return;
+    canvas.width = w * dpr; canvas.height = h * dpr;
+    canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
+    var ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+    ctx.clearRect(0, 0, w, h);
+
+    // Grid lines
+    var ticks = 5;
+    ctx.strokeStyle = 'rgba(0,0,0,0.06)'; ctx.lineWidth = 0.5;
+    for (var t = 0; t <= ticks; t++) {
+      var tx = labelW + Math.round(chartW * t / ticks) + 0.5;
+      ctx.beginPath(); ctx.moveTo(tx, 20); ctx.lineTo(tx, h); ctx.stroke();
+    }
+    // Horizontal row lines
+    ctx.strokeStyle = 'rgba(0,0,0,0.04)'; ctx.lineWidth = 0.5;
+    for (var i = 0; i <= conns.length; i++) {
+      var ry = headerH + i * rowH + 0.5;
+      ctx.beginPath(); ctx.moveTo(labelW, ry); ctx.lineTo(w, ry); ctx.stroke();
+    }
+
+    // Time axis header
+    ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.font = '10px Inter, sans-serif';
+    for (var t = 0; t <= ticks; t++) {
+      var ts = tMin + range * t / ticks;
+      ctx.fillText(new Date(ts).toLocaleTimeString(), labelW + chartW * t / ticks, 14);
+    }
+
+    // Draw bars + labels
+    var bars = [];
+    for (var i = 0; i < conns.length; i++) {
+      var c = conns[i];
+      var st = new Date(c.startTime).getTime();
+      var et = c.endTime ? new Date(c.endTime).getTime() : now;
+      var x = labelW + (st - tMin) / range * chartW;
+      var bw = Math.max(6, (et - st) / range * chartW);
+      var y = headerH + i * rowH + (rowH - barH) / 2;
+      var host = c.host || c.dstAddr || '-';
+      var isOut = c.srcAddr === 'server';
+      var color = isOut ? '#1e8e3e' : '#1a73e8';
+
+      ctx.fillStyle = color + '55';
+      ctx.fillRect(x, y, bw, barH);
+      ctx.strokeStyle = color; ctx.lineWidth = 1;
+      ctx.strokeRect(x, y, bw, barH);
+
+      // Traffic label on bar (right side, or inside if bar is wide enough)
+      var bytesText = '↓' + fmtBytes(c.readBytes || 0) + ' ↑' + fmtBytes(c.writBytes || 0);
+      ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.font = '9px Inter, sans-serif';
+      var tw = ctx.measureText(bytesText).width;
+      if (bw > tw + 10) {
+        ctx.fillText(bytesText, x + 4, y + barH - 4);
+      } else if (bw > 40) {
+        // Show just total
+        var tot = fmtBytes((c.readBytes || 0) + (c.writBytes || 0));
+        ctx.fillText(tot, x + 4, y + barH - 4);
+      }
+
+      // Host label — truncate to fit in label area
+      var labelMax = labelW - 12;
+      ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.font = '11px Inter, sans-serif';
+      var fullHost = host;
+      while (ctx.measureText(fullHost + '…').width > labelMax && fullHost.length > 4) {
+        fullHost = fullHost.substring(0, fullHost.length - 1);
+      }
+      ctx.fillText(fullHost.length < host.length ? fullHost + '…' : host, 6, y + barH - 4);
+
+      bars.push({ conn: c, x: x, y: y, w: bw, h: barH, cfgIdx: configIndex });
+    }
+
+    // Hover tooltip div
+    var tip = document.createElement('div'); tip.id = 'wf-tip';
+    tip.style.cssText = 'position:absolute;display:none;background:rgba(0,0,0,0.82);color:#fff;padding:6px 10px;border-radius:6px;font-size:11px;pointer-events:none;z-index:100;white-space:nowrap;font-family:var(--font-mono)';
+    canvas.parentElement.appendChild(tip);
+
+    canvas.onmousemove = function(ev) {
+      var cr = canvas.getBoundingClientRect();
+      var mx = ev.clientX - cr.left, my = ev.clientY - cr.top;
+      var found = null;
+      for (var i = 0; i < bars.length; i++) {
+        var b = bars[i];
+        if (mx >= b.x && mx <= b.x + b.w && my >= b.y && my <= b.y + b.h) {
+          found = b; break;
+        }
+      }
+      if (found) {
+        var c = found.conn;
+        tip.style.display = 'block';
+        tip.style.left = (ev.clientX + 12) + 'px';
+        tip.style.top = (ev.clientY - 30) + 'px';
+        var dur = '';
+        if (c.endTime && c.startTime) dur = ' · ' + fmtDurationMs(new Date(c.endTime) - new Date(c.startTime));
+        tip.innerHTML = esc(c.host || c.dstAddr || '-') + dur +
+          '<br>↓ ' + fmtBytes(c.readBytes || 0) + '  ↑ ' + fmtBytes(c.writBytes || 0);
+        canvas.style.cursor = 'pointer';
+      } else {
+        tip.style.display = 'none';
+        canvas.style.cursor = 'default';
+      }
+    };
+    canvas.onmouseleave = function() { tip.style.display = 'none'; };
+
+    // Click handler
+    canvas.onclick = function(ev) {
+      var cr = canvas.getBoundingClientRect();
+      var mx = ev.clientX - cr.left, my = ev.clientY - cr.top;
+      for (var i = 0; i < bars.length; i++) {
+        var b = bars[i];
+        if (mx >= b.x && mx <= b.x + b.w && my >= b.y && my <= b.y + b.h) {
+          viewConnection(b.cfgIdx, b.conn.id);
+          return;
+        }
+      }
+    };
+  }, 50);
+}
+
+/* =========================================================
+   Init — overview loaded once, SSE keeps cards/detail current.
+   Periodic polls for data not covered by SSE (traffic sparklines,
+   reject counters, distribution, targets, history).
    ========================================================= */
 pollOverview();
-setInterval(pollOverview, 2000);
-setInterval(pollDetailActive, 2000);
-setInterval(pollHistoryActive, 2000);
-setInterval(function() {
-  if (connDetailCfg >= 0) pollConnDetail(connDetailCfg, connDetailID);
-}, 2000);
+pollProcess();
+setInterval(pollOverview, 60000);     // full overview refresh: 60s
+// Process charts: initial load via poll, live updates via SSE process_updated
+setInterval(pollDetailActive, 10000); // detail rejects/dist/targets: 10s
+setInterval(pollHistoryActive, 10000); // history page: 10s
 handleRoute();
 </script>
 </body>

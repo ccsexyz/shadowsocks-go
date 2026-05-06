@@ -10,6 +10,7 @@ import (
 type statServer struct {
 	startTime        time.Time
 	reloadTime       time.Time
+	configIndex      int
 	connections      int32
 	totalConnections int64
 	peakConnections  int32
@@ -22,12 +23,34 @@ type statServer struct {
 	writSpeed        int32
 	connErrNum       int32
 	tracker          *ConnTracker
+
+	// reject reason counters
+	rejectDecryptFail      int64
+	rejectTimestampExpired int64
+	rejectReplay           int64
+	rejectCipherMismatch   int64
+	rejectParseFail        int64
+	rejectOther            int64
+
+	// per-method traffic counters
+	methodMu    sync.RWMutex
+	methodStats map[string]*methodStat
+
+	// per-target aggregation
+	targetTracker *TargetTracker
+}
+
+type methodStat struct {
+	ReadBytes int64 `json:"readBytes"`
+	WritBytes int64 `json:"writBytes"`
+	ConnCount int64 `json:"connCount"`
 }
 
 type statConn struct {
 	Conn
 	s      *statServer
 	record *ConnRecord
+	method string
 	once   sync.Once
 }
 
@@ -61,7 +84,24 @@ func newStatConn(conn Conn, s *statServer) *statConn {
 		s.tracker = newConnTracker()
 	}
 	rec := s.tracker.Register(srcAddr, dstAddr, host)
-	return &statConn{Conn: conn, s: s, record: rec}
+	method := ""
+	if cfg := conn.GetCfg(); cfg != nil {
+		method = cfg.Method
+	}
+	if method != "" {
+		s.addMethodConn(method)
+		if s.targetTracker == nil {
+			s.targetTracker = &TargetTracker{targets: make(map[string]*TargetStats)}
+		}
+		s.targetTracker.addConn(dstAddr, host)
+	}
+	if s.configIndex >= 0 {
+		ssePublishIndex("connection_opened", s.configIndex, map[string]any{
+			"configIndex": s.configIndex,
+			"connId":      rec.ID,
+		})
+	}
+	return &statConn{Conn: conn, s: s, record: rec, method: method}
 }
 
 func (conn *statConn) Close() error {
@@ -69,6 +109,16 @@ func (conn *statConn) Close() error {
 		atomic.AddInt32(&conn.s.connections, -1)
 		if conn.record != nil && conn.s.tracker != nil {
 			conn.s.tracker.Unregister(conn.record)
+		}
+		if conn.record != nil && conn.s.targetTracker != nil {
+			conn.s.targetTracker.addBytes(conn.record.DstAddr, conn.record.ReadBytes, conn.record.WritBytes)
+			conn.s.targetTracker.updateLastSeen(conn.record.DstAddr)
+		}
+		if conn.s.configIndex >= 0 {
+			ssePublishIndex("connection_closed", conn.s.configIndex, map[string]any{
+				"configIndex": conn.s.configIndex,
+				"connId":      conn.record.ID,
+			})
 		}
 	})
 	return conn.Conn.Close()
@@ -78,6 +128,9 @@ func (conn *statConn) Read(b []byte) (n int, err error) {
 	defer func() {
 		if n > 0 {
 			atomic.AddInt64(&conn.s.totalReadBytes, int64(n))
+			if conn.method != "" {
+				conn.s.addMethodReadBytes(conn.method, int64(n))
+			}
 			if conn.record != nil {
 				conn.record.addRead(n)
 			}
@@ -91,6 +144,9 @@ func (conn *statConn) Write(b []byte) (n int, err error) {
 	defer func() {
 		if n > 0 {
 			atomic.AddInt64(&conn.s.totalWritBytes, int64(n))
+			if conn.method != "" {
+				conn.s.addMethodWritBytes(conn.method, int64(n))
+			}
 			if conn.record != nil {
 				conn.record.addWrite(n)
 			}
@@ -124,10 +180,104 @@ func (c *Config) GetTracker() *ConnTracker {
 	return nil
 }
 
+func (s *statServer) incReject(reason string) {
+	switch reason {
+	case "decrypt":
+		atomic.AddInt64(&s.rejectDecryptFail, 1)
+	case "timestamp":
+		atomic.AddInt64(&s.rejectTimestampExpired, 1)
+	case "replay":
+		atomic.AddInt64(&s.rejectReplay, 1)
+	case "cipher":
+		atomic.AddInt64(&s.rejectCipherMismatch, 1)
+	case "parse":
+		atomic.AddInt64(&s.rejectParseFail, 1)
+	default:
+		atomic.AddInt64(&s.rejectOther, 1)
+	}
+	if s.configIndex >= 0 {
+		ssePublishIndex("reject_updated", s.configIndex, map[string]any{
+			"configIndex": s.configIndex,
+			"counters":    s.getRejectCounters(),
+		})
+	}
+}
+
+// RejectCounters holds the per-reason reject counts.
+type RejectCounters struct {
+	DecryptFail      int64 `json:"decryptFail"`
+	TimestampExpired int64 `json:"timestampExpired"`
+	Replay           int64 `json:"replay"`
+	CipherMismatch   int64 `json:"cipherMismatch"`
+	ParseFail        int64 `json:"parseFail"`
+	Other            int64 `json:"other"`
+}
+
+func (s *statServer) getRejectCounters() RejectCounters {
+	return RejectCounters{
+		DecryptFail:      atomic.LoadInt64(&s.rejectDecryptFail),
+		TimestampExpired: atomic.LoadInt64(&s.rejectTimestampExpired),
+		Replay:           atomic.LoadInt64(&s.rejectReplay),
+		CipherMismatch:   atomic.LoadInt64(&s.rejectCipherMismatch),
+		ParseFail:        atomic.LoadInt64(&s.rejectParseFail),
+		Other:            atomic.LoadInt64(&s.rejectOther),
+	}
+}
+
+func (s *statServer) addMethodReadBytes(method string, n int64) {
+	s.methodMu.Lock()
+	ms := s.methodStats[method]
+	if ms == nil {
+		ms = &methodStat{}
+		s.methodStats[method] = ms
+	}
+	atomic.AddInt64(&ms.ReadBytes, n)
+	s.methodMu.Unlock()
+}
+
+func (s *statServer) addMethodWritBytes(method string, n int64) {
+	s.methodMu.Lock()
+	ms := s.methodStats[method]
+	if ms == nil {
+		ms = &methodStat{}
+		s.methodStats[method] = ms
+	}
+	atomic.AddInt64(&ms.WritBytes, n)
+	s.methodMu.Unlock()
+}
+
+func (s *statServer) addMethodConn(method string) {
+	s.methodMu.Lock()
+	ms := s.methodStats[method]
+	if ms == nil {
+		ms = &methodStat{}
+		s.methodStats[method] = ms
+	}
+	atomic.AddInt64(&ms.ConnCount, 1)
+	s.methodMu.Unlock()
+}
+
+func (s *statServer) getMethodStats() map[string]*methodStat {
+	s.methodMu.RLock()
+	defer s.methodMu.RUnlock()
+	out := make(map[string]*methodStat, len(s.methodStats))
+	for k, v := range s.methodStats {
+		out[k] = &methodStat{
+			ReadBytes: atomic.LoadInt64(&v.ReadBytes),
+			WritBytes: atomic.LoadInt64(&v.WritBytes),
+			ConnCount: atomic.LoadInt64(&v.ConnCount),
+		}
+	}
+	return out
+}
+
 func (conn *statConn) WriteBuffers(bufs [][]byte) (n int, err error) {
 	defer func() {
 		if n > 0 {
 			atomic.AddInt64(&conn.s.totalWritBytes, int64(n))
+			if conn.method != "" {
+				conn.s.addMethodWritBytes(conn.method, int64(n))
+			}
 			if conn.record != nil {
 				conn.record.addWrite(n)
 			}

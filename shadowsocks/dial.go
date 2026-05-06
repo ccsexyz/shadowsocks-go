@@ -191,6 +191,7 @@ func dialSSWithOptions(opt *DialOptions) (conn Conn, err error) {
 			return
 		}
 	}
+	start := time.Now()
 	if c.Obfs {
 		conn, err = DialObfs(c.Remoteaddr, c)
 	} else {
@@ -200,9 +201,17 @@ func dialSSWithOptions(opt *DialOptions) (conn Conn, err error) {
 			conn = tconn
 		}
 	}
+	elapsed := time.Since(start)
+	dh := c.initDialHealth()
 	if err != nil {
+		isTimeout := false
+		if ne, ok := err.(net.Error); ok && ne.Timeout() {
+			isTimeout = true
+		}
+		dh.recordFail(isTimeout)
 		return
 	}
+	dh.recordSuccess(elapsed)
 	if len(c.getLimiters()) != 0 || c.LimitPerConn != 0 {
 		conn = &LimitConn{
 			Conn:      conn,

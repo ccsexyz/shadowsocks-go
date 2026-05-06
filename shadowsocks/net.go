@@ -418,6 +418,7 @@ func ssMultiAcceptHandler(conn Conn, lis *listener) AcceptResult {
 	defer utils.PutBuf(buf)
 	n, err := conn.Read(buf)
 	if err != nil {
+		lis.c.getStat().incReject("other")
 		return AcceptResult{AcceptReject, nil}
 	}
 
@@ -435,18 +436,21 @@ func ssMultiAcceptHandler(conn Conn, lis *listener) AcceptResult {
 				"numBackends:", len(lis.c.Backends),
 				"read:", n, "bytes", "raw:", buf[:n],
 				"err:", err)
+			lis.c.getStat().incReject("parse")
 			return AcceptResult{AcceptReject, nil}
 		}
 	}
 	if ctx.cliCipher != nil {
 		c := ss2022MultiAcceptHandler2(conn, lis, ctx)
 		if c == nil {
+			lis.c.getStat().incReject("decrypt")
 			return AcceptResult{AcceptReject, nil}
 		}
 		return AcceptResult{AcceptContinue, c}
 	}
 	c := ssMultiAcceptHandler2(conn, lis, ctx.addr, n, ctx.data, ctx.dec, ctx.chs)
 	if c == nil {
+		lis.c.getStat().incReject("decrypt")
 		return AcceptResult{AcceptReject, nil}
 	}
 	return AcceptResult{AcceptContinue, c}
@@ -496,20 +500,24 @@ func ssAcceptHandler(conn Conn, lis *listener) AcceptResult {
 		}
 	}()
 	if err != nil {
+		lis.c.getStat().incReject("other")
 		return AcceptResult{AcceptReject, nil}
 	}
 	if n < lis.c.Ivlen+2 {
 		err = fmt.Errorf("too short: got %d bytes, need at least iv(%d)+2=%d", n, lis.c.Ivlen, lis.c.Ivlen+2)
+		lis.c.getStat().incReject("other")
 		return AcceptResult{AcceptReject, nil}
 	}
 	dec, err := crypto.NewDecrypter(lis.c.Method, lis.c.Password)
 	if err != nil {
 		lis.c.Log(err)
+		lis.c.getStat().incReject("decrypt")
 		return AcceptResult{AcceptReject, nil}
 	}
 	_, err = dec.Write(buf[:n])
 	if err != nil {
 		err = fmt.Errorf("dec.Write failed: %w (method=%s, input=%d bytes: %x)", err, lis.c.Method, n, buf[:n])
+		lis.c.getStat().incReject("decrypt")
 		return AcceptResult{AcceptReject, nil}
 	}
 	dbuf := utils.GetBuf(buffersize)
@@ -524,23 +532,27 @@ func ssAcceptHandler(conn Conn, lis *listener) AcceptResult {
 			dec, err = crypto.NewDecrypter(lis.c.Method, lis.c.Password)
 			if err != nil {
 				lis.c.Log(err)
+				lis.c.getStat().incReject("decrypt")
 				return AcceptResult{AcceptReject, nil}
 			}
 			_, err = dec.Write(buf[:n])
 			if err != nil {
 				err = fmt.Errorf("dec.Write(2nd) failed: %w (method=%s, total=%d bytes)", err, lis.c.Method, n)
+				lis.c.getStat().incReject("decrypt")
 				return AcceptResult{AcceptReject, nil}
 			}
 			dn, err = dec.Read(dbuf)
 		}
 		if err != nil {
 			err = fmt.Errorf("dec.Read failed: %w (method=%s, input=%d bytes: %x)", err, lis.c.Method, n, buf[:n])
+			lis.c.getStat().incReject("decrypt")
 			return AcceptResult{AcceptReject, nil}
 		}
 	}
 	addr, data, err := ParseAddr(dbuf[:dn])
 	if err != nil {
 		err = fmt.Errorf("ParseAddr after decrypt: %w (method=%s, decrypted=%d bytes: %x)", err, lis.c.Method, dn, dbuf[:dn])
+		lis.c.getStat().incReject("parse")
 		return AcceptResult{AcceptReject, nil}
 	}
 	if lis.c.Ivlen != 0 && !lis.c.Safe {
@@ -552,11 +564,13 @@ func ssAcceptHandler(conn Conn, lis *listener) AcceptResult {
 		}
 		if exists {
 			lis.c.Log("receive duplicate iv from", conn.RemoteAddr().String(), ", this means that you maight be attacked!")
+			lis.c.getStat().incReject("replay")
 			return AcceptResult{AcceptReject, nil}
 		}
 	}
 	enc, err := crypto.NewEncrypter(lis.c.Method, lis.c.Password)
 	if err != nil {
+		lis.c.getStat().incReject("cipher")
 		return AcceptResult{AcceptReject, nil}
 	}
 	ssConn := newCryptoConn(conn, newCipherStreamCodec(enc, dec))

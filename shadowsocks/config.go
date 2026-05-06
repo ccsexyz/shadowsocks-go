@@ -93,6 +93,42 @@ type runtime struct {
 	crctbl        *crc32.Table
 	disable       bool
 	stat          *statServer
+	dialHealth    *dialHealth
+}
+
+type dialHealth struct {
+	mu        sync.Mutex
+	success   int64
+	fail      int64
+	timeout   int64
+	latencyNs int64
+	dialCount int64
+}
+
+func (dh *dialHealth) recordSuccess(elapsed time.Duration) {
+	dh.mu.Lock()
+	dh.success++
+	dh.latencyNs += elapsed.Nanoseconds()
+	dh.dialCount++
+	dh.mu.Unlock()
+}
+
+func (dh *dialHealth) recordFail(isTimeout bool) {
+	dh.mu.Lock()
+	dh.fail++
+	if isTimeout {
+		dh.timeout++
+	}
+	dh.mu.Unlock()
+}
+
+func (dh *dialHealth) snapshot() (success, fail, timeout int64, avgLatencyMs float64) {
+	dh.mu.Lock()
+	defer dh.mu.Unlock()
+	if dh.dialCount > 0 {
+		avgLatencyMs = float64(dh.latencyNs/dh.dialCount) / 1e6
+	}
+	return dh.success, dh.fail, dh.timeout, avgLatencyMs
 }
 
 func newRuntime() *runtime {
@@ -101,7 +137,7 @@ func newRuntime() *runtime {
 
 func (rt *runtime) initStat() {
 	if rt.stat == nil {
-		rt.stat = &statServer{}
+		rt.stat = &statServer{methodStats: make(map[string]*methodStat)}
 	}
 }
 
@@ -115,6 +151,7 @@ type Config struct {
 	Backend        *Config   `json:"backend"`
 	Backends       []*Config `json:"backends"`
 	SSProxy        bool      `json:"ssproxy"`
+	ConnLogPath    string    `json:"connlogpath,omitempty"`
 	AdminAddr      string    `json:"adminaddr"`
 	ActiveBackend  string    `json:"active,omitempty"`
 	Target         string    `json:"target,omitempty"`
@@ -253,6 +290,20 @@ func (c *Config) getStat() *statServer {
 	return rt.stat
 }
 func (c *Config) setStat(s *statServer) { c.initRuntime().stat = s }
+func (c *Config) initDialHealth() *dialHealth {
+	rt := c.initRuntime()
+	if rt.dialHealth == nil {
+		rt.dialHealth = &dialHealth{}
+	}
+	return rt.dialHealth
+}
+
+func (c *Config) GetTargetTracker() *TargetTracker {
+	if s := c.getStat(); s != nil {
+		return s.targetTracker
+	}
+	return nil
+}
 
 func ReadConfig(path string) (configs []*Config, err error) {
 	bytes, err := os.ReadFile(path)

@@ -65,10 +65,12 @@ func ss2022AcceptHandler(conn Conn, lis *listener) AcceptResult {
 	saltLen := lis.c.Ivlen
 	if saltLen == 0 {
 		lis.c.Log("invalid ivlen for AEAD-2022 method")
+		lis.c.getStat().incReject("other")
 		return AcceptResult{AcceptReject, nil}
 	}
 	_, err := io.ReadFull(conn, buf[:saltLen])
 	if err != nil {
+		lis.c.getStat().incReject("other")
 		return AcceptResult{AcceptReject, nil}
 	}
 	salt := make([]byte, saltLen)
@@ -77,18 +79,21 @@ func ss2022AcceptHandler(conn Conn, lis *listener) AcceptResult {
 	psk, derr := crypto.DecodePSK(lis.c.Password, lis.c.Ivlen)
 	if derr != nil {
 		lis.c.Log("decode PSK failed:", derr)
+		lis.c.getStat().incReject("decrypt")
 		return AcceptResult{AcceptReject, nil}
 	}
 
 	ciph, err := crypto.NewTcpCipher2022(lis.c.Method, psk, salt)
 	if err != nil {
 		lis.c.Log("create cipher failed:", err)
+		lis.c.getStat().incReject("cipher")
 		return AcceptResult{AcceptReject, nil}
 	}
 
 	hdr1Len := 1 + 8 + 2 + ciph.Overhead()
 	_, err = io.ReadFull(conn, buf[:hdr1Len])
 	if err != nil {
+		lis.c.getStat().incReject("other")
 		return AcceptResult{AcceptReject, nil}
 	}
 	hdr1 := make([]byte, hdr1Len)
@@ -97,11 +102,13 @@ func ss2022AcceptHandler(conn Conn, lis *listener) AcceptResult {
 	hdr1, ok = ciph.DecryptPacket(hdr1)
 	if !ok {
 		lis.c.Log("decrypt header packet 1 failed")
+		lis.c.getStat().incReject("decrypt")
 		return AcceptResult{AcceptReject, nil}
 	}
 
 	if hdr1[0] != aead2022ClientType {
 		lis.c.Log("unexpected stream type:", hdr1[0])
+		lis.c.getStat().incReject("cipher")
 		return AcceptResult{AcceptReject, nil}
 	}
 
@@ -113,6 +120,7 @@ func ss2022AcceptHandler(conn Conn, lis *listener) AcceptResult {
 	}
 	if diff > aead2022TimestampDiff {
 		lis.c.Log("invalid timestamp:", ts, "now:", now)
+		lis.c.getStat().incReject("timestamp")
 		return AcceptResult{AcceptReject, nil}
 	}
 
@@ -120,6 +128,7 @@ func ss2022AcceptHandler(conn Conn, lis *listener) AcceptResult {
 	saltStr := utils.SliceToString(salt)
 	if !lis.c.getTCPIvChecker().check(saltStr) {
 		lis.c.Log("reject replayed salt from", conn.RemoteAddr().String())
+		lis.c.getStat().incReject("replay")
 		return AcceptResult{AcceptReject, nil}
 	}
 
@@ -131,6 +140,7 @@ func ss2022AcceptHandler(conn Conn, lis *listener) AcceptResult {
 	}
 	_, err = io.ReadFull(conn, buf[:hdr2Len])
 	if err != nil {
+		lis.c.getStat().incReject("other")
 		return AcceptResult{AcceptReject, nil}
 	}
 	hdr2 := make([]byte, hdr2Len)
@@ -138,30 +148,36 @@ func ss2022AcceptHandler(conn Conn, lis *listener) AcceptResult {
 	hdr2, ok = ciph.DecryptPacket(hdr2)
 	if !ok {
 		lis.c.Log("decrypt header packet 2 failed")
+		lis.c.getStat().incReject("decrypt")
 		return AcceptResult{AcceptReject, nil}
 	}
 
 	addr, rest, err := ParseAddr(hdr2)
 	if err != nil {
 		lis.c.Log("parse addr failed:", err)
+		lis.c.getStat().incReject("parse")
 		return AcceptResult{AcceptReject, nil}
 	}
 	if len(rest) < 2 {
 		lis.c.Log("header too short for padding size")
+		lis.c.getStat().incReject("other")
 		return AcceptResult{AcceptReject, nil}
 	}
 	padSize := int(binary.BigEndian.Uint16(rest[:2]))
 	if padSize > 900 {
 		lis.c.Log("invalid padding size:", padSize)
+		lis.c.getStat().incReject("other")
 		return AcceptResult{AcceptReject, nil}
 	}
 	if len(rest) < 2+padSize {
 		lis.c.Log("header shorter than padding size")
+		lis.c.getStat().incReject("other")
 		return AcceptResult{AcceptReject, nil}
 	}
 	// SIP022: reject requests with zero padding and zero initial payload
 	if padSize == 0 && len(rest) == 2 {
 		lis.c.Log("reject: zero padding and zero payload")
+		lis.c.getStat().incReject("other")
 		return AcceptResult{AcceptReject, nil}
 	}
 	data := rest[2+padSize:]
