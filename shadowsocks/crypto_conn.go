@@ -35,11 +35,10 @@ func (c *cipherStreamCodec) ReadFrame(r io.Reader) ([]byte, error) {
 
 	for {
 		nr, rerr := r.Read(buf)
-		if rerr != nil {
-			return nil, rerr
-		}
-		if _, err := c.dec.Write(buf[:nr]); err != nil {
-			return nil, err
+		if nr > 0 {
+			if _, err := c.dec.Write(buf[:nr]); err != nil {
+				return nil, err
+			}
 		}
 		n, err := c.dec.Read(buf)
 		if n > 0 {
@@ -47,6 +46,9 @@ func (c *cipherStreamCodec) ReadFrame(r io.Reader) ([]byte, error) {
 		}
 		if err != nil && err != io.EOF {
 			return nil, err
+		}
+		if rerr != nil {
+			return nil, rerr
 		}
 	}
 }

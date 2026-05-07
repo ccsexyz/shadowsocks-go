@@ -223,6 +223,7 @@ func Pipe(c1, c2 net.Conn, c *Config) {
 		defer utils.PutBuf(buf)
 		var n int
 		var err error
+		var totalRead, totalWrote int64
 		for err == nil {
 			if timeout > 0 {
 				src.SetReadDeadline(time.Now().Add(time.Duration(timeout) * time.Second))
@@ -232,11 +233,14 @@ func Pipe(c1, c2 net.Conn, c *Config) {
 				c.LogD("pipe read error:", err, "from", src.RemoteAddr(), "to", src.LocalAddr())
 			}
 			if n > 0 || err == nil {
+				totalRead += int64(n)
 				if timeout > 0 {
 					dst.SetWriteDeadline(time.Now().Add(time.Duration(timeout) * time.Second))
 					alive.Store(true)
 				}
-				_, err = dst.Write(buf[:n])
+				var wrote int
+				wrote, err = dst.Write(buf[:n])
+				totalWrote += int64(wrote)
 				if err != nil {
 					c.LogD("pipe write error:", err, "from", src.LocalAddr(), "to", dst.RemoteAddr())
 				}
@@ -246,6 +250,9 @@ func Pipe(c1, c2 net.Conn, c *Config) {
 				c.LogD("pipe read error:", err, "from", src.RemoteAddr(), "to", src.LocalAddr())
 				err = nil
 			}
+		}
+		if totalRead != totalWrote {
+			c.Log("pipe data mismatch: read", totalRead, "bytes but wrote", totalWrote, "bytes, from", src.RemoteAddr(), "to", dst.RemoteAddr())
 		}
 	}
 	go f(c1, c2, c1die, utils.GetBuf(buffersize))
