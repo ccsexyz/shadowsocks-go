@@ -35,11 +35,10 @@ func (c *cipherStreamCodec) ReadFrame(r io.Reader) ([]byte, error) {
 
 	for {
 		nr, rerr := r.Read(buf)
-		if rerr != nil {
-			return nil, rerr
-		}
-		if _, err := c.dec.Write(buf[:nr]); err != nil {
-			return nil, err
+		if nr > 0 {
+			if _, err := c.dec.Write(buf[:nr]); err != nil {
+				return nil, err
+			}
 		}
 		n, err := c.dec.Read(buf)
 		if n > 0 {
@@ -47,6 +46,9 @@ func (c *cipherStreamCodec) ReadFrame(r io.Reader) ([]byte, error) {
 		}
 		if err != nil && err != io.EOF {
 			return nil, err
+		}
+		if rerr != nil {
+			return nil, rerr
 		}
 	}
 }
@@ -58,23 +60,20 @@ func (c *cipherStreamCodec) WriteFrame(w io.Writer, plaintext []byte) error {
 	buf := utils.GetBuf(buffersize)
 	defer utils.PutBuf(buf)
 
-	var total int
-	for total < len(plaintext)+c.Overhead() {
+	for {
 		n, err := c.enc.Read(buf)
-		if err != nil && err != io.EOF {
-			return err
-		}
 		if n > 0 {
-			if _, err := w.Write(buf[:n]); err != nil {
-				return err
+			if _, werr := w.Write(buf[:n]); werr != nil {
+				return werr
 			}
-			total += n
 		}
 		if err == io.EOF {
-			break
+			return nil
+		}
+		if err != nil {
+			return err
 		}
 	}
-	return nil
 }
 
 func (c *cipherStreamCodec) Overhead() int { return 0 }
