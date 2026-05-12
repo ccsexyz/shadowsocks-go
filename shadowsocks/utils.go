@@ -358,6 +358,21 @@ func GetSsConn(conn net.Conn) (c *CryptoConn, err error) {
 	return
 }
 
+// HasCryptoConn checks whether the conn chain contains a CryptoConn
+// (indicating the connection came from the SS fallback path).
+func HasCryptoConn(conn net.Conn) bool {
+	for {
+		if _, ok := conn.(*CryptoConn); ok {
+			return true
+		}
+		uw, ok := conn.(Unwrapper)
+		if !ok {
+			return false
+		}
+		conn = uw.Unwrap()
+	}
+}
+
 func GetConn(conn net.Conn) (c Conn) {
 	var ok bool
 	c, ok = conn.(Conn)

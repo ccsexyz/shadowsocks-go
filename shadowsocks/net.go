@@ -851,7 +851,7 @@ func httpProxyDetector(conn Conn, buf []byte, n int, lis *listener) (AcceptResul
 	defer utils.PutBuf(parser.GetBuf())
 	_, err := parser.Read(buf[:n])
 	if err != nil {
-		return AcceptResult{AcceptReject, nil}, true // matched but invalid
+		return AcceptResult{}, false
 	}
 	return httpProxyAcceptor(conn, lis), true
 }
