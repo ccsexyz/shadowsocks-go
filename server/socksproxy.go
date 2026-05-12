@@ -14,8 +14,9 @@ func socksProxyHandler(ac *ss.AcceptedConn) {
 	c := ac.Config
 	defer conn.Close()
 	target := ac.TargetStr()
-	if c.LogHTTP {
-		conn = ss.NewHttpLogConn(conn, c)
+	if len(target) == 0 {
+		c.LogD("target length is 0")
+		return
 	}
 	buf := utils.GetBuf(1024)
 	n, err := conn.Read(buf)
@@ -23,6 +24,7 @@ func socksProxyHandler(ac *ss.AcceptedConn) {
 		utils.PutBuf(buf)
 		return
 	}
+
 	rconn, err := ss.DialSSWithOptions(&ss.DialOptions{
 		Target: target,
 		C:      c,
@@ -36,5 +38,8 @@ func socksProxyHandler(ac *ss.AcceptedConn) {
 	defer rconn.Close()
 	c.Log("proxy", target, "from", conn.RemoteAddr(), "->", conn.LocalAddr(),
 		"to", rconn.LocalAddr(), "->", rconn.RemoteAddr())
+	if c.LogHTTP {
+		conn = ss.NewHttpLogConn(conn, c)
+	}
 	ss.Pipe(conn, rconn, c)
 }
