@@ -1,139 +1,154 @@
 package ss
 
 import (
+	"encoding/binary"
 	"fmt"
 	"io"
 	"math/rand/v2"
-	"net"
 	"time"
 
 	"github.com/ccsexyz/shadowsocks-go/crypto"
 	"github.com/ccsexyz/shadowsocks-go/internal/utils"
 )
 
-// FrameCodec encrypts/decrypts data on a per-connection basis.
-type FrameCodec interface {
-	ReadFrame(r io.Reader) ([]byte, error)
-	WriteFrame(w io.Writer, plaintext []byte) error
-	Overhead() int
-	Close() error
+// cryptoConnStream implements Conn with direct stream cipher encryption/decryption.
+// It eliminates the FrameCodec abstraction by handling the read/write loops inline.
+type cryptoConnStream struct {
+	Conn
+	enc        crypto.CipherStream
+	dec        crypto.CipherStream
+	deferClose bool
 }
 
-// cipherStreamCodec implements FrameCodec using classic CipherStream (stream AEAD).
-type cipherStreamCodec struct {
-	enc crypto.CipherStream
-	dec crypto.CipherStream
+func newCryptoConnStream(conn Conn, enc, dec crypto.CipherStream) *cryptoConnStream {
+	return &cryptoConnStream{Conn: conn, enc: enc, dec: dec}
 }
 
-func newCipherStreamCodec(enc, dec crypto.CipherStream) *cipherStreamCodec {
-	return &cipherStreamCodec{enc: enc, dec: dec}
-}
-
-func (c *cipherStreamCodec) ReadFrame(r io.Reader) ([]byte, error) {
-	buf := utils.GetBuf(buffersize)
-	defer utils.PutBuf(buf)
-
+func (c *cryptoConnStream) Read(buf []byte, pool *utils.BufPool) ([][]byte, error) {
+	r := AsReader(c.Conn, pool)
 	for {
+		frame, err := c.dec.ReadFrame(buf)
+		if frame != nil {
+			// Fast path: ReadFrame reused buf as output.
+			// The data is already in buf — return directly without copy.
+			if len(frame) > 0 && len(buf) > 0 && &frame[0] == &buf[0] {
+				return [][]byte{buf[:len(frame)]}, nil
+			}
+			if cap(buf) >= len(frame) {
+				n := copy(buf, frame)
+				return [][]byte{buf[:n]}, nil
+			}
+			return [][]byte{frame}, nil
+		}
+		if err != nil && err != io.EOF { return nil, err }
 		nr, rerr := r.Read(buf)
 		if nr > 0 {
-			if _, err := c.dec.Write(buf[:nr]); err != nil {
-				return nil, err
-			}
-		}
-		n, err := c.dec.Read(buf)
-		if n > 0 {
-			return append([]byte{}, buf[:n]...), nil
-		}
-		if err != nil && err != io.EOF {
-			return nil, err
+			if werr := c.dec.WriteFrame(buf[:nr]); werr != nil { return nil, werr }
 		}
 		if rerr != nil {
-			return nil, rerr
-		}
-	}
-}
-
-func (c *cipherStreamCodec) WriteFrame(w io.Writer, plaintext []byte) error {
-	if _, err := c.enc.Write(plaintext); err != nil {
-		return err
-	}
-	buf := utils.GetBuf(buffersize)
-	defer utils.PutBuf(buf)
-
-	for {
-		n, err := c.enc.Read(buf)
-		if n > 0 {
-			if _, werr := w.Write(buf[:n]); werr != nil {
-				return werr
+			frame, err := c.dec.ReadFrame(buf)
+			if frame != nil {
+				if len(frame) > 0 && len(buf) > 0 && &frame[0] == &buf[0] {
+					return [][]byte{buf[:len(frame)]}, nil
+				}
+				if cap(buf) >= len(frame) {
+					n := copy(buf, frame)
+					return [][]byte{buf[:n]}, nil
+				}
+				return [][]byte{frame}, nil
 			}
-		}
-		if err == io.EOF {
-			return nil
-		}
-		if err != nil {
-			return err
+			if err == nil || err == io.EOF { return nil, rerr }
+			return nil, err
 		}
 	}
 }
 
-func (c *cipherStreamCodec) Overhead() int { return 0 }
-func (c *cipherStreamCodec) Close() error  { return nil }
+func (c *cryptoConnStream) Write(bufs ...[]byte) (n int, err error) {
+	for _, b := range bufs { n += len(b) }
+	plaintext := flatten(bufs)
+	if err := c.enc.WriteFrame(plaintext); err != nil { return n, err }
+	w := AsReadWriteCloser(c.Conn, nil)
+	_, err = c.enc.WriteEncryptedTo(w)
+	return n, err
+}
 
-// aead2022Codec implements FrameCodec using the AEAD-2022 protocol.
-type aead2022Codec struct {
+// cryptoConn2022 implements Conn with direct AEAD-2022 frame encryption/decryption.
+// Unlike stream ciphers, AEAD-2022 frames are self-contained packets:
+// [encrypted 2-byte length tag] [encrypted payload]. Each frame is read
+// directly from the underlying conn and decrypted in-place into the caller's buf.
+type cryptoConn2022 struct {
+	Conn
 	method      string
 	psk         []byte
 	readCipher  *crypto.TcpCipher2022
 	writeCipher *crypto.TcpCipher2022
 
-	// server handshake state
+	// Server-side handshake state
 	svSalt  []byte
 	cliSalt []byte
 
-	// initial data from server handshake
-	initBuf []byte
-
-	rlbuf []byte
-	rdbuf []byte
-	wlbuf []byte
-	wdbuf []byte
+	initBuf    []byte // initial data from server handshake (client side)
+	wlbuf      []byte // write length-tag buffer: 2+overhead
+	wdbuf      []byte // write data buffer: max chunk + overhead
+	deferClose bool
 }
 
-func newServerAead2022Codec(method string, psk, svSalt, cliSalt []byte, readCipher *crypto.TcpCipher2022) *aead2022Codec {
-	return &aead2022Codec{
+func newServerCryptoConn2022(conn Conn, method string, psk, svSalt, cliSalt []byte, readCipher *crypto.TcpCipher2022) *cryptoConn2022 {
+	overhead := readCipher.Overhead()
+	return &cryptoConn2022{
+		Conn:       conn,
 		method:     method,
 		psk:        psk,
 		readCipher: readCipher,
 		svSalt:     svSalt,
 		cliSalt:    cliSalt,
+		wlbuf:      make([]byte, 2+overhead),
+		wdbuf:      make([]byte, 65535+overhead),
 	}
 }
 
-func newClientAead2022Codec(method string, psk []byte, writeCipher *crypto.TcpCipher2022) *aead2022Codec {
-	return &aead2022Codec{
+func newClientCryptoConn2022(conn Conn, method string, psk []byte, writeCipher *crypto.TcpCipher2022) *cryptoConn2022 {
+	overhead := writeCipher.Overhead()
+	return &cryptoConn2022{
+		Conn:        conn,
 		method:      method,
 		psk:         psk,
 		writeCipher: writeCipher,
+		wlbuf:       make([]byte, 2+overhead),
+		wdbuf:       make([]byte, 65535+overhead),
 	}
 }
 
-func (c *aead2022Codec) ReadFrame(r io.Reader) ([]byte, error) {
+func (c *cryptoConn2022) Read(buf []byte, pool *utils.BufPool) ([][]byte, error) {
+	// Client side: complete handshake on first read
 	if c.readCipher == nil {
-		if err := c.doServerHandshake(r); err != nil {
+		if err := c.clientHandshake(pool); err != nil {
 			return nil, err
 		}
 	}
-	if len(c.initBuf) > 0 {
+
+	// Return initial data from server handshake first
+	if c.initBuf != nil {
 		data := c.initBuf
 		c.initBuf = nil
-		return data, nil
+		if cap(buf) >= len(data) {
+			n := copy(buf, data)
+			return [][]byte{buf[:n]}, nil
+		}
+		return [][]byte{data}, nil
 	}
 
-	lbLen := 2 + c.readCipher.Overhead()
-	if cap(c.rlbuf) < lbLen {
-		c.rlbuf = make([]byte, lbLen)
-	}
-	lb := c.rlbuf[:lbLen]
+	return c.readFrame(buf, pool)
+}
+
+func (c *cryptoConn2022) readFrame(buf []byte, pool *utils.BufPool) ([][]byte, error) {
+	r := AsReader(c.Conn, pool)
+	overhead := c.readCipher.Overhead()
+
+	// Read and decrypt length tag
+	lbLen := 2 + overhead
+	var lbArr [22]byte
+	lb := lbArr[:lbLen]
 	if _, err := io.ReadFull(r, lb); err != nil {
 		return nil, err
 	}
@@ -142,27 +157,52 @@ func (c *aead2022Codec) ReadFrame(r io.Reader) ([]byte, error) {
 		return nil, fmt.Errorf("decrypt length failed")
 	}
 	length := int(uint16(lb[0])<<8 | uint16(lb[1]))
-
-	dataLen := length + c.readCipher.Overhead()
-	if cap(c.rdbuf) < dataLen {
-		c.rdbuf = make([]byte, dataLen)
+	if length == 0 {
+		return nil, fmt.Errorf("zero-length 2022 frame")
 	}
-	data := c.rdbuf[:dataLen]
+
+	dataLen := length + overhead
+	if cap(buf) >= dataLen {
+		if _, err := io.ReadFull(r, buf[:dataLen]); err != nil {
+			return nil, err
+		}
+		dec, ok := c.readCipher.DecryptPacket(buf[:dataLen])
+		if !ok {
+			return nil, fmt.Errorf("decrypt data failed")
+		}
+		return [][]byte{dec[:length]}, nil
+	}
+
+	data := make([]byte, dataLen)
 	if _, err := io.ReadFull(r, data); err != nil {
 		return nil, err
 	}
-	data, ok = c.readCipher.DecryptPacket(data)
+	dec, ok := c.readCipher.DecryptPacket(data)
 	if !ok {
 		return nil, fmt.Errorf("decrypt data failed")
 	}
-	return append([]byte{}, data[:length]...), nil
+	return [][]byte{dec[:length]}, nil
 }
 
-func (c *aead2022Codec) WriteFrame(w io.Writer, plaintext []byte) error {
+func (c *cryptoConn2022) Write(bufs ...[]byte) (n int, err error) {
+	for _, b := range bufs {
+		n += len(b)
+	}
+	plaintext := flatten(bufs)
+	if err := c.writeFrame(plaintext); err != nil {
+		return n, err
+	}
+	return n, nil
+}
+
+func (c *cryptoConn2022) writeFrame(plaintext []byte) error {
+	w := AsReadWriteCloser(c.Conn, nil)
+	totalLen := len(plaintext)
+
+	// Server: send handshake response on first write
 	if c.svSalt != nil {
-		chunk := plaintext
-		if len(chunk) > 0xFFFF {
-			chunk = chunk[:0xFFFF]
+		if totalLen > 0xFFFF {
+			return fmt.Errorf("handshake payload too large: %d bytes exceeds 2022 protocol limit of %d", totalLen, 0xFFFF)
 		}
 		svCiph, err := crypto.NewTcpCipher2022(c.method, c.psk, c.svSalt)
 		if err != nil {
@@ -170,14 +210,14 @@ func (c *aead2022Codec) WriteFrame(w io.Writer, plaintext []byte) error {
 		}
 		svHdr := make([]byte, 1+8+len(c.cliSalt)+2)
 		svHdr[0] = aead2022ServerType
-		PutUint64Timestamp(svHdr[1:9])
+		binary.BigEndian.PutUint64(svHdr[1:9], uint64(time.Now().Unix()))
 		copy(svHdr[9:9+len(c.cliSalt)], c.cliSalt)
-		PutUint16BE(svHdr[9+len(c.cliSalt):11+len(c.cliSalt)], uint16(len(chunk)))
+		binary.BigEndian.PutUint16(svHdr[9+len(c.cliSalt):11+len(c.cliSalt)], uint16(totalLen))
 		svHdr = svCiph.EncryptPacket(svHdr)
 
-		data := make([]byte, len(chunk), len(chunk)+svCiph.Overhead())
-		copy(data, chunk)
-		data = svCiph.EncryptPacket(data)
+		data := make([]byte, totalLen+svCiph.Overhead())
+		copy(data, plaintext)
+		data = svCiph.EncryptPacket(data[:totalLen])
 
 		resp := make([]byte, len(c.svSalt)+len(svHdr)+len(data))
 		copy(resp, c.svSalt)
@@ -192,32 +232,40 @@ func (c *aead2022Codec) WriteFrame(w io.Writer, plaintext []byte) error {
 		return nil
 	}
 
-	chunk := plaintext
-	if len(chunk) > 0xFFFF {
-		chunk = chunk[:0xFFFF]
-	}
+	// Chunked encryption with length tags
 	overhead := c.writeCipher.Overhead()
-	lbLen := 2 + overhead
-	if cap(c.wlbuf) < lbLen {
-		c.wlbuf = make([]byte, lbLen)
-	}
-	lb := c.wlbuf[:2:lbLen]
-	PutUint16BE(lb[:2], uint16(len(chunk)))
-	lb = c.writeCipher.EncryptPacket(lb)
+	for off := 0; off < totalLen; {
+		chunkLen := totalLen - off
+		if chunkLen > 0xFFFF {
+			chunkLen = 0xFFFF
+		}
+		lbLen := 2 + overhead
+		if cap(c.wlbuf) < lbLen {
+			c.wlbuf = make([]byte, lbLen)
+		}
+		lb := c.wlbuf[:2:lbLen]
+		binary.BigEndian.PutUint16(lb[:2], uint16(chunkLen))
+		lb = c.writeCipher.EncryptPacket(lb)
 
-	dataLen := len(chunk) + overhead
-	if cap(c.wdbuf) < dataLen {
-		c.wdbuf = make([]byte, dataLen)
-	}
-	data := c.wdbuf[:len(chunk):dataLen]
-	copy(data, chunk)
-	data = c.writeCipher.EncryptPacket(data)
+		dataLen := chunkLen + overhead
+		if cap(c.wdbuf) < dataLen {
+			c.wdbuf = make([]byte, dataLen)
+		}
+		data := c.wdbuf[:chunkLen:dataLen]
+		copy(data, plaintext[off:off+chunkLen])
+		data = c.writeCipher.EncryptPacket(data)
 
-	_, err := w.Write(append(lb, data...))
-	return err
+		if _, err := w.Write(append(lb, data...)); err != nil {
+			return err
+		}
+		off += chunkLen
+	}
+	return nil
 }
 
-func (c *aead2022Codec) doServerHandshake(r io.Reader) error {
+func (c *cryptoConn2022) clientHandshake(pool *utils.BufPool) error {
+	r := AsReader(c.Conn, pool)
+
 	svSalt := make([]byte, len(c.psk))
 	if _, err := io.ReadFull(r, svSalt); err != nil {
 		return err
@@ -226,6 +274,7 @@ func (c *aead2022Codec) doServerHandshake(r io.Reader) error {
 	if err != nil {
 		return err
 	}
+
 	hdrLen := 1 + 8 + len(c.psk) + 2 + svCiph.Overhead()
 	svBuf := make([]byte, hdrLen)
 	if _, err := io.ReadFull(r, svBuf); err != nil {
@@ -238,67 +287,24 @@ func (c *aead2022Codec) doServerHandshake(r io.Reader) error {
 	if svBuf[0] != aead2022ServerType {
 		return fmt.Errorf("unexpected server stream type: %d", svBuf[0])
 	}
+
 	dataLen := int(uint16(svBuf[1+8+len(c.psk)])<<8 | uint16(svBuf[1+8+len(c.psk)+1]))
 	if dataLen > 0 {
-		dataBuf := make([]byte, dataLen+svCiph.Overhead())
-		if _, err := io.ReadFull(r, dataBuf); err != nil {
+		data := make([]byte, dataLen+svCiph.Overhead())
+		if _, err := io.ReadFull(r, data); err != nil {
 			return err
 		}
-		dataBuf, ok = svCiph.DecryptPacket(dataBuf)
+		_, ok = svCiph.DecryptPacket(data)
 		if !ok {
 			return fmt.Errorf("decrypt initial server data failed")
 		}
-		c.initBuf = append([]byte{}, dataBuf[:dataLen]...)
+		c.initBuf = data[:dataLen]
 	}
 	c.readCipher = svCiph
 	return nil
 }
 
-func (c *aead2022Codec) Overhead() int {
-	if c.writeCipher != nil {
-		return c.writeCipher.Overhead()
-	}
-	return 16 // default AES-GCM overhead
-}
-
-func (c *aead2022Codec) Close() error { return nil }
-
-func PutUint16BE(b []byte, v uint16) {
-	b[0] = byte(v >> 8)
-	b[1] = byte(v)
-}
-
-func PutUint64Timestamp(b []byte) {
-	now := uint64(time.Now().Unix())
-	b[0] = byte(now >> 56)
-	b[1] = byte(now >> 48)
-	b[2] = byte(now >> 40)
-	b[3] = byte(now >> 32)
-	b[4] = byte(now >> 24)
-	b[5] = byte(now >> 16)
-	b[6] = byte(now >> 8)
-	b[7] = byte(now)
-}
-
-// CryptoConn wraps a raw Conn with a FrameCodec for encryption/decryption.
-type CryptoConn struct {
-	Conn
-	codec      FrameCodec
-	buf        []byte // leftover plaintext from last read
-	rlbuf      []byte
-	rdbuf      []byte
-	wlbuf      []byte
-	wdbuf      []byte
-	deferClose bool
-}
-
-func newCryptoConn(conn Conn, codec FrameCodec) *CryptoConn {
-	return &CryptoConn{Conn: conn, codec: codec}
-}
-
-func (c *CryptoConn) Unwrap() net.Conn { return c.Conn }
-
-func (c *CryptoConn) Close() error {
+func (c *cryptoConn2022) Close() error {
 	if c.deferClose {
 		go func() {
 			time.Sleep(time.Duration(rand.Int()%64+8) * time.Second)
@@ -309,40 +315,67 @@ func (c *CryptoConn) Close() error {
 	return c.Conn.Close()
 }
 
-func (c *CryptoConn) DeferClose()       { c.deferClose = true }
-func (c *CryptoConn) CancelDeferClose() { c.deferClose = false }
+func (c *cryptoConn2022) DeferClose()       { c.deferClose = true }
+func (c *cryptoConn2022) CancelDeferClose() { c.deferClose = false }
+func (c *cryptoConn2022) Unwrap() Conn      { return c.Conn }
 
-func (c *CryptoConn) Read(b []byte) (n int, err error) {
-	if len(c.buf) > 0 {
-		n = copy(b, c.buf)
-		c.buf = c.buf[n:]
-		if len(c.buf) == 0 {
-			c.buf = nil
-		}
-		return n, nil
-	}
-
-	plain, err := c.codec.ReadFrame(c.Conn)
-	if err != nil {
-		return 0, err
-	}
-	n = copy(b, plain)
-	if n < len(plain) {
-		c.buf = plain[n:]
-	}
-	return n, nil
+func (c *cryptoConn2022) GetCfg() *Config {
+	if cm := getConnMeta(c.Conn); cm != nil { return cm.GetCfg() }
+	return nil
+}
+func (c *cryptoConn2022) SetDst(dst Addr) {
+	if cm := getConnMeta(c.Conn); cm != nil { cm.SetDst(dst) }
+}
+func (c *cryptoConn2022) GetDst() Addr {
+	if cm := getConnMeta(c.Conn); cm != nil { return cm.GetDst() }
+	return nil
+}
+func (c *cryptoConn2022) GetHost() string {
+	if cm := getConnMeta(c.Conn); cm != nil { return cm.GetHost() }
+	return ""
 }
 
-func (c *CryptoConn) Write(b []byte) (n int, err error) {
-	return c.WriteBuffers([][]byte{b})
+func (c *cryptoConnStream) Close() error {
+	if c.deferClose {
+		go func() {
+			time.Sleep(time.Duration(rand.Int()%64+8) * time.Second)
+			c.Conn.Close()
+		}()
+		return nil
+	}
+	return c.Conn.Close()
 }
 
-func (c *CryptoConn) WriteBuffers(bufs [][]byte) (n int, err error) {
+func (c *cryptoConnStream) DeferClose()       { c.deferClose = true }
+func (c *cryptoConnStream) CancelDeferClose() { c.deferClose = false }
+func (c *cryptoConnStream) Unwrap() Conn      { return c.Conn }
+
+func (c *cryptoConnStream) GetCfg() *Config {
+	if cm := getConnMeta(c.Conn); cm != nil { return cm.GetCfg() }
+	return nil
+}
+func (c *cryptoConnStream) SetDst(dst Addr) {
+	if cm := getConnMeta(c.Conn); cm != nil { cm.SetDst(dst) }
+}
+func (c *cryptoConnStream) GetDst() Addr {
+	if cm := getConnMeta(c.Conn); cm != nil { return cm.GetDst() }
+	return nil
+}
+func (c *cryptoConnStream) GetHost() string {
+	if cm := getConnMeta(c.Conn); cm != nil { return cm.GetHost() }
+	return ""
+}
+
+func flatten(bufs [][]byte) []byte {
+	if len(bufs) == 1 {
+		return bufs[0]
+	}
+	n := 0
+	for _, b := range bufs { n += len(b) }
+	out := make([]byte, n)
+	off := 0
 	for _, b := range bufs {
-		if err = c.codec.WriteFrame(c.Conn, b); err != nil {
-			return
-		}
-		n += len(b)
+		off += copy(out[off:], b)
 	}
-	return
+	return out
 }

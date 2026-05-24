@@ -250,7 +250,7 @@ func TestSocksProxySSProxy_DirectSSClient(t *testing.T) {
 
 	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	buf := make([]byte, 1024)
-	n, err := conn.Read(buf)
+	n, err := ss.ReadN(conn, buf, nil)
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
@@ -363,7 +363,7 @@ func TestSocksProxySSProxy_MultipleSequentialClients(t *testing.T) {
 
 		conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 		buf := make([]byte, 1024)
-		n, err := conn.Read(buf)
+		n, err := ss.ReadN(conn, buf, nil)
 		if err != nil {
 			conn.Close()
 			cliCfg.Close()

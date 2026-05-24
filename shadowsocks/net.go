@@ -7,7 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -18,6 +18,13 @@ import (
 	"github.com/ccsexyz/shadowsocks-go/redir"
 	"github.com/gorilla/websocket"
 )
+
+// Listener accepts connections using the project Conn type.
+type Listener interface {
+	Accept() (Conn, error)
+	Close() error
+	Addr() net.Addr
+}
 
 type chListener struct {
 	ch   chan net.Conn
@@ -78,6 +85,13 @@ var (
 	RedirAcceptor  = AcceptHandler(redirAcceptor)
 )
 
+func limitAcceptHandler(conn Conn, lis *listener) AcceptResult {
+	return AcceptResult{AcceptContinue, &LimitConn{
+		Conn:      conn,
+		Rlimiters: buildLimiters(lis.c),
+	}}
+}
+
 func NewListener(lis net.Listener, c *Config, handlers []AcceptHandler) *listener {
 	l := &listener{
 		rawlis:   lis,
@@ -115,31 +129,35 @@ func (lis *listener) checkProto(r *http.Request) bool {
 }
 
 func (lis *listener) getTargetByHost(host string) string {
-	target, _ := lis.c.TargetMap[strings.ToLower(host)]
-	return target
+	if lis.c.targetRouter != nil {
+		return lis.c.targetRouter.matchHost(host)
+	}
+	return lis.c.TargetMap[strings.ToLower(host)]
 }
 
 func (lis *listener) getHttpProxyTarget(r *http.Request) string {
-	if r != nil {
-		for key, values := range r.Header {
-			for _, value := range values {
-				tKey := fmt.Sprintf("%s %s", key, value)
-
-				target := lis.getTargetByHost(tKey)
-				if len(target) > 0 {
-					return target
-				}
+	if r == nil {
+		return ""
+	}
+	if lis.c.targetRouter != nil {
+		return lis.c.targetRouter.matchHTTP(r)
+	}
+	// Fallback for configs loaded without targetRouter (e.g. tests)
+	for key, values := range r.Header {
+		for _, value := range values {
+			tKey := fmt.Sprintf("%s %s", key, value)
+			target := lis.c.TargetMap[strings.ToLower(tKey)]
+			if len(target) > 0 {
+				return target
 			}
 		}
-
-		uriKey := fmt.Sprintf("%s %s", r.Method, r.RequestURI)
-		target := lis.getTargetByHost(uriKey)
-		if len(target) > 0 {
-			return target
-		}
 	}
-
-	return lis.getTargetByHost("http_proxy_to")
+	uriKey := fmt.Sprintf("%s %s", r.Method, r.RequestURI)
+	target := lis.c.TargetMap[strings.ToLower(uriKey)]
+	if len(target) > 0 {
+		return target
+	}
+	return lis.c.TargetMap["http_proxy_to"]
 }
 
 func getUpgrader(lis *listener) *websocket.Upgrader {
@@ -208,7 +226,7 @@ func (lis *listener) acceptor() {
 			lis.httpch <- conn
 			continue
 		}
-		go lis.handleNewConn(newBaseConn(utils.NewConn(conn), lis.c))
+		go lis.handleNewConn(newBaseConn(conn, lis.c))
 	}
 }
 
@@ -251,7 +269,7 @@ func (lis *listener) Close() error {
 	return lis.rawlis.Close()
 }
 
-func (lis *listener) Accept() (conn net.Conn, err error) {
+func (lis *listener) Accept() (conn Conn, err error) {
 	for {
 		select {
 		case <-lis.die:
@@ -274,9 +292,13 @@ func (lis *listener) Accept() (conn net.Conn, err error) {
 					lis.c.LogD("accept: server", lis.c.Nickname, "is disabled")
 					continue
 				}
+				var target Addr
+				if cm := getConnMeta(result.Conn); cm != nil {
+					target = cm.GetDst()
+				}
 				accepted := &AcceptedConn{
 					Conn:   newStatConn(result.Conn, lis.c.getStat()),
-					Target: result.Conn.GetDst(),
+					Target: target,
 					Config: lis.c,
 				}
 				conn = accepted
@@ -287,7 +309,7 @@ func (lis *listener) Accept() (conn net.Conn, err error) {
 }
 
 // Listen creates a TCP or virtual listener with the given handler chain.
-func Listen(address string, c *Config, handlers []AcceptHandler) (net.Listener, error) {
+func Listen(address string, c *Config, handlers []AcceptHandler) (Listener, error) {
 	if strings.HasPrefix(address, "@") {
 		vl := RegisterVirtualForce(address, c.Nickname)
 		return NewListener(vl, c, handlers), nil
@@ -301,65 +323,6 @@ func Listen(address string, c *Config, handlers []AcceptHandler) (net.Listener, 
 		return nil, err
 	}
 	return NewListener(l, c, handlers), nil
-}
-
-func (lis *listener) drainPool(handler AcceptHandler) {
-	go func() {
-		for {
-			conn, err := lis.c.getPool().Get()
-			if err != nil {
-				return
-			}
-			obfsconn, ok := conn.(*ObfsConn)
-			if !ok {
-				conn.Close()
-				return
-			}
-			obfsconn.wremain = []byte(buildHTTPResponse(""))
-			obfsconn.req = true
-			obfsconn.chunkLen = 0
-			go func(obfsconn *ObfsConn) {
-				result := handler(obfsconn, lis)
-				if result.Action != AcceptContinue {
-					return
-				}
-				select {
-				case <-lis.die:
-					obfsconn.RemainConn.Close()
-					result.Conn.Close()
-				case lis.connch <- result.Conn:
-				}
-			}(obfsconn)
-		}
-	}()
-}
-
-func backendSorter(lis *listener) {
-	ticker := time.NewTicker(30 * time.Second)
-	i := 0
-	for {
-		i++
-		select {
-		case <-ticker.C:
-		case <-lis.die:
-			return
-		}
-		backends := make([]*Config, len(lis.c.Backends))
-		lis.c.getTCPFilterLock().Lock()
-		copy(backends, lis.c.Backends)
-		sort.SliceStable(backends, func(i, j int) bool {
-			ihits := *(backends[i].initRuntime().Any.(*int))
-			jhits := *(backends[j].initRuntime().Any.(*int))
-			return jhits < ihits
-		})
-		if i%60 == 0 {
-			for _, v := range backends {
-				*(v.initRuntime().Any.(*int)) /= 2
-			}
-		}
-		lis.c.Backends = backends
-		lis.c.getTCPFilterLock().Unlock()
-	}
 }
 
 func ssMultiAcceptHandler2(conn Conn, lis *listener, addr *SockAddr, n int,
@@ -383,12 +346,14 @@ func ssMultiAcceptHandler2(conn Conn, lis *listener, addr *SockAddr, n int,
 		return
 	}
 
-	ssConn := newCryptoConn(conn, newCipherStreamCodec(enc, dec))
+	ssConn := newCryptoConnStream(conn, enc, dec)
 	conn = ssConn
 	if len(data) != 0 {
-		conn = &RemainConn{Conn: ssConn, remain: data}
+		conn = &RemainConn{Conn: ssConn, remain: slices.Clone(data)}
 	}
-	conn.SetDst(addr)
+	if cm, ok := conn.(ConnMeta); ok {
+		cm.SetDst(addr)
+	}
 	setInnerCfg(conn, chs)
 	c = conn
 	chs.LogD("choose", chs.Method, chs.Password, addr.Host(), addr.Port())
@@ -416,7 +381,7 @@ func setInnerCfg(conn Conn, cfg *Config) {
 func ssMultiAcceptHandler(conn Conn, lis *listener) AcceptResult {
 	buf := utils.GetBuf(buffersize)
 	defer utils.PutBuf(buf)
-	n, err := conn.Read(buf)
+	n, err := ReadN(conn, buf, nil)
 	if err != nil {
 		lis.c.getStat().incReject("other")
 		return AcceptResult{AcceptReject, nil}
@@ -425,7 +390,7 @@ func ssMultiAcceptHandler(conn Conn, lis *listener) AcceptResult {
 	ctx, err := ParseAddrWithMultipleBackends(buf[:n], lis.c.Backends)
 	if err != nil {
 		conn.SetReadDeadline(time.Now().Add(5 * time.Millisecond))
-		nn, rerr := conn.Read(buf[n:])
+		nn, rerr := ReadN(conn, buf[n:], nil)
 		conn.SetReadDeadline(time.Time{})
 		if rerr == nil && nn > 0 {
 			n += nn
@@ -473,13 +438,15 @@ func ss2022MultiAcceptHandler2(conn Conn, lis *listener, ctx *parseContext) (c C
 	}
 
 	svSalt := utils.GetRandomBytes(chs.Ivlen)
-	ssConn := newCryptoConn(conn, newServerAead2022Codec(chs.Method, psk, svSalt, ctx.cliSalt, ctx.cliCipher))
+	ssConn := newServerCryptoConn2022(conn, chs.Method, psk, svSalt, ctx.cliSalt, ctx.cliCipher)
 	ssConn.DeferClose()
 	conn = ssConn
 	if len(ctx.data) != 0 {
 		conn = &RemainConn{Conn: ssConn, remain: ctx.data}
 	}
-	conn.SetDst(ctx.addr)
+	if cm, ok := conn.(ConnMeta); ok {
+		cm.SetDst(ctx.addr)
+	}
 	setInnerCfg(conn, chs)
 	c = conn
 	chs.LogD("choose SS2022", chs.Method, ctx.addr.Host(), ctx.addr.Port())
@@ -487,16 +454,15 @@ func ss2022MultiAcceptHandler2(conn Conn, lis *listener, ctx *parseContext) (c C
 }
 
 func ssAcceptHandler(conn Conn, lis *listener) AcceptResult {
-	buf := utils.GetBuf(buffersize)
-	defer utils.PutBuf(buf)
-	n, err := conn.Read(buf)
+	data := make([]byte, buffersize)
+	n, err := ReadN(conn, data, nil)
 	defer func() {
 		if err != nil {
 			lis.c.Log("recv an unexpected header from", conn.RemoteAddr().String(),
 				"method:", lis.c.Method,
 				"err:", err,
 				"read:", n, "bytes",
-				"raw:", buf[:n])
+				"raw:", data[:n])
 		}
 	}()
 	if err != nil {
@@ -514,18 +480,15 @@ func ssAcceptHandler(conn Conn, lis *listener) AcceptResult {
 		lis.c.getStat().incReject("decrypt")
 		return AcceptResult{AcceptReject, nil}
 	}
-	_, err = dec.Write(buf[:n])
-	if err != nil {
-		err = fmt.Errorf("dec.Write failed: %w (method=%s, input=%d bytes: %x)", err, lis.c.Method, n, buf[:n])
+	if err = dec.WriteFrame(data[:n]); err != nil {
+		err = fmt.Errorf("dec.WriteFrame failed: %w (method=%s, input=%d bytes: %x)", err, lis.c.Method, n, data[:n])
 		lis.c.getStat().incReject("decrypt")
 		return AcceptResult{AcceptReject, nil}
 	}
-	dbuf := utils.GetBuf(buffersize)
-	defer utils.PutBuf(dbuf)
-	dn, err := dec.Read(dbuf)
+	frame, err := dec.ReadFrame(nil)
 	if err != nil {
 		conn.SetReadDeadline(time.Now().Add(5 * time.Millisecond))
-		nn, rerr := conn.Read(buf[n:])
+		nn, rerr := ReadN(conn, data[n:], nil)
 		conn.SetReadDeadline(time.Time{})
 		if rerr == nil && nn > 0 {
 			n += nn
@@ -535,23 +498,28 @@ func ssAcceptHandler(conn Conn, lis *listener) AcceptResult {
 				lis.c.getStat().incReject("decrypt")
 				return AcceptResult{AcceptReject, nil}
 			}
-			_, err = dec.Write(buf[:n])
-			if err != nil {
-				err = fmt.Errorf("dec.Write(2nd) failed: %w (method=%s, total=%d bytes)", err, lis.c.Method, n)
+			if err = dec.WriteFrame(data[:n]); err != nil {
+				err = fmt.Errorf("dec.WriteFrame(2nd) failed: %w (method=%s, total=%d bytes)", err, lis.c.Method, n)
 				lis.c.getStat().incReject("decrypt")
 				return AcceptResult{AcceptReject, nil}
 			}
-			dn, err = dec.Read(dbuf)
+			frame, err = dec.ReadFrame(nil)
 		}
 		if err != nil {
-			err = fmt.Errorf("dec.Read failed: %w (method=%s, input=%d bytes: %x)", err, lis.c.Method, n, buf[:n])
+			err = fmt.Errorf("dec.ReadFrame failed: %w (method=%s, input=%d bytes: %x)", err, lis.c.Method, n, data[:n])
 			lis.c.getStat().incReject("decrypt")
 			return AcceptResult{AcceptReject, nil}
 		}
 	}
-	addr, data, err := ParseAddr(dbuf[:dn])
+	if frame == nil {
+		err = fmt.Errorf("dec.ReadFrame returned nil frame (method=%s, input=%d bytes)", lis.c.Method, n)
+		lis.c.getStat().incReject("decrypt")
+		return AcceptResult{AcceptReject, nil}
+	}
+	pdata := frame
+	addr, rest, err := ParseAddr(pdata)
 	if err != nil {
-		err = fmt.Errorf("ParseAddr after decrypt: %w (method=%s, decrypted=%d bytes: %x)", err, lis.c.Method, dn, dbuf[:dn])
+		err = fmt.Errorf("ParseAddr after decrypt: %w (method=%s, decrypted=%d bytes: %x)", err, lis.c.Method, len(pdata), pdata)
 		lis.c.getStat().incReject("parse")
 		return AcceptResult{AcceptReject, nil}
 	}
@@ -573,25 +541,28 @@ func ssAcceptHandler(conn Conn, lis *listener) AcceptResult {
 		lis.c.getStat().incReject("cipher")
 		return AcceptResult{AcceptReject, nil}
 	}
-	ssConn := newCryptoConn(conn, newCipherStreamCodec(enc, dec))
+	ssConn := newCryptoConnStream(conn, enc, dec)
 	if !addr.Nop {
 		ssConn.DeferClose()
 	}
-	if len(data) != 0 {
-		conn = &RemainConn{Conn: ssConn, remain: data}
+	if len(rest) != 0 {
+		conn = &RemainConn{Conn: ssConn, remain: slices.Clone(rest)}
 	} else {
 		conn = ssConn
 	}
-	conn.SetDst(addr)
+	if cm, ok := conn.(ConnMeta); ok {
+		cm.SetDst(addr)
+	}
 	return AcceptResult{AcceptContinue, conn}
 }
+
 
 func httpProxyAcceptor(conn Conn, lis *listener) AcceptResult {
 	parser := utils.NewHTTPHeaderParser(utils.GetBuf(buffersize))
 	defer utils.PutBuf(parser.GetBuf())
 	buf := make([]byte, 4096)
 	for {
-		n, err := conn.Read(buf)
+		n, err := ReadN(conn, buf, nil)
 		if err != nil {
 			return AcceptResult{AcceptReject, nil}
 		}
@@ -617,12 +588,14 @@ func httpProxyAcceptor(conn Conn, lis *listener) AcceptResult {
 		if err != nil {
 			return AcceptResult{AcceptReject, nil}
 		}
-		_, err = io.WriteString(conn, "HTTP/1.1 200 Connection Established\r\n\r\n")
+		_, err = io.WriteString(AsReadWriteCloser(conn, nil), "HTTP/1.1 200 Connection Established\r\n\r\n")
 		if err != nil {
 			return AcceptResult{AcceptReject, nil}
 		}
 		conn = DecayRemainConn(conn)
-		conn.SetDst(domain.NewDstAddr(host, port))
+		if cm, ok := conn.(ConnMeta); ok {
+			cm.SetDst(domain.NewDstAddr(host, port))
+		}
 		return AcceptResult{AcceptContinue, conn}
 	}
 	if bytes.HasPrefix(requestURI, []byte("http://")) {
@@ -670,7 +643,9 @@ func httpProxyAcceptor(conn Conn, lis *listener) AcceptResult {
 		rconn = &RemainConn{Conn: conn}
 	}
 	rconn.remain = append(rconn.remain, buf...)
-	conn.SetDst(domain.NewDstAddr(host, port))
+	if cm, ok := conn.(ConnMeta); ok {
+		cm.SetDst(domain.NewDstAddr(host, port))
+	}
 	return AcceptResult{AcceptContinue, conn}
 }
 
@@ -710,7 +685,7 @@ func socksAcceptor(conn Conn, lis *listener) AcceptResult {
 	}
 	buf := utils.GetBuf(buffersize)
 	defer utils.PutBuf(buf)
-	n, err := conn.Read(buf)
+	n, err := ReadN(conn, buf, nil)
 	if err != nil || n < 2 {
 		return AcceptResult{AcceptReject, nil}
 	}
@@ -773,7 +748,9 @@ func socks4Detector(conn Conn, buf []byte, n int, lis *listener) (AcceptResult, 
 	if err != nil {
 		return AcceptResult{AcceptReject, nil}, true
 	}
-	conn.SetDst(dstaddr)
+	if cm, ok := conn.(ConnMeta); ok {
+		cm.SetDst(dstaddr)
+	}
 	return AcceptResult{AcceptContinue, conn}, true
 }
 
@@ -785,7 +762,9 @@ func socks6Detector(conn Conn, buf []byte, n int, lis *listener) (AcceptResult, 
 	if err != nil {
 		return AcceptResult{AcceptReject, nil}, true
 	}
-	conn.SetDst(addr)
+	if cm, ok := conn.(ConnMeta); ok {
+		cm.SetDst(addr)
+	}
 	return AcceptResult{AcceptContinue, &RemainConn{Conn: conn, remain: data}}, true
 }
 
@@ -807,7 +786,7 @@ func socks5Detector(conn Conn, buf []byte, n int, lis *listener) (AcceptResult, 
 	if rconn, ok := conn.(*RemainConn); ok && len(rconn.remain) > 0 {
 		conn = rconn.Conn
 	}
-	n, err = conn.Read(buf)
+	n, err = ReadN(conn, buf, nil)
 	if err != nil {
 		return AcceptResult{AcceptReject, nil}, true
 	}
@@ -826,7 +805,7 @@ func socks5Detector(conn Conn, buf []byte, n int, lis *listener) (AcceptResult, 
 		binary.BigEndian.PutUint16(buf[8:], uint16(addr.Port))
 		_, err = conn.Write(buf[:10])
 		for err == nil {
-			_, err = conn.Read(buf)
+			_, err = ReadN(conn, buf, nil)
 		}
 		return AcceptResult{AcceptReject, nil}, true
 	}
@@ -838,7 +817,9 @@ func socks5Detector(conn Conn, buf []byte, n int, lis *listener) (AcceptResult, 
 	if err != nil {
 		return AcceptResult{AcceptReject, nil}, true
 	}
-	conn.SetDst(addr)
+	if cm, ok := conn.(ConnMeta); ok {
+		cm.SetDst(addr)
+	}
 	return AcceptResult{AcceptContinue, conn}, true
 }
 
@@ -878,7 +859,7 @@ func ssFallbackDetector(conn Conn, buf []byte, n int, lis *listener) AcceptResul
 }
 
 func redirAcceptor(conn Conn, lis *listener) AcceptResult {
-	tconn, err := GetNetTCPConn(conn)
+	tconn, err := getNetTCPConn(conn)
 	if err != nil {
 		lis.c.Log(err)
 		return AcceptResult{AcceptReject, nil}
@@ -892,7 +873,9 @@ func redirAcceptor(conn Conn, lis *listener) AcceptResult {
 	if err != nil {
 		return AcceptResult{AcceptReject, nil}
 	}
-	conn.SetDst(domain.NewDstAddr(host, port))
+	if cm, ok := conn.(ConnMeta); ok {
+		cm.SetDst(domain.NewDstAddr(host, port))
+	}
 	return AcceptResult{AcceptContinue, conn}
 }
 

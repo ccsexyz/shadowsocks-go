@@ -77,7 +77,6 @@ type udpSession struct {
 	sendPID    uint64         // next packet ID for outgoing packets
 	recvWindow *slidingWindow // sliding window for incoming packets
 	lastSeen   time.Time
-	clientAddr string
 }
 
 // --- global session manager ---
@@ -157,8 +156,6 @@ type udp2022AESCipherBlock struct {
 	block cipher.Block // AES block cipher for separate header
 	role  byte         // 0=client, 1=server
 }
-
-func (a *udp2022AESCipherBlock) SetServer() { a.role = 1 }
 
 func newUdp2022AESCipherBlock(psk []byte, _ int) (CipherBlock, error) {
 	block, err := aes.NewCipher(psk)
@@ -273,8 +270,6 @@ type udp2022ChaChaCipherBlock struct {
 	psk  []byte
 	role byte // 0=client, 1=server
 }
-
-func (c *udp2022ChaChaCipherBlock) SetServer() { c.role = 1 }
 
 func newUdp2022ChaChaCipherBlock(psk []byte, _ int) (CipherBlock, error) {
 	return &udp2022ChaChaCipherBlock{psk: psk}, nil

@@ -2,14 +2,17 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"strconv"
 	"sync"
 	"testing"
 	"time"
 
 	ss "github.com/ccsexyz/shadowsocks-go/shadowsocks"
+	"github.com/gorilla/websocket"
 )
 
 // TestWithJSONConfig_VirtualSocksChain tests a virtual SOCKS proxy using
@@ -423,7 +426,7 @@ func TestWithJSONConfig_SSProxyVirtualBackend(t *testing.T) {
 	payload := "ssproxy-virt-backend"
 	rconn.Write([]byte(payload))
 	resp := make([]byte, len(payload))
-	io.ReadFull(rconn, resp)
+	ss.ReadN(rconn, resp, nil)
 	if string(resp) != payload {
 		t.Errorf("expected '%s', got '%s'", payload, string(resp))
 	}
@@ -511,6 +514,431 @@ func TestWithJSONConfig_MultipleVirtualServicesConcurrently(t *testing.T) {
 		}(i, p.name)
 	}
 	wg.Wait()
+}
+
+// TestWithJSONConfig_TargetMapWSRouting tests that a wstunnel server with
+// target_map routes WebSocket connections based on the Host header.
+func TestWithJSONConfig_TargetMapWSRouting(t *testing.T) {
+	echoAddr, _, _ := echoServer(t)
+
+	configJSON := fmt.Sprintf(`[
+		{
+			"type": "wstunnel",
+			"localaddr": "127.0.0.1:0",
+			"method": "aes-256-gcm",
+			"password": "test",
+			"allow_http": true,
+			"target_map": {
+				"myhost.example.com": %q
+			}
+		}
+	]`, echoAddr)
+
+	cfgs := parseConfigs(t, configJSON)
+	wsCfg := cfgs[0]
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal("listen:", err)
+	}
+	wsAddr := ln.Addr().String()
+	ln.Close()
+	wsCfg.Localaddr = wsAddr
+
+	go RunWstunnelRemoteServer(wsCfg)
+	defer wsCfg.Close()
+	time.Sleep(300 * time.Millisecond)
+
+	dialer := websocket.Dialer{}
+	header := http.Header{}
+	header.Set("Host", "myhost.example.com")
+
+	wsURL := "ws://" + wsAddr + "/"
+	conn, _, err := dialer.Dial(wsURL, header)
+	if err != nil {
+		t.Fatalf("WebSocket dial: %v", err)
+	}
+	defer conn.Close()
+
+	payload := []byte("hello-target-map-ws")
+	if err := conn.WriteMessage(websocket.BinaryMessage, payload); err != nil {
+		t.Fatalf("WS write: %v", err)
+	}
+
+	_, resp, err := conn.ReadMessage()
+	if err != nil {
+		t.Fatalf("WS read: %v", err)
+	}
+	if string(resp) != string(payload) {
+		t.Errorf("expected '%s', got '%s'", payload, resp)
+	}
+}
+
+// TestWithJSONConfig_TargetMapHTTPProxy tests that a wstunnel server with
+// target_map proxies non-WebSocket HTTP requests to the configured target.
+func TestWithJSONConfig_TargetMapHTTPProxy(t *testing.T) {
+	// Start a simple HTTP backend
+	backendLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal("backend listen:", err)
+	}
+	defer backendLn.Close()
+	backendAddr := backendLn.Addr().String()
+
+	backendMux := http.NewServeMux()
+	backendMux.HandleFunc("/test", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write([]byte("backend-response-ok"))
+	})
+	backendSrv := &http.Server{Handler: backendMux}
+	go backendSrv.Serve(backendLn)
+	defer backendSrv.Close()
+
+	configJSON := fmt.Sprintf(`[
+		{
+			"type": "wstunnel",
+			"localaddr": "127.0.0.1:0",
+			"method": "aes-256-gcm",
+			"password": "test",
+			"allow_http": true,
+			"target_map": {
+				"http_proxy_to": %q
+			}
+		}
+	]`, backendAddr)
+
+	cfgs := parseConfigs(t, configJSON)
+	wsCfg := cfgs[0]
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal("listen:", err)
+	}
+	wsAddr := ln.Addr().String()
+	ln.Close()
+	wsCfg.Localaddr = wsAddr
+
+	go RunWstunnelRemoteServer(wsCfg)
+	defer wsCfg.Close()
+	time.Sleep(300 * time.Millisecond)
+
+	// Send a plain HTTP request (not WS upgrade) to the wstunnel server
+	req, err := http.NewRequest("GET", "http://"+wsAddr+"/test", nil)
+	if err != nil {
+		t.Fatal("new request:", err)
+	}
+	req.Host = backendAddr
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("HTTP request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if string(body) != "backend-response-ok" {
+		t.Errorf("expected 'backend-response-ok', got '%s' (status %d)", body, resp.StatusCode)
+	}
+}
+
+// TestWithJSONConfig_TargetMapHeaderRouting tests that HTTP requests are
+// routed by header values in target_map. The Host header points to a
+// non-existent address so the test fails if target routing is broken.
+func TestWithJSONConfig_TargetMapHeaderRouting(t *testing.T) {
+	backend := startHTTPBackend(t)
+	defer backend.Close()
+	backendAddr := backend.Addr
+
+	configJSON := fmt.Sprintf(`[
+		{
+			"type": "wstunnel",
+			"localaddr": "127.0.0.1:0",
+			"method": "aes-256-gcm",
+			"password": "test",
+			"allow_http": true,
+			"target_map": {
+				"API-KEY test-token": %q
+			}
+		}
+	]`, backendAddr)
+
+	cfgs := parseConfigs(t, configJSON)
+	wsCfg := cfgs[0]
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal("listen:", err)
+	}
+	wsAddr := ln.Addr().String()
+	ln.Close()
+	wsCfg.Localaddr = wsAddr
+
+	go RunWstunnelRemoteServer(wsCfg)
+	defer wsCfg.Close()
+	time.Sleep(300 * time.Millisecond)
+
+	// Host is a BOGUS address — if routing is broken, connection fails.
+	req, err := http.NewRequest("GET", "http://"+wsAddr+"/test", nil)
+	if err != nil {
+		t.Fatal("new request:", err)
+	}
+	req.Host = "bogus-host.invalid:9999"
+	req.Header.Set("api-key", "test-token")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("HTTP request (route via api-key header): %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d (body=%s, x-error=%s)",
+			resp.StatusCode, body, resp.Header.Get("X-Error-Info"))
+	}
+}
+
+// TestWithJSONConfig_TargetMapHeaderCaseInsensitive verifies that
+// HTTP header value matching is case-insensitive (RFC 7230 §3.2).
+func TestWithJSONConfig_TargetMapHeaderCaseInsensitive(t *testing.T) {
+	backend := startHTTPBackend(t)
+	defer backend.Close()
+	backendAddr := backend.Addr
+
+	configJSON := fmt.Sprintf(`[
+		{
+			"type": "wstunnel",
+			"localaddr": "127.0.0.1:0",
+			"method": "aes-256-gcm",
+			"password": "test",
+			"allow_http": true,
+			"target_map": {
+				"x-custom-route secret-value": %q
+			}
+		}
+	]`, backendAddr)
+
+	cfgs := parseConfigs(t, configJSON)
+	wsCfg := cfgs[0]
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal("listen:", err)
+	}
+	wsAddr := ln.Addr().String()
+	ln.Close()
+	wsCfg.Localaddr = wsAddr
+
+	go RunWstunnelRemoteServer(wsCfg)
+	defer wsCfg.Close()
+	time.Sleep(300 * time.Millisecond)
+
+	cases := []struct {
+		name       string
+		headerName string
+		headerVal  string
+	}{
+		{"exact match", "x-custom-route", "secret-value"},
+		{"value uppercase", "x-custom-route", "SECRET-VALUE"},
+		{"value mixed case", "x-custom-route", "Secret-Value"},
+		{"name canonical", "X-Custom-Route", "secret-value"},
+		{"both mixed case", "X-Custom-Route", "Secret-Value"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req, err := http.NewRequest("GET", "http://"+wsAddr+"/test", nil)
+			if err != nil {
+				t.Fatal("new request:", err)
+			}
+			req.Host = "bogus-host.invalid:9999"
+			req.Header.Set(tc.headerName, tc.headerVal)
+
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("HTTP request: %v", err)
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != 200 {
+				body, _ := io.ReadAll(resp.Body)
+				t.Fatalf("expected 200, got %d (body=%s, x-error=%s)",
+					resp.StatusCode, body, resp.Header.Get("X-Error-Info"))
+			}
+		})
+	}
+}
+
+// TestWithJSONConfig_TargetMapMethodURIRouting tests routing by
+// "METHOD /path" entries in target_map.
+func TestWithJSONConfig_TargetMapMethodURIRouting(t *testing.T) {
+	backend := startHTTPBackend(t)
+	defer backend.Close()
+	backendAddr := backend.Addr
+
+	configJSON := fmt.Sprintf(`[
+		{
+			"type": "wstunnel",
+			"localaddr": "127.0.0.1:0",
+			"method": "aes-256-gcm",
+			"password": "test",
+			"allow_http": true,
+			"target_map": {
+				"GET /special-path": %q
+			}
+		}
+	]`, backendAddr)
+
+	cfgs := parseConfigs(t, configJSON)
+	wsCfg := cfgs[0]
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal("listen:", err)
+	}
+	wsAddr := ln.Addr().String()
+	ln.Close()
+	wsCfg.Localaddr = wsAddr
+
+	go RunWstunnelRemoteServer(wsCfg)
+	defer wsCfg.Close()
+	time.Sleep(300 * time.Millisecond)
+
+	req, err := http.NewRequest("GET", "http://"+wsAddr+"/special-path", nil)
+	if err != nil {
+		t.Fatal("new request:", err)
+	}
+	req.Host = "another-bogus.invalid:9999"
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("HTTP request (route via method+URI): %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d (body=%s)", resp.StatusCode, body)
+	}
+}
+
+// TestWithJSONConfig_TargetMapNoMatch403 tests that requests without any
+// matching target_map entry and no http_proxy_to fallback get a 403.
+func TestWithJSONConfig_TargetMapNoMatch403(t *testing.T) {
+	configJSON := `[
+		{
+			"type": "wstunnel",
+			"localaddr": "127.0.0.1:0",
+			"method": "aes-256-gcm",
+			"password": "test",
+			"allow_http": true,
+			"target_map": {}
+		}
+	]`
+
+	cfgs := parseConfigs(t, configJSON)
+	wsCfg := cfgs[0]
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal("listen:", err)
+	}
+	wsAddr := ln.Addr().String()
+	ln.Close()
+	wsCfg.Localaddr = wsAddr
+
+	go RunWstunnelRemoteServer(wsCfg)
+	defer wsCfg.Close()
+	time.Sleep(300 * time.Millisecond)
+
+	req, err := http.NewRequest("GET", "http://"+wsAddr+"/test", nil)
+	if err != nil {
+		t.Fatal("new request:", err)
+	}
+	req.Host = "no-match.invalid:9999"
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("HTTP request: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 403 {
+		t.Errorf("expected 403, got %d", resp.StatusCode)
+	}
+}
+
+// TestWithJSONConfig_TargetMapFallbackHTTPProxyTo tests the http_proxy_to
+// fallback when no header or method+URI match exists.
+func TestWithJSONConfig_TargetMapFallbackHTTPProxyTo(t *testing.T) {
+	backend := startHTTPBackend(t)
+	defer backend.Close()
+	backendAddr := backend.Addr
+
+	configJSON := fmt.Sprintf(`[
+		{
+			"type": "wstunnel",
+			"localaddr": "127.0.0.1:0",
+			"method": "aes-256-gcm",
+			"password": "test",
+			"allow_http": true,
+			"target_map": {
+				"http_proxy_to": %q
+			}
+		}
+	]`, backendAddr)
+
+	cfgs := parseConfigs(t, configJSON)
+	wsCfg := cfgs[0]
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal("listen:", err)
+	}
+	wsAddr := ln.Addr().String()
+	ln.Close()
+	wsCfg.Localaddr = wsAddr
+
+	go RunWstunnelRemoteServer(wsCfg)
+	defer wsCfg.Close()
+	time.Sleep(300 * time.Millisecond)
+
+	req, err := http.NewRequest("GET", "http://"+wsAddr+"/test", nil)
+	if err != nil {
+		t.Fatal("new request:", err)
+	}
+	req.Host = "fallback-test.invalid:9999"
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("HTTP request (fallback http_proxy_to): %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d (body=%s)", resp.StatusCode, body)
+	}
+}
+
+// httpBackend is a test HTTP server with its listener address.
+type httpBackend struct {
+	*http.Server
+	Addr string
+}
+
+// startHTTPBackend starts a real HTTP server that echoes a distinctive response.
+func startHTTPBackend(t *testing.T) *httpBackend {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal("backend listen:", err)
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.Write([]byte("backend-ok"))
+	})
+	srv := &http.Server{Handler: mux}
+	go srv.Serve(ln)
+	return &httpBackend{Server: srv, Addr: ln.Addr().String()}
 }
 
 // Helpers

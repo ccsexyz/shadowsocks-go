@@ -1,12 +1,24 @@
 package server
 
 import (
-	"net"
 	"strings"
 
 	"github.com/ccsexyz/shadowsocks-go/crypto"
 	ss "github.com/ccsexyz/shadowsocks-go/shadowsocks"
 )
+
+// netConnAdapter wraps an ss.Conn to implement net.Conn for TrackOutbound.
+type netConnAdapter struct {
+	ss.Conn
+}
+
+func (a *netConnAdapter) Read(b []byte) (int, error) {
+	return ss.ReadN(a.Conn, b, nil)
+}
+
+func (a *netConnAdapter) Write(b []byte) (int, error) {
+	return a.Conn.Write(b)
+}
 
 func RunMultiTCPRemoteServer(c *ss.Config) {
 	for _, v := range c.Backends {
@@ -48,17 +60,23 @@ func tcpRemoteHandler(ac *ss.AcceptedConn) {
 	if err != nil {
 		C = nil
 	}
-	if conn.GetCfg() != nil {
-		c = conn.GetCfg()
+	if cm, ok := conn.(ss.ConnMeta); ok {
+		if cfg := cm.GetCfg(); cfg != nil {
+			c = cfg
+		}
 	}
 	target := ac.TargetStr()
 	if len(target) == 0 {
 		c.LogD("target length is 0")
 		return
 	}
-	var rconn net.Conn
+	var rconn ss.Conn
+	host := ""
+	if cm, ok := conn.(ss.ConnMeta); ok {
+		host = cm.GetHost()
+	}
 	if strings.HasPrefix(target, "ws://") || strings.HasPrefix(target, "wss://") {
-		rconn, err = ss.DialWsConn(target, conn.GetHost(), c)
+		rconn, err = ss.DialWsConn(target, host, c)
 	} else {
 		rconn, err = ss.DialTCP(target, c)
 	}
@@ -70,7 +88,8 @@ func tcpRemoteHandler(ac *ss.AcceptedConn) {
 	if sc, ok := conn.(*ss.StatConn); ok {
 		if rec := sc.GetRecord(); rec != nil {
 			if tracker := c.GetTracker(); tracker != nil {
-				rconn = tracker.TrackOutbound(rconn, rec, target)
+				nca := &netConnAdapter{Conn: rconn}
+				rconn = ss.AsNetConn(tracker.TrackOutbound(nca, rec, target))
 			}
 		}
 	}

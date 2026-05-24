@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"math/rand/v2"
-	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -41,7 +40,7 @@ type ObfsConn struct {
 	status   int
 }
 
-func (c *ObfsConn) Unwrap() net.Conn { return c.RemainConn.Conn }
+func (c *ObfsConn) Unwrap() Conn { return c.RemainConn.Conn }
 
 func (c *ObfsConn) Close() (err error) {
 	c.lock.Lock()
@@ -57,7 +56,7 @@ func (c *ObfsConn) Close() (err error) {
 	c.lock.Unlock()
 
 	c.wlock.Lock()
-	_, err = c.writeBuffers([][]byte{nil})
+	_, err = c.writeChunked(nil)
 	if err != nil {
 		c.wlock.Unlock()
 		return c.RemainConn.Close()
@@ -92,47 +91,35 @@ func (c *ObfsConn) Close() (err error) {
 	return
 }
 
-func (c *ObfsConn) writeBuffers(bufs [][]byte) (n int, err error) {
-	wbufs := make([][]byte, 0, 3+len(bufs))
-	length := 0
-	for _, buf := range bufs {
-		length += len(buf)
-	}
-	wbufs = append(wbufs, []byte(fmt.Sprintf("%x\r\n", length)))
-	wbufs = append(wbufs, bufs...)
-	wbufs = append(wbufs, []byte("\r\n"))
-	return c.RemainConn.WriteBuffers(wbufs)
-}
-
-func (c *ObfsConn) Write(b []byte) (n int, err error) {
-	if len(b) == 0 {
-		return c.RemainConn.Write(b)
-	}
-	c.wlock.Lock()
-	defer c.wlock.Unlock()
-	if c.destroy {
-		err = fmt.Errorf("write to closed connection")
-		return
-	}
-	n, err = c.writeBuffers([][]byte{b})
+func (c *ObfsConn) writeChunked(data []byte) (n int, err error) {
+	n = len(data)
+	header := fmt.Sprintf("%x\r\n", n)
+	chunked := make([]byte, len(header)+n+2)
+	copy(chunked, header)
+	copy(chunked[len(header):], data)
+	copy(chunked[len(header)+n:], "\r\n")
+	_, err = c.RemainConn.Write(chunked)
 	return
 }
 
-func (c *ObfsConn) WriteBuffers(b [][]byte) (n int, err error) {
+func (c *ObfsConn) Write(bufs ...[]byte) (n int, err error) {
+	for _, b := range bufs { n += len(b) }
+	if n == 0 { return c.RemainConn.Write() }
 	c.wlock.Lock()
 	defer c.wlock.Unlock()
 	if c.destroy {
-		err = fmt.Errorf("write to closed connection")
-		return
+		return 0, fmt.Errorf("write to closed connection")
 	}
-	n, err = c.writeBuffers(b)
+	_, err = c.writeChunked(flatten(bufs))
 	return
 }
+
+
 
 func (c *ObfsConn) readObfsHeader(b []byte) (n int, err error) {
 	buf := utils.GetBuf(buffersize)
 	defer utils.PutBuf(buf)
-	n, err = c.RemainConn.Read(buf)
+	n, err = ReadN(&c.RemainConn, buf, nil)
 	if err != nil {
 		return
 	}
@@ -171,12 +158,12 @@ func (c *ObfsConn) doRead(b []byte) (n int, err error) {
 			return
 		}
 	}
-	return c.RemainConn.Read(b)
+	return ReadN(&c.RemainConn, b, nil)
 }
 
 func (c *ObfsConn) readInLock(b []byte) (n int, err error) {
 	if len(b) == 0 {
-		return c.RemainConn.Read(b)
+		return ReadN(&c.RemainConn, b, nil)
 	}
 	for n == 0 {
 		var nr int
@@ -258,15 +245,16 @@ func (c *ObfsConn) readInLock(b []byte) (n int, err error) {
 	return
 }
 
-func (c *ObfsConn) Read(b []byte) (n int, err error) {
+func (c *ObfsConn) Read(buf []byte, pool *utils.BufPool) (segs [][]byte, err error) {
 	c.rlock.Lock()
 	defer c.rlock.Unlock()
 	if c.destroy {
 		err = fmt.Errorf("read from closed connection")
 		return
 	}
-	n, err = c.readInLock(b)
-	return
+	n, err := c.readInLock(buf)
+	if err != nil { return }
+	return [][]byte{buf[:n]}, nil
 }
 
 func NewObfsConn(conn Conn) *ObfsConn {
@@ -279,7 +267,7 @@ type RemainConn struct {
 	wremain []byte
 }
 
-func (c *RemainConn) Unwrap() net.Conn { return c.Conn }
+func (c *RemainConn) Unwrap() Conn { return c.Conn }
 
 func DecayRemainConn(conn Conn) Conn {
 	rconn, ok := conn.(*RemainConn)
@@ -289,49 +277,50 @@ func DecayRemainConn(conn Conn) Conn {
 	return conn
 }
 
-func (c *RemainConn) Read(b []byte) (n int, err error) {
+func (c *RemainConn) Read(buf []byte, pool *utils.BufPool) (segs [][]byte, err error) {
 	if len(c.remain) == 0 {
-		return c.Conn.Read(b)
+		return c.Conn.Read(buf, pool)
 	}
-	n = copy(b, c.remain)
+	n := copy(buf, c.remain)
 	if n == len(c.remain) {
 		c.remain = nil
 	} else {
 		c.remain = c.remain[n:]
 	}
-	return
+	return [][]byte{buf[:n]}, nil
 }
 
-func (c *RemainConn) Write(b []byte) (n int, err error) {
+func (c *RemainConn) Write(bufs ...[]byte) (n int, err error) {
 	if len(c.wremain) != 0 {
-		_, err = c.Conn.WriteBuffers([][]byte{c.wremain, b})
-		if err != nil {
-			return
-		}
+		for _, b := range bufs { n += len(b) }
+		all := make([][]byte, 0, 1+len(bufs))
+		all = append(all, c.wremain)
+		all = append(all, bufs...)
+		_, err = c.Conn.Write(all...)
+		if err != nil { return }
 		c.wremain = nil
-		n = len(b)
 		return
 	}
-	return c.Conn.Write(b)
+	return c.Conn.Write(bufs...)
 }
 
-func (c *RemainConn) WriteBuffers(b [][]byte) (n int, err error) {
-	if len(c.wremain) != 0 {
-		bufs := make([][]byte, 0, len(b)+1)
-		bufs = append(bufs, c.wremain)
-		bufs = append(bufs, b...)
-		_, err = c.Conn.WriteBuffers(bufs)
-		if err != nil {
-			return
-		}
-		c.wremain = nil
-		for _, v := range b {
-			n += len(v)
-		}
-		return
-	}
-	return c.Conn.WriteBuffers(b)
+func (c *RemainConn) GetCfg() *Config {
+	if cm := getConnMeta(c.Conn); cm != nil { return cm.GetCfg() }
+	return nil
 }
+func (c *RemainConn) SetDst(dst Addr) {
+	if cm := getConnMeta(c.Conn); cm != nil { cm.SetDst(dst) }
+}
+func (c *RemainConn) GetDst() Addr {
+	if cm := getConnMeta(c.Conn); cm != nil { return cm.GetDst() }
+	return nil
+}
+func (c *RemainConn) GetHost() string {
+	if cm := getConnMeta(c.Conn); cm != nil { return cm.GetHost() }
+	return ""
+}
+
+
 
 type SimpleHTTPConn struct {
 	Conn
@@ -349,64 +338,66 @@ func (conn *SimpleHTTPConn) Close() error {
 	return conn.Conn.Close()
 }
 
-func (conn *SimpleHTTPConn) Write(b []byte) (n int, err error) {
-	return conn.WriteBuffers([][]byte{b})
-}
-
-func (conn *SimpleHTTPConn) WriteBuffers(bufs [][]byte) (n int, err error) {
-	if !conn.req {
-		return conn.Conn.WriteBuffers(bufs)
+func (conn *SimpleHTTPConn) Write(bufs ...[]byte) (n int, err error) {
+	for _, b := range bufs { n += len(b) }
+	if len(bufs) == 0 {
+		return conn.Conn.Write()
 	}
-	for _, buf := range bufs {
-		n += len(buf)
+	b := flatten(bufs)
+	if !conn.req {
+		return conn.Conn.Write(b)
 	}
 	req := buildSimpleObfsRequest(conn.host, n)
-	newbufs := make([][]byte, len(bufs)+1)
-	newbufs[0] = utils.StringToSlice(req)
-	copy(newbufs[1:], bufs)
-	n, err = conn.Conn.WriteBuffers(newbufs)
 	conn.host = ""
 	conn.req = false
-	return
+	return conn.Conn.Write(utils.StringToSlice(req), b)
 }
 
-func (conn *SimpleHTTPConn) Read(b []byte) (n int, err error) {
+func (conn *SimpleHTTPConn) Read(buf []byte, pool *utils.BufPool) (segs [][]byte, err error) {
 	if !conn.resp {
-		return conn.Conn.Read(b)
+		return conn.Conn.Read(buf, pool)
 	}
 	if conn.parser == nil {
 		conn.parser = utils.NewHTTPHeaderParser(utils.GetBuf(buffersize))
 	}
-	var buf []byte
-	if len(b) < buffersize {
-		buf = utils.GetBuf(buffersize)
-		defer utils.PutBuf(buf)
+	var rdbuf []byte
+	if len(buf) < buffersize {
+		if pool != nil {
+			rdbuf = pool.Get(buffersize)
+		} else {
+			rdbuf = utils.GetBuf(buffersize)
+			defer utils.PutBuf(rdbuf)
+		}
 	} else {
-		buf = b
+		rdbuf = buf
 	}
 	off := 0
 	for {
 		var nm int
-		nm, err = conn.Conn.Read(buf[off:])
-		if err != nil {
+		nsegs, rerr := conn.Conn.Read(rdbuf[off:], pool)
+		if rerr != nil {
+			err = rerr
 			return
 		}
+		for _, s := range nsegs { nm += len(s) }
 		var ok bool
-		ok, err = conn.parser.Read(buf[off : off+nm])
+		ok, err = conn.parser.Read(rdbuf[off : off+nm])
 		if err != nil {
 			return
 		}
 		off += nm
 		if ok {
 			hdrlen := conn.parser.HeaderLen()
-			n = copy(b, buf[hdrlen:off])
+			n := copy(buf, rdbuf[hdrlen:off])
 			if hdrlen+n < off {
-				conn.Conn = &RemainConn{Conn: conn.Conn, remain: DupBuffer(buf[hdrlen+n : off])}
+				remain := make([]byte, off-hdrlen-n)
+				copy(remain, rdbuf[hdrlen+n:off])
+				conn.Conn = &RemainConn{Conn: conn.Conn, remain: remain}
 			}
 			utils.PutBuf(conn.parser.GetBuf())
 			conn.parser = nil
 			conn.resp = false
-			return
+			return [][]byte{buf[:n]}, nil
 		}
 	}
 }
@@ -420,108 +411,124 @@ type SimpleTLSConn struct {
 	srvresp   bool
 	host      string
 	wlock     sync.Mutex
+	rr        io.Reader // persistent reader for inner conn (with buffering)
+}
+
+func (conn *SimpleTLSConn) initReader() {
+	if conn.rr == nil { conn.rr = AsReader(conn.Conn, nil) }
+}
+
+func (conn *SimpleTLSConn) readExact(n int, dst []byte) error {
+	conn.initReader()
+	_, err := io.ReadFull(conn.rr, dst)
+	return err
 }
 
 func (conn *SimpleTLSConn) cliHandshake() (err error) {
+	conn.initReader()
 	frame := make([]byte, 5)
-
 	for it := 0; it < 2; it++ {
-		_, err = io.ReadFull(conn.Conn, frame)
-		if err != nil {
-			return
-		}
+		_, err = io.ReadFull(conn.rr, frame)
+		if err != nil { return }
 		frameLen := int(binary.BigEndian.Uint16(frame[3:5]))
-
 		data := make([]byte, frameLen)
-		_, err = io.ReadFull(conn.Conn, data)
-		if err != nil {
-			return
-		}
+		_, err = io.ReadFull(conn.rr, data)
+		if err != nil { return }
 	}
 	return
 }
 
-func (conn *SimpleTLSConn) Read(b []byte) (n int, err error) {
+func (conn *SimpleTLSConn) Read(buf []byte, pool *utils.BufPool) (segs [][]byte, err error) {
+	conn.initReader()
 	if conn.cliresp {
 		conn.cliresp = false
-		err = conn.cliHandshake()
-		if err != nil {
-			return
-		}
+		if err = conn.cliHandshake(); err != nil { return }
 	}
-	for conn.frameLen == 0 {
+	if conn.frameLen == 0 {
 		frameBuf := make([]byte, 5)
-		_, err = io.ReadFull(conn.Conn, frameBuf)
-		if err != nil {
-			return
-		}
+		_, err = io.ReadFull(conn.rr, frameBuf)
+		if err != nil { return }
 		conn.frameLen = int(binary.BigEndian.Uint16(frameBuf[3:]))
 	}
-	if len(b) > conn.frameLen {
-		b = b[:conn.frameLen]
-	}
-	n, err = conn.Conn.Read(b)
-	if n > 0 {
-		conn.frameLen -= n
-	}
-	return
+	if len(buf) > conn.frameLen { buf = buf[:conn.frameLen] }
+	n, err := io.ReadFull(conn.rr, buf)
+	if err != nil && err != io.ErrUnexpectedEOF { return }
+	conn.frameLen -= n
+	return [][]byte{buf[:n]}, nil
 }
 
-func (conn *SimpleTLSConn) writeBuffersInLock(bufs [][]byte) (n int, err error) {
-	if len(bufs) == 0 {
+func (conn *SimpleTLSConn) writeBuffersInLock(data []byte) (n int, err error) {
+	n = len(data)
+	if n == 0 {
 		return
 	}
-	buflen := len(bufs[0])
-	for _, buf := range bufs[1:] {
-		buflen += len(buf)
-	}
-	var wbufs [][]byte
+	var merged []byte
 	if conn.srvresp {
-		tlsBuf := utils.GetBuf(buflen + 512)
-		defer utils.PutBuf(tlsBuf)
-		tlsLen := utils.GenTLSServerHello(tlsBuf, buflen, conn.sessionID)
-		wbufs = append(wbufs, tlsBuf[:tlsLen])
-		wbufs = append(wbufs, bufs...)
+		merged = make([]byte, 512+n)
+		tlsLen := utils.GenTLSServerHello(merged, n, conn.sessionID)
+		copy(merged[tlsLen:], data)
+		merged = merged[:tlsLen+n]
 		conn.srvresp = false
 	} else if conn.clireq {
-		tlsBuf := utils.GetBuf(buflen + 512)
-		defer utils.PutBuf(tlsBuf)
-		buf := utils.GetBuf(buflen)
-		defer utils.PutBuf(buf)
-		for _, v := range bufs {
-			n += copy(buf[n:], v)
-		}
-		tlsLen := utils.GenTLSClientHello(tlsBuf, conn.host, utils.GetRandomBytes(32), buf[:buflen])
-		wbufs = append(wbufs, tlsBuf[:tlsLen])
+		merged = make([]byte, 512+32+n)
+		tlsLen := utils.GenTLSClientHello(merged, conn.host, utils.GetRandomBytes(32), data)
+		merged = merged[:tlsLen]
 		conn.clireq = false
 		conn.host = ""
+	} else if n > 65535 {
+		for off := 0; off < n; {
+			chunk := n - off
+			if chunk > 65535 { chunk = 65535 }
+			frame := make([]byte, 5+chunk)
+			frame[0] = 0x17
+			frame[1] = 0x03
+			frame[2] = 0x03
+			binary.BigEndian.PutUint16(frame[3:5], uint16(chunk))
+			copy(frame[5:], data[off:off+chunk])
+			if _, err = conn.Conn.Write(frame); err != nil { n = 0; return }
+			off += chunk
+		}
+		return
 	} else {
-		frameBuf := utils.GetBuf(5)
-		defer utils.PutBuf(frameBuf)
-		copy(frameBuf, []byte{0x17, 0x03, 0x03})
-		binary.BigEndian.PutUint16(frameBuf[3:], uint16(buflen))
-		wbufs = append(wbufs, frameBuf[:5])
-		wbufs = append(wbufs, bufs...)
+		merged = make([]byte, 5+n)
+		merged[0] = 0x17
+		merged[1] = 0x03
+		merged[2] = 0x03
+		binary.BigEndian.PutUint16(merged[3:5], uint16(n))
+		copy(merged[5:], data)
 	}
-	_, err = conn.Conn.WriteBuffers(wbufs)
-	if err != nil {
-		n = 0
-	}
-	n = buflen
+	_, err = conn.Conn.Write(merged)
+	if err != nil { n = 0 }
 	return
 }
 
-func (conn *SimpleTLSConn) Write(b []byte) (n int, err error) {
+func (conn *SimpleTLSConn) Write(bufs ...[]byte) (n int, err error) {
 	conn.wlock.Lock()
 	defer conn.wlock.Unlock()
-	return conn.writeBuffersInLock([][]byte{b})
+	for _, b := range bufs { n += len(b) }
+	if n == 0 { return 0, nil }
+	_, err = conn.writeBuffersInLock(flatten(bufs))
+	return
 }
 
-func (conn *SimpleTLSConn) WriteBuffers(b [][]byte) (n int, err error) {
-	conn.wlock.Lock()
-	defer conn.wlock.Unlock()
-	return conn.writeBuffersInLock(b)
+func (conn *SimpleTLSConn) Unwrap() Conn { return conn.Conn }
+func (conn *SimpleTLSConn) GetCfg() *Config {
+	if cm := getConnMeta(conn.Conn); cm != nil { return cm.GetCfg() }
+	return nil
 }
+func (conn *SimpleTLSConn) SetDst(dst Addr) {
+	if cm := getConnMeta(conn.Conn); cm != nil { cm.SetDst(dst) }
+}
+func (conn *SimpleTLSConn) GetDst() Addr {
+	if cm := getConnMeta(conn.Conn); cm != nil { return cm.GetDst() }
+	return nil
+}
+func (conn *SimpleTLSConn) GetHost() string {
+	if cm := getConnMeta(conn.Conn); cm != nil { return cm.GetHost() }
+	return ""
+}
+
+
 
 func DialObfs(target string, c *Config) (conn Conn, err error) {
 	defer func() {
@@ -597,7 +604,7 @@ func obfsAcceptHandler(conn Conn, lis *listener) (result AcceptResult) {
 	}()
 	buf := utils.GetBuf(buffersize)
 	defer utils.PutBuf(buf)
-	n, err := conn.Read(buf)
+	n, err := ReadN(conn, buf, nil)
 	if err != nil || n == 0 {
 		return
 	}
@@ -605,29 +612,23 @@ func obfsAcceptHandler(conn Conn, lis *listener) (result AcceptResult) {
 	remain = DupBuffer(buf[:n])
 	if n > 4 && string(buf[:4]) != "POST" {
 		if string(buf[:4]) == "GET " {
-			for {
-				parser := utils.NewHTTPHeaderParser(utils.GetBuf(buffersize))
-				defer utils.PutBuf(parser.GetBuf())
-				ok, err := parser.Read(buf[:n])
-				if err != nil || ok == false {
-					break
-				}
+			parser := utils.NewHTTPHeaderParser(utils.GetBuf(buffersize))
+			defer utils.PutBuf(parser.GetBuf())
+			ok, err := parser.Read(buf[:n])
+			if err == nil && ok {
 				uv, ok := parser.Load([]byte("Upgrade"))
-				if ok == false || len(uv) == 0 || !bytes.Equal(uv[0], []byte("websocket")) {
-					break
+				if ok && len(uv) > 0 && bytes.Equal(uv[0], []byte("websocket")) {
+					cv, ok := parser.Load([]byte("Connection"))
+					if ok && len(cv) > 0 && bytes.Equal(cv[0], []byte("Upgrade")) {
+						remain = DupBuffer(buf[parser.HeaderLen():n])
+						wremain = []byte(buildSimpleObfsResponse())
+					}
 				}
-				cv, ok := parser.Load([]byte("Connection"))
-				if ok == false || len(cv) == 0 || !bytes.Equal(cv[0], []byte("Upgrade")) {
-					break
-				}
-				remain = DupBuffer(buf[parser.HeaderLen():n])
-				wremain = []byte(buildSimpleObfsResponse())
-				break
 			}
 		} else if buf[0] == 0x16 && n > 0x20 {
 			tlsVer := binary.BigEndian.Uint16(buf[1:3])
 			tlsLen := int(binary.BigEndian.Uint16(buf[3:5])) + 5
-			if tlsVer > tls.VersionTLS12 || tlsVer < tls.VersionSSL30 {
+			if tlsVer > tls.VersionTLS12 || tlsVer < 0x0300 {
 				goto OUT
 			}
 			if tlsLen > n {
@@ -636,7 +637,7 @@ func obfsAcceptHandler(conn Conn, lis *listener) (result AcceptResult) {
 				}
 				newBuf := utils.GetBuf(tlsLen)
 				defer utils.PutBuf(newBuf)
-				_, err = io.ReadFull(conn, newBuf[n:tlsLen])
+				_, err = io.ReadFull(AsReader(conn, nil), newBuf[n:tlsLen])
 				if err != nil {
 					return
 				}
@@ -646,10 +647,10 @@ func obfsAcceptHandler(conn Conn, lis *listener) (result AcceptResult) {
 			}
 			ok, nh, cliMsg := utils.ParseTLSClientHelloMsg(buf[:n])
 			if ok && cliMsg != nil {
+				conn = &SimpleTLSConn{Conn: conn, sessionID: DupBuffer(cliMsg.SessionId), srvresp: true}
 				if len(buf[nh:n]) > 0 {
 					conn = &RemainConn{Conn: conn, remain: DupBuffer(buf[nh:n])}
 				}
-				conn = &SimpleTLSConn{Conn: conn, sessionID: DupBuffer(cliMsg.SessionId), srvresp: true}
 				if len(cliMsg.SessionTicket) > 0 {
 					conn = &RemainConn{Conn: conn, remain: DupBuffer(cliMsg.SessionTicket)}
 				}
@@ -774,19 +775,7 @@ func (c *wsConn) Write(b []byte) (n int, err error) {
 	return
 }
 
-func (c *wsConn) WriteBuffers(bufs [][]byte) (n int, err error) {
-	var b []byte
 
-	nbufs := len(bufs)
-	if nbufs > 1 {
-		b = utils.CopyBuffers(bufs)
-		defer utils.PutBuf(b)
-	} else if nbufs == 1 {
-		b = bufs[0]
-	}
-
-	return c.Write(b)
-}
 
 func (c *wsConn) Close() error {
 	c.closeOnce.Do(func() {

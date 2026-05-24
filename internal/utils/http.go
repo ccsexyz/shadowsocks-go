@@ -28,9 +28,9 @@ var (
 		"PATCH":   true,
 	}
 
-	errInvalidChar   = fmt.Errorf("Invalid character")
-	errInvalidHeader = fmt.Errorf("Invalid HTTP Header")
-	errInsuffBuffer  = fmt.Errorf("Insufficient buffer")
+	errInvalidChar   = fmt.Errorf("invalid character")
+	errInvalidHeader = fmt.Errorf("invalid HTTP header")
+	errInsuffBuffer  = fmt.Errorf("insufficient buffer")
 )
 
 // IsValidHTTPMethod indicates whether m is a valid http method
@@ -120,33 +120,10 @@ func isValidChar(b byte) bool {
 	return false
 }
 
-func isSpace(b byte) bool {
-	if b == ' ' {
-		return true
-	}
-	return false
-}
-
-func isCR(b byte) bool {
-	if b == '\r' {
-		return true
-	}
-	return false
-}
-
-func isEnter(b byte) bool {
-	if b == '\n' {
-		return true
-	}
-	return false
-}
-
-func isColon(b byte) bool {
-	if b == ':' {
-		return true
-	}
-	return false
-}
+func isSpace(b byte) bool  { return b == ' ' }
+func isCR(b byte) bool     { return b == '\r' }
+func isEnter(b byte) bool  { return b == '\n' }
+func isColon(b byte) bool  { return b == ':' }
 
 // Read scan the bytes in buffer, ok == true if read a full http-header,
 // err != nil if error occurs

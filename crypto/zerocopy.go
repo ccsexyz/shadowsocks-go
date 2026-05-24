@@ -6,7 +6,6 @@ import (
 	"encoding/binary"
 	"io"
 
-	"github.com/ccsexyz/shadowsocks-go/zerocopy"
 	"golang.org/x/crypto/chacha20poly1305"
 )
 
@@ -14,7 +13,7 @@ import (
 
 type plainPacker struct{}
 
-func (plainPacker) Headroom() zerocopy.Headroom { return zerocopy.Headroom{} }
+func (plainPacker) Headroom() Headroom { return Headroom{} }
 
 func (plainPacker) PackInPlace(b []byte, payloadStart, payloadLen int) (packetStart, packetLen int, err error) {
 	return payloadStart, payloadLen, nil
@@ -22,7 +21,7 @@ func (plainPacker) PackInPlace(b []byte, payloadStart, payloadLen int) (packetSt
 
 type plainUnpacker struct{}
 
-func (plainUnpacker) Headroom() zerocopy.Headroom { return zerocopy.Headroom{} }
+func (plainUnpacker) Headroom() Headroom { return Headroom{} }
 
 func (plainUnpacker) UnpackInPlace(b []byte, packetStart, packetLen int) (payloadStart, payloadLen int, err error) {
 	return packetStart, packetLen, nil
@@ -36,8 +35,8 @@ type aeadPacker struct {
 	newAEAD func(key []byte) (cipher.AEAD, error)
 }
 
-func (p *aeadPacker) Headroom() zerocopy.Headroom {
-	return zerocopy.Headroom{Front: p.ivlen, Rear: 16}
+func (p *aeadPacker) Headroom() Headroom {
+	return Headroom{Front: p.ivlen, Rear: 16}
 }
 
 func (p *aeadPacker) PackInPlace(b []byte, payloadStart, payloadLen int) (packetStart, packetLen int, err error) {
@@ -63,8 +62,8 @@ type aeadUnpacker struct {
 	iv      []byte
 }
 
-func (u *aeadUnpacker) Headroom() zerocopy.Headroom {
-	return zerocopy.Headroom{Front: u.ivlen, Rear: 16}
+func (u *aeadUnpacker) Headroom() Headroom {
+	return Headroom{Front: u.ivlen, Rear: 16}
 }
 
 func (u *aeadUnpacker) UnpackInPlace(b []byte, packetStart, packetLen int) (payloadStart, payloadLen int, err error) {
@@ -87,7 +86,7 @@ func (u *aeadUnpacker) UnpackInPlace(b []byte, packetStart, packetLen int) (payl
 
 func (u *aeadUnpacker) IV() []byte { return u.iv }
 
-var _ zerocopy.IVUnpacker = (*aeadUnpacker)(nil)
+var _ IVUnpacker = (*aeadUnpacker)(nil)
 
 // --- 2022 AES-GCM ---
 
@@ -96,8 +95,8 @@ type udp2022AESPacker struct {
 	role byte
 }
 
-func (p *udp2022AESPacker) Headroom() zerocopy.Headroom {
-	return zerocopy.Headroom{Front: 16, Rear: 16}
+func (p *udp2022AESPacker) Headroom() Headroom {
+	return Headroom{Front: 16, Rear: 16}
 }
 
 func (p *udp2022AESPacker) PackInPlace(b []byte, payloadStart, payloadLen int) (packetStart, packetLen int, err error) {
@@ -138,8 +137,8 @@ type udp2022AESUnpacker struct {
 	session *udpSession
 }
 
-func (u *udp2022AESUnpacker) Headroom() zerocopy.Headroom {
-	return zerocopy.Headroom{Front: 16, Rear: 16}
+func (u *udp2022AESUnpacker) Headroom() Headroom {
+	return Headroom{Front: 16, Rear: 16}
 }
 
 func (u *udp2022AESUnpacker) UnpackInPlace(b []byte, packetStart, packetLen int) (payloadStart, payloadLen int, err error) {
@@ -188,8 +187,8 @@ type udp2022ChaChaPacker struct {
 	role byte
 }
 
-func (p *udp2022ChaChaPacker) Headroom() zerocopy.Headroom {
-	return zerocopy.Headroom{Front: 40, Rear: 16}
+func (p *udp2022ChaChaPacker) Headroom() Headroom {
+	return Headroom{Front: 40, Rear: 16}
 }
 
 func (p *udp2022ChaChaPacker) PackInPlace(b []byte, payloadStart, payloadLen int) (packetStart, packetLen int, err error) {
@@ -225,8 +224,8 @@ type udp2022ChaChaUnpacker struct {
 	session *udpSession
 }
 
-func (u *udp2022ChaChaUnpacker) Headroom() zerocopy.Headroom {
-	return zerocopy.Headroom{Front: 40, Rear: 16}
+func (u *udp2022ChaChaUnpacker) Headroom() Headroom {
+	return Headroom{Front: 40, Rear: 16}
 }
 
 func (u *udp2022ChaChaUnpacker) UnpackInPlace(b []byte, packetStart, packetLen int) (payloadStart, payloadLen int, err error) {
@@ -282,18 +281,10 @@ func getAESGCM(key []byte) cipher.AEAD {
 	return aead
 }
 
-func getAESGCMErr(key []byte) (cipher.AEAD, error) {
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, err
-	}
-	return cipher.NewGCM(block)
-}
-
 // --- factory functions ---
 
 // NewPacker returns a Packer for the given method.
-func NewPacker(method, password string, isServer bool) (zerocopy.Packer, error) {
+func NewPacker(method, password string, isServer bool) (Packer, error) {
 	m, ok := cipherMethod[method]
 	if !ok {
 		m = cipherMethod[DefaultMethod]
@@ -339,7 +330,7 @@ func NewPacker(method, password string, isServer bool) (zerocopy.Packer, error) 
 }
 
 // NewUnpacker returns an Unpacker for the given method.
-func NewUnpacker(method, password string) (zerocopy.Unpacker, error) {
+func NewUnpacker(method, password string) (Unpacker, error) {
 	m, ok := cipherMethod[method]
 	if !ok {
 		m = cipherMethod[DefaultMethod]

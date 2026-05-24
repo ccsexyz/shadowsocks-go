@@ -21,7 +21,7 @@ func RunTCPServer(address string, c *ss.Config,
 				addrsMap[addr] = true
 			}
 		}
-		for addr, _ := range addrsMap {
+		for addr := range addrsMap {
 			addresses = append(addresses, addr)
 		}
 	}()
@@ -80,10 +80,10 @@ func RunTCPServer(address string, c *ss.Config,
 }
 
 func getDefaultUDPServerCtx() *utils.UDPServerCtx {
-	return &utils.UDPServerCtx{Mtu: 2048, Expires: 60}
+	return &utils.UDPServerCtx{Mtu: 65536, Expires: 60}
 }
 
-func RunUDPServer(listener net.PacketConn, config *ss.Config, creator func(*ss.Config) func(*utils.SubConn) (net.Conn, net.Conn, error)) {
+func RunUDPServer(listener net.PacketConn, config *ss.Config, creator func(*ss.Config) func(*utils.SubConn) (utils.Conn, utils.Conn, error)) {
 	go func() {
 		die := config.DieChan()
 		defer listener.Close()

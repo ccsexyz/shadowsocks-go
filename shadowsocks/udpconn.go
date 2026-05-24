@@ -12,7 +12,6 @@ import (
 	"github.com/ccsexyz/shadowsocks-go/crypto"
 	"github.com/ccsexyz/shadowsocks-go/internal/utils"
 	"github.com/ccsexyz/shadowsocks-go/redir"
-	"github.com/ccsexyz/shadowsocks-go/zerocopy"
 )
 
 var udpWriteBufPool = sync.Pool{
@@ -29,11 +28,11 @@ type UDPConn struct {
 	host string
 
 	packerOnce   sync.Once
-	cachedPacker zerocopy.Packer
+	cachedPacker crypto.Packer
 	packerErr    error
 
 	unpackerOnce   sync.Once
-	cachedUnpacker zerocopy.Unpacker
+	cachedUnpacker crypto.Unpacker
 	unpackerErr    error
 }
 
@@ -104,14 +103,14 @@ func (c *UDPConn) fakeReadFrom(b []byte) (int, net.Addr, error) {
 	return n, nil, err
 }
 
-func (c *UDPConn) getPacker() (zerocopy.Packer, error) {
+func (c *UDPConn) getPacker() (crypto.Packer, error) {
 	c.packerOnce.Do(func() {
 		c.cachedPacker, c.packerErr = crypto.NewPacker(c.cfg.Method, c.cfg.Password, c.PacketConn != nil)
 	})
 	return c.cachedPacker, c.packerErr
 }
 
-func (c *UDPConn) getUnpacker() (zerocopy.Unpacker, error) {
+func (c *UDPConn) getUnpacker() (crypto.Unpacker, error) {
 	c.unpackerOnce.Do(func() {
 		c.cachedUnpacker, c.unpackerErr = crypto.NewUnpacker(c.cfg.Method, c.cfg.Password)
 	})
@@ -139,7 +138,7 @@ func (c *UDPConn) readImpl(b []byte, readfrom func([]byte) (int, net.Addr, error
 			return 0, addr, err
 		}
 
-		if iu, ok := unpacker.(zerocopy.IVUnpacker); ok {
+		if iu, ok := unpacker.(crypto.IVUnpacker); ok {
 			if iv := iu.IV(); len(iv) > 0 {
 				if c.cfg.udpFilterTestAndAdd(iv) {
 					continue
@@ -159,9 +158,11 @@ func (c *UDPConn) ReadFrom(b []byte) (n int, addr net.Addr, err error) {
 	return c.readImpl(b, c.PacketConn.ReadFrom)
 }
 
-func (c *UDPConn) Read(b []byte) (n int, err error) {
-	n, _, err = c.readImpl(b, c.fakeReadFrom)
-	return
+func (c *UDPConn) Read(buf []byte, pool *utils.BufPool) (segs [][]byte, err error) {
+	var n int
+	n, _, err = c.readImpl(buf, c.fakeReadFrom)
+	if err != nil { return }
+	return [][]byte{buf[:n]}, nil
 }
 
 func (c *UDPConn) WriteTo(b []byte, addr net.Addr) (n int, err error) {
@@ -173,6 +174,7 @@ func (c *UDPConn) WriteTo(b []byte, addr net.Addr) (n int, err error) {
 
 	hr := packer.Headroom()
 	buf := udpWriteBufPool.Get().([]byte)
+	//lint:ignore SA6002 see PutBuf in buf.go
 	defer udpWriteBufPool.Put(buf)
 
 	totalLen := hr.Front + len(b) + hr.Rear
@@ -202,21 +204,13 @@ func (c *UDPConn) WriteTo(b []byte, addr net.Addr) (n int, err error) {
 	return
 }
 
-func (c *UDPConn) Write(b []byte) (n int, err error) {
-	return c.WriteTo(b, nil)
-}
-
-func (c *UDPConn) WriteBuffers(bufs [][]byte) (n int, err error) {
-	var nbytes int
-	for _, buf := range bufs {
-		nbytes, err = c.Write(buf)
-		n += nbytes
-		if err != nil {
-			return
-		}
-	}
+func (c *UDPConn) Write(bufs ...[]byte) (n int, err error) {
+	for _, b := range bufs { n += len(b) }
+	b := flatten(bufs)
+	_, err = c.WriteTo(b, nil)
 	return
 }
+
 
 type MultiUDPConn struct {
 	net.PacketConn
@@ -233,8 +227,8 @@ func NewMultiUDPConn(conn net.PacketConn, c *Config) *MultiUDPConn {
 
 type multiSession struct {
 	cfg      *Config
-	packer   zerocopy.Packer
-	unpacker zerocopy.Unpacker
+	packer   crypto.Packer
+	unpacker crypto.Unpacker
 	once     sync.Once
 	initErr  error
 }
@@ -289,7 +283,7 @@ func (c *MultiUDPConn) ReadFrom(b []byte) (n int, addr net.Addr, err error) {
 				err = uerr
 				return
 			}
-			if iu, ok := s.unpacker.(zerocopy.IVUnpacker); ok {
+			if iu, ok := s.unpacker.(crypto.IVUnpacker); ok {
 				if iv := iu.IV(); len(iv) > 0 {
 					if s.cfg.udpFilterTestAndAdd(iv) {
 						continue
@@ -314,6 +308,7 @@ func (c *MultiUDPConn) WriteTo(b []byte, addr net.Addr) (int, error) {
 
 	hr := s.packer.Headroom()
 	buf := udpWriteBufPool.Get().([]byte)
+	//lint:ignore SA6002 see PutBuf in buf.go
 	defer udpWriteBufPool.Put(buf)
 
 	totalLen := hr.Front + len(b) + hr.Rear

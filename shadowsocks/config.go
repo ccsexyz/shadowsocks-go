@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"hash/crc32"
 	"log"
+	"net/http"
 	"os"
 	"strings"
 	"sync"
@@ -163,7 +164,102 @@ type Config struct {
 	LimitConfig
 	ProxyConfig
 
-	rt *runtime
+	rt           *runtime
+	targetRouter *targetRouter
+}
+
+type targetEntryType int
+
+const (
+	targetHost targetEntryType = iota
+	targetHeader
+	targetMethodURI
+)
+
+type targetEntry struct {
+	entryType targetEntryType
+	host      string // host match, lowercase
+	headerName string // header match, lowercase key
+	headerVal  string // header match, value
+	method     string // method+URI match ("GET", "POST", etc.)
+	requestURI string // method+URI match
+	target     string // destination address
+}
+
+type targetRouter struct {
+	entries  []targetEntry
+	fallback string // http_proxy_to target
+}
+
+func (tr *targetRouter) matchHTTP(r *http.Request) string {
+	for i := range tr.entries {
+		e := &tr.entries[i]
+		switch e.entryType {
+		case targetHeader:
+			if strings.EqualFold(r.Header.Get(e.headerName), e.headerVal) {
+				return e.target
+			}
+		case targetMethodURI:
+			if strings.EqualFold(r.Method, e.method) && r.RequestURI == e.requestURI {
+				return e.target
+			}
+		case targetHost:
+			if strings.EqualFold(r.Host, e.host) {
+				return e.target
+			}
+		}
+	}
+	return tr.fallback
+}
+
+func (tr *targetRouter) matchHost(host string) string {
+	lower := strings.ToLower(host)
+	for i := range tr.entries {
+		e := &tr.entries[i]
+		if e.entryType == targetHost && e.host == lower {
+			return e.target
+		}
+	}
+	return ""
+}
+
+func parseTargetRouter(raw map[string]string) *targetRouter {
+	if len(raw) == 0 {
+		return &targetRouter{}
+	}
+	tr := &targetRouter{entries: make([]targetEntry, 0, len(raw))}
+	seen := make(map[string]string, len(raw))
+	for k, v := range raw {
+		lower := strings.ToLower(k)
+		if prev, ok := seen[lower]; ok {
+			log.Printf("target_map: key collision %q and %q both normalize to %q, using latter", prev, k, lower)
+		}
+		seen[lower] = k
+
+		if lower == "http_proxy_to" {
+			tr.fallback = v
+			continue
+		}
+
+		e := targetEntry{target: v}
+		if idx := strings.IndexByte(lower, ' '); idx >= 0 {
+			first, second := lower[:idx], lower[idx+1:]
+			if utils.IsValidHTTPMethod(strings.ToUpper(first)) {
+				e.entryType = targetMethodURI
+				e.method = strings.ToUpper(first)
+				e.requestURI = second
+			} else {
+				e.entryType = targetHeader
+				e.headerName = first
+				e.headerVal = second
+			}
+		} else {
+			e.entryType = targetHost
+			e.host = lower
+		}
+		tr.entries = append(tr.entries, e)
+	}
+	return tr
 }
 
 // initRuntime lazily initializes the runtime and returns it.
@@ -390,6 +486,10 @@ func CheckLogFile(c *Config) {
 }
 
 func CheckBasicConfig(c *Config) {
+	c.targetRouter = parseTargetRouter(c.TargetMap)
+	for i := range c.Backends {
+		c.Backends[i].targetRouter = parseTargetRouter(c.Backends[i].TargetMap)
+	}
 	if len(c.Password) == 0 {
 		c.Password = defaultPassword
 	}

@@ -544,7 +544,7 @@ func (m *ClientHelloMsg) Marshal() []byte {
 		z[0] = byte(extensionSCT >> 8)
 		z[1] = byte(extensionSCT)
 		// zero uint16 for the zero-length extension_data
-		z = z[4:]
+		_ = z[4:]
 	}
 
 	m.Raw = x

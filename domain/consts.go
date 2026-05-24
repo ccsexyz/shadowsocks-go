@@ -30,6 +30,6 @@ const (
 	DefaultTimeout         = 65
 	DefaultMethod          = "aes-128-gcm"
 	DefaultPassword        = "secret"
-	BufferSize             = 8192
+	BufferSize             = 65568 // 64KB + 32, fits max 2022 frame (65535 plaintext + 16 overhead = 65551)
 	HTTPBufferSize         = 4096
 )

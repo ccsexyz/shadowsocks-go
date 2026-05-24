@@ -460,7 +460,7 @@ func TestVirtualServiceAsSSProxyTarget(t *testing.T) {
 	payload := "through-ssproxy-virt"
 	rconn.Write([]byte(payload))
 	resp := make([]byte, len(payload))
-	io.ReadFull(rconn, resp)
+	ss.ReadN(rconn, resp, nil)
 	if string(resp) != payload {
 		t.Errorf("expected '%s', got '%s'", payload, string(resp))
 	}
@@ -502,7 +502,7 @@ func TestVirtualServiceWithSmuxDirect(t *testing.T) {
 		ac := conn.(*ss.AcceptedConn)
 		defer ac.Conn.Close()
 
-		session, err := smux.Server(ac.Conn, smux.DefaultConfig())
+		session, err := smux.Server(ss.AsReadWriteCloser(ac.Conn, nil), smux.DefaultConfig())
 		if err != nil {
 			t.Error("smux server:", err)
 			return
@@ -532,7 +532,7 @@ func TestVirtualServiceWithSmuxDirect(t *testing.T) {
 			go func(s *smux.Stream, c net.Conn) {
 				defer s.Close()
 				defer c.Close()
-				ss.Pipe(c, s, ac.Config)
+				ss.Pipe(ss.AsNetConn(c), ss.AsNetConn(s), ac.Config)
 			}(stream, vconn)
 		}
 	}()
@@ -557,7 +557,7 @@ func TestVirtualServiceWithSmuxDirect(t *testing.T) {
 
 		smuxCfg := smux.DefaultConfig()
 		smuxCfg.KeepAliveInterval = time.Second // must fire within the 4s SS read deadline
-		session, err := smux.Client(rconn, smuxCfg)
+		session, err := smux.Client(ss.AsReadWriteCloser(rconn, nil), smuxCfg)
 		if err != nil {
 			t.Error("smux client:", err)
 			return
@@ -577,7 +577,7 @@ func TestVirtualServiceWithSmuxDirect(t *testing.T) {
 					return
 				}
 				defer tconn.Close()
-				ss.Pipe(s, tconn, srv)
+				ss.Pipe(ss.AsNetConn(s), tconn, srv)
 			}(stream)
 		}
 	}()
@@ -713,7 +713,7 @@ func TestMultiServerUDP_2022AndNon2022Backends(t *testing.T) {
 
 		resp := make([]byte, 4096)
 		conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-		n, err := conn.Read(resp)
+		n, err := ss.ReadN(conn, resp, nil)
 		if err != nil {
 			t.Fatal("2022 read:", err)
 		}
@@ -746,7 +746,7 @@ func TestMultiServerUDP_2022AndNon2022Backends(t *testing.T) {
 
 		resp := make([]byte, 4096)
 		conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-		n, err := conn.Read(resp)
+		n, err := ss.ReadN(conn, resp, nil)
 		if err != nil {
 			t.Fatal("non2022 read:", err)
 		}
@@ -781,7 +781,7 @@ func TestMultiServerUDP_2022AndNon2022Backends(t *testing.T) {
 
 			resp := make([]byte, 4096)
 			conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-			n, err := conn.Read(resp)
+			n, err := ss.ReadN(conn, resp, nil)
 			if err != nil {
 				t.Fatalf("pkt %d: %v", i, err)
 			}

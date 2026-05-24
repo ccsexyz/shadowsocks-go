@@ -19,7 +19,7 @@ func socksProxyHandler(ac *ss.AcceptedConn) {
 		return
 	}
 	buf := utils.GetBuf(1024)
-	n, err := conn.Read(buf)
+	n, err := ss.ReadN(conn, buf, nil)
 	if err != nil {
 		utils.PutBuf(buf)
 		return

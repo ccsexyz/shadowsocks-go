@@ -7,8 +7,8 @@ import (
 	ss "github.com/ccsexyz/shadowsocks-go/shadowsocks"
 )
 
-func getCreateFuncOfUDPTunServer(c *ss.Config) func(*utils.SubConn) (net.Conn, net.Conn, error) {
-	return func(conn *utils.SubConn) (c1, c2 net.Conn, err error) {
+func getCreateFuncOfUDPTunServer(c *ss.Config) func(*utils.SubConn) (utils.Conn, utils.Conn, error) {
+	return func(conn *utils.SubConn) (c1, c2 utils.Conn, err error) {
 		rconn, err := ss.DialUDP(c.Backend)
 		if err != nil {
 			c.Log(err)

@@ -11,6 +11,7 @@ import (
 
 	"golang.org/x/crypto/chacha20poly1305"
 	"golang.org/x/crypto/hkdf"
+
 )
 
 type ssAEADNonce [32]byte
@@ -69,11 +70,11 @@ func (a *AEADEncryptCipherStream) writeData(p []byte) (n int, err error) {
 		}
 	}
 
-	bufs := make([][]byte, 0, len(p)/1024)
+	bufs := make([][]byte, 0, len(p)/aeadSizeMask+1)
 	for len(p) > 0 {
-		if len(p) > 1024 {
-			bufs = append(bufs, p[:1024])
-			p = p[1024:]
+		if len(p) > aeadSizeMask {
+			bufs = append(bufs, p[:aeadSizeMask])
+			p = p[aeadSizeMask:]
 		} else {
 			bufs = append(bufs, p)
 			p = nil
@@ -114,6 +115,80 @@ func (a *AEADDecryptCipherStream) writeData(p []byte) (n int, err error) {
 		}
 	}
 	return a.b.Write(p)
+}
+
+func (a *AEADDecryptCipherStream) ReadFrame(buf []byte) ([]byte, error) {
+	if a.pb.Len() > 0 {
+		n := a.pb.Len()
+		var out []byte
+		if cap(buf) >= n {
+			out = buf[:n]
+		} else {
+			out = make([]byte, n)
+		}
+		m, _ := a.pb.Read(out)
+		if m == 0 { return nil, io.EOF }
+		return out[:m], nil
+	}
+
+	if a.crypt.AEAD == nil {
+		if len(a.iv) < a.ivLen { return nil, io.EOF }
+		if a.creater == nil { return nil, fmt.Errorf("creater is nil") }
+		var err error
+		a.crypt.AEAD, err = a.creater.NewAEAD(a.iv)
+		if err != nil { return nil, err }
+	}
+
+	if a.b.Len() == 0 { return nil, io.EOF }
+
+	overhead := a.crypt.Overhead()
+	var tagBuf [22]byte // overhead (max 16) + 2
+	tag := tagBuf[:overhead+2]
+	var dst []byte
+	if cap(buf) >= a.b.Len() {
+		dst = buf[:0]
+	} else {
+		dst = make([]byte, 0, a.b.Len())
+	}
+	offset := 0
+
+	for {
+		if a.tagLen == 0 {
+			need := overhead + 2
+			if a.b.Len() < need { break }
+			io.ReadFull(&a.b, tag[:need])
+			if err := a.crypt.Decrypt(tag[:need], tag[:need]); err != nil {
+				return nil, fmt.Errorf("decrypt tag fail: %w", err)
+			}
+			a.tagLen = int(binary.BigEndian.Uint16(tag[:2]) & aeadSizeMask)
+		}
+
+		expected := a.tagLen + overhead
+		if a.b.Len() < expected { break }
+
+		if offset+a.tagLen > cap(dst) {
+			bigger := make([]byte, offset+a.b.Len())
+			copy(bigger, dst[:offset])
+			dst = bigger
+		}
+		dst = dst[:offset+a.tagLen]
+
+		blk := getCipherMemBlock()
+		data := blk.b[:expected]
+		io.ReadFull(&a.b, data)
+		err := a.crypt.Decrypt(data, data)
+		if err != nil {
+			putCipherMemBlock(blk)
+			return nil, fmt.Errorf("decrypt data fail: %w", err)
+		}
+		copy(dst[offset:], data[:a.tagLen])
+		putCipherMemBlock(blk)
+		offset += a.tagLen
+		a.tagLen = 0
+	}
+
+	if offset == 0 { return nil, io.EOF }
+	return dst[:offset], nil
 }
 
 func (a *AEADDecryptCipherStream) Read(p []byte) (n int, err error) {

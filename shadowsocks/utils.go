@@ -44,18 +44,6 @@ const (
 	defaultFilterFalseRate = domain.DefaultFilterFalseRate
 )
 
-var (
-	bufPool *sync.Pool
-)
-
-func init() {
-	bufPool = &sync.Pool{
-		New: func() any {
-			return make([]byte, buffersize)
-		},
-	}
-}
-
 type cb func()
 
 var (
@@ -74,8 +62,20 @@ func IsTimeoutError(err error) bool {
 	return domain.IsTimeoutError(err)
 }
 
-func CheckConn(conn net.Conn) bool {
-	return domain.CheckConn(conn)
+func CheckConn(conn Conn) bool {
+	if conn == nil {
+		return false
+	}
+	for {
+		if bc, ok := conn.(*BaseConn); ok {
+			return domain.CheckConn(bc.raw)
+		}
+		if uw, ok := conn.(Unwrapper); ok {
+			conn = uw.Unwrap()
+		} else {
+			return false
+		}
+	}
 }
 
 var (
@@ -208,7 +208,7 @@ func safeHeadHex(b []byte, n int) []byte {
 
 // IsTimeoutError checks if the error is a timeout error.
 
-func Pipe(c1, c2 net.Conn, c *Config) {
+func Pipe(c1, c2 Conn, c *Config) {
 	defer c1.Close()
 	defer c2.Close()
 	c1die := make(chan bool)
@@ -218,9 +218,10 @@ func Pipe(c1, c2 net.Conn, c *Config) {
 	if c != nil && c.Timeout > 0 {
 		timeout = c.Timeout
 	}
-	f := func(dst, src net.Conn, die chan bool, buf []byte) {
+	f := func(dst, src Conn, die chan bool) {
 		defer close(die)
-		defer utils.PutBuf(buf)
+		buf := make([]byte, buffersize)
+		var pool utils.BufPool
 		var n int
 		var err error
 		var totalRead, totalWrote int64
@@ -228,7 +229,8 @@ func Pipe(c1, c2 net.Conn, c *Config) {
 			if timeout > 0 {
 				src.SetReadDeadline(time.Now().Add(time.Duration(timeout) * time.Second))
 			}
-			n, err = src.Read(buf)
+			n, err = ReadN(src, buf, &pool)
+			pool.Reset()
 			if err != nil {
 				c.LogD("pipe read error:", err, "from", src.RemoteAddr(), "to", src.LocalAddr())
 			}
@@ -238,9 +240,8 @@ func Pipe(c1, c2 net.Conn, c *Config) {
 					dst.SetWriteDeadline(time.Now().Add(time.Duration(timeout) * time.Second))
 					alive.Store(true)
 				}
-				var wrote int
-				wrote, err = dst.Write(buf[:n])
-				totalWrote += int64(wrote)
+				_, err = dst.Write(buf[:n])
+				totalWrote += int64(n)
 				if err != nil {
 					c.LogD("pipe write error:", err, "from", src.LocalAddr(), "to", dst.RemoteAddr())
 				}
@@ -255,13 +256,12 @@ func Pipe(c1, c2 net.Conn, c *Config) {
 			c.Log("pipe data mismatch: read", totalRead, "bytes but wrote", totalWrote, "bytes, from", src.RemoteAddr(), "to", dst.RemoteAddr())
 		}
 	}
-	go f(c1, c2, c1die, utils.GetBuf(buffersize))
-	go f(c2, c1, c2die, utils.GetBuf(buffersize))
+	go f(c1, c2, c1die)
+	go f(c2, c1, c2die)
 	select {
 	case <-c1die:
 	case <-c2die:
 	}
-	return
 }
 
 type Limiter struct {
@@ -309,11 +309,9 @@ func (l *Limiter) SetLimit(limit int) {
 	l.limit = limit
 }
 
-func (l *Limiter) GetTotalBytes() int64 {
-	return l.totalBytes
-}
+func GetConn(conn Conn) Conn { return conn }
 
-func GetInnerConn(conn net.Conn) (c net.Conn, err error) {
+func GetInnerConn(conn Conn) (c Conn, err error) {
 	u, ok := conn.(Unwrapper)
 	if !ok {
 		return nil, fmt.Errorf("unexpected conn with type %T", conn)
@@ -321,20 +319,30 @@ func GetInnerConn(conn net.Conn) (c net.Conn, err error) {
 	return u.Unwrap(), nil
 }
 
-func GetNetTCPConn(conn net.Conn) (c *net.TCPConn, err error) {
-	t, err := GetTCPConn(conn)
-	if err != nil {
-		return
-	}
-	c, ok := t.Conn.(*net.TCPConn)
-	if !ok {
-		err = fmt.Errorf("unexpected conn with type %T", conn)
-		return
-	}
-	return
+func GetNetTCPConn(conn Conn) (c *net.TCPConn, err error) {
+	return getNetTCPConn(conn)
 }
 
-func GetTCPConn(conn net.Conn) (c *BaseConn, err error) {
+// getNetTCPConn extracts a *net.TCPConn from a Conn by unwrapping.
+func getNetTCPConn(conn Conn) (c *net.TCPConn, err error) {
+	for {
+		if bc, ok := conn.(*BaseConn); ok {
+			c, ok = bc.raw.(*net.TCPConn)
+			if !ok {
+				err = fmt.Errorf("unexpected conn with type %T", conn)
+			}
+			return
+		}
+		if uw, ok := conn.(Unwrapper); ok {
+			conn = uw.Unwrap()
+		} else {
+			err = fmt.Errorf("cannot unwrap conn of type %T", conn)
+			return
+		}
+	}
+}
+
+func GetTCPConn(conn Conn) (c *BaseConn, err error) {
 	c, ok := conn.(*BaseConn)
 	if !ok {
 		conn, err = GetInnerConn(conn)
@@ -346,8 +354,14 @@ func GetTCPConn(conn net.Conn) (c *BaseConn, err error) {
 	return
 }
 
-func GetSsConn(conn net.Conn) (c *CryptoConn, err error) {
-	c, ok := conn.(*CryptoConn)
+// ssCryptConn is satisfied by both cryptoConnStream and cryptoConn2022.
+type ssCryptConn interface {
+	Conn
+	CancelDeferClose()
+}
+
+func GetSsConn(conn Conn) (c ssCryptConn, err error) {
+	c, ok := conn.(ssCryptConn)
 	if !ok {
 		conn, err = GetInnerConn(conn)
 		if err != nil {
@@ -358,11 +372,11 @@ func GetSsConn(conn net.Conn) (c *CryptoConn, err error) {
 	return
 }
 
-// HasCryptoConn checks whether the conn chain contains a CryptoConn
-// (indicating the connection came from the SS fallback path).
-func HasCryptoConn(conn net.Conn) bool {
+// HasCryptoConn checks whether the conn chain contains a cryptoConnStream
+// or cryptoConn2022 (indicating the connection came from the SS fallback path).
+func HasCryptoConn(conn Conn) bool {
 	for {
-		if _, ok := conn.(*CryptoConn); ok {
+		if _, ok := conn.(ssCryptConn); ok {
 			return true
 		}
 		uw, ok := conn.(Unwrapper)
@@ -373,14 +387,6 @@ func HasCryptoConn(conn net.Conn) bool {
 	}
 }
 
-func GetConn(conn net.Conn) (c Conn) {
-	var ok bool
-	c, ok = conn.(Conn)
-	if !ok {
-		c = newBaseConn(conn, nil)
-	}
-	return
-}
 
 // CheckConn Check the Conn whether is still alive
 

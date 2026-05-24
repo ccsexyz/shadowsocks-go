@@ -40,7 +40,7 @@ func buildSIP022(b []byte, sipType byte, clientSID uint64) []byte {
 		return b
 	}
 	atyp := b[0]
-	if atyp != 1 && atyp != 3 {
+	if atyp != 1 && atyp != 3 && atyp != 4 {
 		return b // unsupported type, pass through
 	}
 
@@ -76,7 +76,6 @@ func ParseSIP022(b []byte) (hdr []byte, host string, port int, payload []byte, e
 		err = fmt.Errorf("not a SIP022 header (len=%d type=%d)", len(b), b[0])
 		return
 	}
-	sipType := b[0]
 
 	// Timestamp is always at offset 1
 	ts := int64(binary.BigEndian.Uint64(b[1:9]))
@@ -90,30 +89,11 @@ func ParseSIP022(b []byte) (hdr []byte, host string, port int, payload []byte, e
 		return
 	}
 
-	var padLenPos int
-	if sipType == 1 {
-		// Response format: Type(1) + TS(8) + ClientSID(8) + PadLen(2) + Pad + Addr + Payload
-		if len(b) < 19 { // 1+8+8+2 minimum
-			err = fmt.Errorf("SIP022 response too short: %d", len(b))
-			return
-		}
-		padLenPos = 17 // after Type(1) + TS(8) + ClientSID(8)
-	} else {
-		// Request format: Type(0) + TS(8) + PadLen(2) + Pad + Addr + Payload
-		padLenPos = 9 // after Type(1) + TS(8)
-	}
-
-	padLen := int(binary.BigEndian.Uint16(b[padLenPos : padLenPos+2]))
-	if padLen > 900 {
-		err = fmt.Errorf("SIP022 padding too large: %d", padLen)
+	rest := sip022AddrStart(b)
+	if rest == nil {
+		err = fmt.Errorf("SIP022 header malformed")
 		return
 	}
-	skip := padLenPos + 2 + padLen
-	if len(b) < skip {
-		err = fmt.Errorf("SIP022 packet too short: %d < %d", len(b), skip)
-		return
-	}
-	rest := b[skip:]
 
 	// After SIP022 header: ATYP+ADDR+PORT+PAYLOAD in SOCKS5 format
 	addr, data, addrErr := parseSIP022Addr(rest)
@@ -122,11 +102,37 @@ func ParseSIP022(b []byte) (hdr []byte, host string, port int, payload []byte, e
 		return
 	}
 
+	skip := len(b) - len(rest)
 	hdr = b[:skip+len(rest)-len(data)]
 	host = addr.Host()
 	port, _ = strconv.Atoi(addr.Port())
 	payload = data
 	return
+}
+
+// sip022AddrStart validates the SIP022 wrapper (type, length, padding) and
+// returns the slice starting at the ATYP byte. Returns nil if malformed.
+func sip022AddrStart(b []byte) []byte {
+	if len(b) < 12 || (b[0] != 0 && b[0] != 1) {
+		return nil
+	}
+	sipType := b[0]
+	padLenPos := 9
+	if sipType == 1 {
+		if len(b) < 19 {
+			return nil
+		}
+		padLenPos = 17
+	}
+	padLen := int(binary.BigEndian.Uint16(b[padLenPos : padLenPos+2]))
+	if padLen > 900 {
+		return nil
+	}
+	skip := padLenPos + 2 + padLen
+	if len(b) < skip {
+		return nil
+	}
+	return b[skip:]
 }
 
 // parseSIP022Addr parses the SOCKS5-style address (ATYP+ADDR+PORT+PAYLOAD)
@@ -145,6 +151,13 @@ func parseSIP022Addr(b []byte) (addr *sipAddr, data []byte, err error) {
 		}
 		addr = &sipAddr{hdr: b[:7]}
 		data = b[7:]
+	case 4: // IPv6
+		if len(b) < 19 {
+			err = fmt.Errorf("IPv6 packet too short: %d", len(b))
+			return
+		}
+		addr = &sipAddr{hdr: b[:19]}
+		data = b[19:]
 	case 3: // Domain
 		if len(b) < 4 {
 			err = fmt.Errorf("domain packet too short")
@@ -170,10 +183,42 @@ type sipAddr struct {
 	hdr []byte
 }
 
+// Sip022Payload extracts the payload from a SIP022 packet without allocations.
+// Intentionally skips timestamp validation — only use on the outbound (response)
+// path where the timestamp is freshly generated.
+// Returns nil if the packet is malformed.
+func Sip022Payload(b []byte) []byte {
+	rest := sip022AddrStart(b)
+	if rest == nil || len(rest) < 4 {
+		return nil
+	}
+	atyp := rest[0]
+	var hdrLen int
+	switch atyp {
+	case 1:
+		hdrLen = 7
+	case 4:
+		hdrLen = 19
+	case 3:
+		if len(rest) < 2 {
+			return nil
+		}
+		hdrLen = 1 + 1 + int(rest[1]) + 2
+	default:
+		return nil
+	}
+	if len(rest) < hdrLen {
+		return nil
+	}
+	return rest[hdrLen:]
+}
+
 func (s *sipAddr) Host() string {
 	switch s.hdr[0] {
 	case 1:
 		return net.IP(s.hdr[1:5]).String()
+	case 4:
+		return net.IP(s.hdr[1:17]).String()
 	case 3:
 		return string(s.hdr[2 : 2+int(s.hdr[1])])
 	}
@@ -184,6 +229,8 @@ func (s *sipAddr) Port() string {
 	switch s.hdr[0] {
 	case 1:
 		return fmt.Sprintf("%d", binary.BigEndian.Uint16(s.hdr[5:7]))
+	case 4:
+		return fmt.Sprintf("%d", binary.BigEndian.Uint16(s.hdr[17:19]))
 	case 3:
 		dlen := int(s.hdr[1])
 		return fmt.Sprintf("%d", binary.BigEndian.Uint16(s.hdr[2+dlen:2+dlen+2]))
@@ -204,6 +251,11 @@ func BuildSOCKS5Response(b []byte, host string, port int, payload []byte) int {
 		off++
 		copy(b[off:], ip4)
 		off += 4
+	} else if ip6 := ip.To16(); ip6 != nil {
+		b[off] = 4 // ATYP IPv6
+		off++
+		copy(b[off:], ip6)
+		off += 16
 	} else {
 		b[off] = 3 // ATYP Domain
 		off++

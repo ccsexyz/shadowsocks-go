@@ -1,0 +1,1290 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Benchmark Comparison</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+<style>
+/* =========================================================
+   Design Tokens & Reset
+   ========================================================= */
+:root {
+  --bg: #f0f2f5;
+  --surface: #ffffff;
+  --surface-elevated: #ffffff;
+  --text: #1f2937;
+  --text-secondary: #6b7280;
+  --border: #e5e7eb;
+  --accent: #2563eb;
+  --accent-hover: #1d4ed8;
+  --accent-soft: rgba(37, 99, 235, 0.08);
+  --tab-bg: #f3f4f6;
+  --shadow-sm: 0 1px 2px 0 rgba(0,0,0,0.04);
+  --shadow: 0 4px 6px -1px rgba(0,0,0,0.06), 0 2px 4px -2px rgba(0,0,0,0.04);
+  --shadow-lg: 0 10px 15px -3px rgba(0,0,0,0.08), 0 4px 6px -4px rgba(0,0,0,0.04);
+  --radius: 12px;
+  --radius-sm: 8px;
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans SC", sans-serif;
+  --transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  font-family: var(--font-sans);
+  background: var(--bg);
+  color: var(--text);
+  padding: 24px;
+  line-height: 1.5;
+  transition: background 0.4s ease, color 0.3s ease;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* =========================================================
+   Dark Theme
+   ========================================================= */
+body.dark {
+  --bg: #0f1117;
+  --surface: #181b21;
+  --surface-elevated: #1e2128;
+  --text: #e5e7eb;
+  --text-secondary: #9ca3af;
+  --border: #2d3139;
+  --accent: #60a5fa;
+  --accent-hover: #3b82f6;
+  --accent-soft: rgba(96, 165, 250, 0.12);
+  --tab-bg: #1a1d24;
+  --shadow-sm: 0 1px 2px 0 rgba(0,0,0,0.3);
+  --shadow: 0 4px 6px -1px rgba(0,0,0,0.4), 0 2px 4px -2px rgba(0,0,0,0.3);
+  --shadow-lg: 0 10px 15px -3px rgba(0,0,0,0.5), 0 4px 6px -4px rgba(0,0,0,0.4);
+}
+
+/* =========================================================
+   Cyber Theme
+   ========================================================= */
+body.cyber {
+  --bg: #03030a;
+  --surface: rgba(8, 8, 24, 0.85);
+  --surface-elevated: rgba(12, 12, 36, 0.9);
+  --text: #e2e8f0;
+  --text-secondary: #94a3b8;
+  --border: rgba(0, 242, 255, 0.2);
+  --accent: #00f2ff;
+  --accent-hover: #00c8d6;
+  --accent-soft: rgba(0, 242, 255, 0.1);
+  --tab-bg: rgba(0, 242, 255, 0.06);
+  --shadow-sm: 0 0 8px rgba(0, 242, 255, 0.08);
+  --shadow: 0 0 20px rgba(0, 242, 255, 0.12);
+  --shadow-lg: 0 0 30px rgba(0, 242, 255, 0.18);
+  --radius: 16px;
+}
+
+/* Animated cyber background layer */
+body.cyber::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background: linear-gradient(135deg, #020024 0%, #090979 35%, #00d4ff 100%);
+  opacity: 0.15;
+  mask-image: radial-gradient(circle at 50% 50%, black 40%, transparent 100%);
+  -webkit-mask-image: radial-gradient(circle at 50% 50%, black 40%, transparent 100%);
+  animation: cyberPulse 8s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes cyberPulse {
+  0%, 100% { opacity: 0.12; transform: scale(1); }
+  50% { opacity: 0.22; transform: scale(1.05); }
+}
+
+body.cyber .card,
+body.cyber .chart-box,
+body.cyber table {
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-color: rgba(0, 242, 255, 0.15);
+}
+
+body.cyber .tab.on,
+body.cyber .controls button.on {
+  box-shadow: 0 0 12px rgba(0, 242, 255, 0.4), inset 0 0 8px rgba(0, 242, 255, 0.1);
+  text-shadow: 0 0 6px rgba(0, 242, 255, 0.6);
+  border-color: var(--accent);
+}
+
+body.cyber button:hover {
+  box-shadow: 0 0 10px var(--accent);
+}
+
+/* =========================================================
+   Paper Theme — warm cream, low eye strain
+   ========================================================= */
+body.paper {
+  --bg: #f3efe2;
+  --surface: #fdfaf2;
+  --surface-elevated: #faf6ea;
+  --text: #4a3f32;
+  --text-secondary: #8b7355;
+  --border: #d9ceb5;
+  --accent: #c75b3a;
+  --accent-hover: #a8432a;
+  --accent-soft: rgba(199, 91, 58, 0.08);
+  --tab-bg: #ede3cc;
+  --shadow-sm: 0 1px 2px 0 rgba(74, 63, 50, 0.04);
+  --shadow: 0 2px 8px rgba(74, 63, 50, 0.06);
+  --shadow-lg: 0 6px 16px rgba(74, 63, 50, 0.08);
+}
+
+/* =========================================================
+   Nord Theme — cool blue-gray dark, high developer appeal
+   ========================================================= */
+body.nord {
+  --bg: #2e3440;
+  --surface: #3b4252;
+  --surface-elevated: #434c5e;
+  --text: #d8dee9;
+  --text-secondary: #7b88a1;
+  --border: #4c566a;
+  --accent: #88c0d0;
+  --accent-hover: #8fbcbb;
+  --accent-soft: rgba(136, 192, 208, 0.1);
+  --tab-bg: #3b4252;
+  --shadow-sm: 0 1px 2px 0 rgba(0,0,0,0.3);
+  --shadow: 0 4px 6px -1px rgba(0,0,0,0.35);
+  --shadow-lg: 0 10px 15px -3px rgba(0,0,0,0.4);
+}
+
+/* =========================================================
+   High Contrast Theme — pure black & white, accessible
+   ========================================================= */
+body.contrast {
+  --bg: #000000;
+  --surface: #0a0a0a;
+  --surface-elevated: #111111;
+  --text: #ffffff;
+  --text-secondary: #cccccc;
+  --border: #ffffff;
+  --accent: #ffff00;
+  --accent-hover: #ffdd00;
+  --accent-soft: rgba(255, 255, 0, 0.12);
+  --tab-bg: #111111;
+  --shadow-sm: none;
+  --shadow: none;
+  --shadow-lg: none;
+}
+
+/* =========================================================
+   Header
+   ========================================================= */
+header {
+  max-width: 1440px;
+  margin: 0 auto 24px;
+}
+
+h1 {
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin-bottom: 6px;
+  background: linear-gradient(135deg, var(--text) 0%, var(--text-secondary) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+body.cyber h1 {
+  background: linear-gradient(90deg, #00f2ff, #bc13fe);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  text-shadow: 0 0 20px rgba(0, 242, 255, 0.3);
+}
+
+.subtitle {
+  color: var(--text-secondary);
+  font-size: 14px;
+  font-weight: 400;
+  margin-bottom: 0;
+}
+
+/* =========================================================
+   Summary Cards
+   ========================================================= */
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+  max-width: 1440px;
+  margin: 0 auto 24px;
+}
+
+.card {
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 20px;
+  box-shadow: var(--shadow-sm);
+  border: 1px solid var(--border);
+  transition: var(--transition);
+  position: relative;
+  overflow: hidden;
+}
+
+.card::after {
+  content: "";
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+  background: var(--accent);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow);
+  border-color: var(--accent);
+}
+
+.card:hover::after { opacity: 1; }
+
+.card .l {
+  font-size: 12px;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.card .v {
+  font-size: 26px;
+  font-weight: 800;
+  color: var(--text);
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+
+/* Card accent stripes for variety */
+.card:nth-child(4n+1)::after { background: #3b82f6; }
+.card:nth-child(4n+2)::after { background: #22c55e; }
+.card:nth-child(4n+3)::after { background: #f59e0b; }
+.card:nth-child(4n+4)::after { background: #ec4899; }
+
+/* =========================================================
+   Controls / Toolbar
+   ========================================================= */
+.controls {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 20px;
+  align-items: center;
+  flex-wrap: wrap;
+  max-width: 1440px;
+  margin-left: auto;
+  margin-right: auto;
+  padding: 16px;
+  background: var(--surface);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+  border: 1px solid var(--border);
+}
+
+.controls > span {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-right: 4px;
+}
+
+.controls button {
+  padding: 6px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--tab-bg);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  transition: var(--transition);
+  white-space: nowrap;
+}
+
+.controls button:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+  transform: translateY(-1px);
+}
+
+.controls button.on {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+  font-weight: 600;
+  box-shadow: var(--shadow-sm);
+}
+
+body.cyber .controls button {
+  border-color: rgba(0, 242, 255, 0.25);
+  background: rgba(0, 242, 255, 0.05);
+}
+
+body.cyber .controls button.on {
+  background: rgba(0, 242, 255, 0.15);
+  color: #00f2ff;
+}
+
+.filters {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.legend-bar {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+  max-width: 1440px;
+  margin: 8px auto 12px;
+  align-items: center;
+}
+.legend-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  color: var(--muted);
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--tab-bg);
+  border: 1px solid var(--border);
+  cursor: default;
+  transition: var(--transition);
+}
+.legend-chip .swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+.legend-group-label {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text);
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: var(--accent-soft);
+  margin-right: 2px;
+}
+.legend-sep {
+  display: inline-block;
+  width: 1px;
+  height: 18px;
+  background: var(--border);
+  margin: 0 6px;
+  align-self: center;
+}
+
+/* Theme toggle special styling */
+#btn-theme {
+  background: var(--surface-elevated);
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 700;
+}
+
+#btn-theme:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
+/* =========================================================
+   Charts Grid
+   ========================================================= */
+.charts {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  max-width: 1440px;
+  margin: 0 auto 24px;
+}
+
+.chart-box {
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 16px;
+  box-shadow: var(--shadow-sm);
+  border: 1px solid var(--border);
+  height: 380px;
+  transition: var(--transition);
+  position: relative;
+}
+
+.chart-box:hover {
+  box-shadow: var(--shadow);
+  border-color: var(--border);
+  transform: translateY(-1px);
+}
+
+.chart-box.wide {
+  grid-column: 1 / -1;
+  height: 440px;
+}
+
+/* =========================================================
+   Section Titles
+   ========================================================= */
+h2 {
+  font-size: 18px;
+  font-weight: 700;
+  margin: 32px auto 16px;
+  max-width: 1440px;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+h2::before {
+  content: "";
+  display: block;
+  width: 4px;
+  height: 20px;
+  background: var(--accent);
+  border-radius: 2px;
+}
+
+/* =========================================================
+   Tables
+   ========================================================= */
+.table-wrap {
+  max-width: 1440px;
+  margin: 0 auto 24px;
+  background: var(--surface);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+  border: 1px solid var(--border);
+  overflow: hidden;
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  min-width: 600px;
+}
+
+th, td {
+  padding: 10px 12px;
+  text-align: right;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--border);
+}
+
+th {
+  background: var(--tab-bg);
+  font-weight: 600;
+  font-size: 11px;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+td:first-child, th:first-child {
+  text-align: left;
+  font-weight: 600;
+  color: var(--text);
+}
+
+tr {
+  transition: background 0.15s ease;
+}
+
+tr:hover {
+  background: var(--accent-soft);
+}
+
+tr:nth-child(even) {
+  background: rgba(128,128,128,0.03);
+}
+
+tr:nth-child(even):hover {
+  background: var(--accent-soft);
+}
+
+.best {
+  color: #16a34a !important;
+  font-weight: 800;
+  background: rgba(22, 163, 74, 0.08);
+  border-radius: 3px;
+}
+
+.worst {
+  color: #dc2626 !important;
+  font-weight: 700;
+  background: rgba(220, 38, 38, 0.07);
+  border-radius: 3px;
+}
+
+body.dark .best {
+  color: #4ade80 !important;
+  background: rgba(74, 222, 128, 0.12);
+}
+body.dark .worst {
+  color: #f87171 !important;
+  background: rgba(248, 113, 113, 0.12);
+}
+
+body.cyber .best {
+  color: #00ff9f !important;
+  background: rgba(0, 255, 159, 0.15);
+  text-shadow: 0 0 6px rgba(0, 255, 159, 0.4);
+}
+body.cyber .worst {
+  color: #ff4466 !important;
+  background: rgba(255, 68, 102, 0.15);
+  text-shadow: 0 0 6px rgba(255, 68, 102, 0.3);
+}
+
+/* =========================================================
+   PProf Section
+   ========================================================= */
+#pprof-tables {
+  max-width: 1440px;
+  margin: 0 auto;
+}
+
+#pprof-tables h3 {
+  margin: 24px 0 12px;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pprof-tabs {
+  display: flex;
+  gap: 8px;
+}
+
+.pprof-tab-btn {
+  padding: 6px 14px;
+  font-size: 12px;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--tab-bg);
+  color: var(--text);
+  transition: var(--transition);
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pprof-tab-btn:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.pprof-tab-btn.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+  box-shadow: var(--shadow-sm);
+}
+
+.pprof-pane {
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 16px;
+  box-shadow: var(--shadow-sm);
+  border: 1px solid var(--border);
+  overflow: auto;
+  max-height: 600px;
+  transition: var(--transition);
+}
+
+.pprof-pane:hover {
+  box-shadow: var(--shadow);
+}
+
+.pprof-pane svg {
+  width: 100%;
+  height: auto;
+}
+
+/* External link button */
+.ext-link {
+  padding: 4px 12px;
+  font-size: 11px;
+  text-decoration: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--tab-bg);
+  color: var(--text-secondary);
+  transition: var(--transition);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ext-link:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+/* =========================================================
+   Responsive
+   ========================================================= */
+@media (max-width: 1024px) {
+  .charts { grid-template-columns: 1fr 1fr; }
+  .chart-box.wide { grid-column: 1 / -1; }
+  .cards { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (max-width: 768px) {
+  body { padding: 16px; }
+  .charts { grid-template-columns: 1fr; }
+  .chart-box, .chart-box.wide { grid-column: 1; height: 340px; }
+  .cards { grid-template-columns: 1fr; }
+  .controls { gap: 6px; padding: 12px; }
+  h1 { font-size: 22px; }
+  .table-wrap { border-radius: var(--radius-sm); }
+}
+
+@media (max-width: 480px) {
+  .controls > span { width: 100%; margin-top: 4px; margin-bottom: 2px; }
+  .filters { width: 100%; }
+  #btn-theme { margin-left: 0; margin-top: 8px; width: 100%; }
+}
+</style>
+</head>
+<body>
+
+<<header>
+  <h1>Benchmark Comparison</h1>
+  <p class="subtitle" id="subtitle"></p>
+</header>
+
+<div class="cards" id="cards"></div>
+
+<div class="controls">
+  <span>图表</span>
+  <button onclick="setChartType('line',this)" class="ct-btn" data-ct="line,curve,step">折线</button>
+  <button onclick="setChartType('curve',this)" class="ct-btn" data-ct="line,curve,step">曲线</button>
+  <button onclick="setChartType('bar',this)" class="ct-btn" data-ct="bar">柱状</button>
+  <button onclick="setChartType('step',this)" class="ct-btn" data-ct="line,curve,step">阶梯</button>
+
+  <span style="margin-left:12px">Method</span>
+  <span class="filters" id="method-filters"></span>
+
+  <span style="margin-left:12px">Payload</span>
+  <span class="filters" id="payload-filters"></span>
+
+  <span style="margin-left:12px">Conns</span>
+  <span class="filters" id="conns-filters"></span>
+
+  <span style="margin-left:12px">主题</span>
+  <button onclick="toggleTheme()" id="btn-theme">纸张</button>
+</div>
+
+<div class="legend-bar" id="legend-bar"></div>
+
+<div class="charts">
+  <div class="chart-box wide" id="c1"></div>
+  <div class="chart-box" id="c2"></div>
+  <div class="chart-box" id="c3"></div>
+  <div class="chart-box" id="c4"></div>
+  <div class="chart-box" id="c5"></div>
+  <div class="chart-box" id="c6"></div>
+  <div class="chart-box" id="c7"></div>
+  <div class="chart-box" id="c8"></div>
+</div>
+
+<h2>详细数据</h2>
+<div id="tables"></div>
+
+<h2>Allocation Hotspots (pprof)</h2>
+<div id="pprof-tables"></div>
+
+<script>
+const ROWS = {{.RowsJSON}};
+const LABELS = {{.LabelsJSON}};
+const MAX_TPUT = {{.MaxTput}};
+const PPROF = {{.PprofJSON}};
+const PPROF_SVGS = {{.PprofSVGs}};
+const methods = [...new Set(ROWS.map(r => r.method))].sort();
+const payloads = [...new Set(ROWS.map(r => r.payload))].sort((a,b) => a-b);
+const concs = [...new Set(ROWS.map(r => r.concurrency))].sort((a,b) => a-b);
+const scenarioKeys = ROWS.map(r => r.method+'|'+r.payload+'|'+r.concurrency);
+const uniqueScenarios = [...new Set(scenarioKeys)];
+const isSingle = LABELS.length === 1;
+// Stable color map: dynamic HSL palette — one unique color per scenario, no wrapping
+const scenarioColors = new Map(uniqueScenarios.map((k, i) => [k, i]));
+const palette = (function(n) {
+  const colors = [];
+  for (let i = 0; i < n; i++) {
+    const hue = (i * 137.508) % 360;       // golden angle, maximally spread hues
+    const sat = 60 + (i % 3) * 12;          // 60-84%, subtle saturation variation
+    const lit = 48 - (i % 4) * 6;           // 30-48%, varied lightness
+    colors.push('hsl('+hue.toFixed(0)+','+sat+'%,'+lit+'%)');
+  }
+  return colors;
+})(uniqueScenarios.length);
+function scColor(idx) { return palette[idx]; }
+
+let selMethod = 'All';
+let selPayload = -1;
+let selConns = -1;
+
+let chartType = isSingle ? 'bar' : 'line';
+let themeIdx = 0;
+const themes = ['paper', '', 'dark', 'cyber', 'nord', 'contrast'];
+const themeNames = ['纸张', '明亮', '暗夜', '赛博', '极光', '高对比'];
+
+const c1 = echarts.init(document.getElementById('c1'));
+const c2 = echarts.init(document.getElementById('c2'));
+const c3 = echarts.init(document.getElementById('c3'));
+const c4 = echarts.init(document.getElementById('c4'));
+const c5 = echarts.init(document.getElementById('c5'));
+const c6 = echarts.init(document.getElementById('c6'));
+const c7 = echarts.init(document.getElementById('c7'));
+const c8 = echarts.init(document.getElementById('c8'));
+
+window.onresize = () => {
+  c1.resize(); c2.resize(); c3.resize(); c4.resize(); c5.resize(); c6.resize(); c7.resize(); c8.resize();
+};
+
+function fmtMbps(v){ return v ? v.toFixed(0)+' MB/s' : '-'; }
+function fmtUs(v){ return v ? v.toFixed(0)+' µs' : '-'; }
+
+function getThemeColors() {
+  const isCyber = document.body.classList.contains('cyber');
+  const isDark = document.body.classList.contains('dark');
+  return {
+    text: isCyber ? '#e2e8f0' : (isDark ? '#e5e7eb' : '#1f2937'),
+    muted: isCyber ? '#94a3b8' : (isDark ? '#9ca3af' : '#6b7280'),
+    grid: isCyber ? 'rgba(0, 242, 255, 0.1)' : (isDark ? '#2d3139' : '#e5e7eb'),
+    tooltipBg: isCyber ? 'rgba(8, 8, 24, 0.95)' : (isDark ? '#181b21' : '#ffffff'),
+    tooltipBorder: isCyber ? 'rgba(0, 242, 255, 0.3)' : (isDark ? '#2d3139' : '#e5e7eb'),
+    tooltipText: isCyber ? '#e2e8f0' : (isDark ? '#e5e7eb' : '#1f2937')
+  };
+}
+
+function baseOpt(title, topExtra){
+  const tc = getThemeColors();
+  const shortLabels = LABELS.map(l => l.length > 12 ? l.substring(0,12)+'…' : l);
+  return {
+    title: {
+      text: title,
+      left: 10,
+      top: 8,
+      textStyle: { fontSize: 13, fontWeight: 700, color: tc.text }
+    },
+    tooltip: {
+      trigger: 'axis',
+      confine: true,
+      backgroundColor: tc.tooltipBg,
+      borderColor: tc.tooltipBorder,
+      borderWidth: 1,
+      textStyle: { color: tc.tooltipText, fontSize: 12 },
+      padding: [10, 14],
+      extraCssText: 'border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.15);'
+    },
+    grid: { top: (topExtra || 55), left: 55, right: 20, bottom: 50 },
+    xAxis: {
+      type: 'category',
+      data: shortLabels,
+      axisLabel: { color: tc.muted, fontSize: 10, rotate: 30, interval: 0 },
+      axisTick: { alignWithLabel: true, lineStyle: { color: tc.grid } },
+      axisLine: { lineStyle: { color: tc.grid } }
+    },
+    yAxis: {
+      axisLabel: { color: tc.muted, fontSize: 10 },
+      splitLine: { lineStyle: { color: tc.grid, type: 'dashed' } }
+    }
+  };
+}
+
+function mkSeries(name, data, color){
+  const s = { name, data, emphasis: { focus: 'series', blurScope: 'coordinateSystem' } };
+  switch (chartType) {
+    case 'bar':
+      s.type = 'bar';
+      s.barMaxWidth = 28;
+      s.itemStyle = { color, borderRadius: [4, 4, 0, 0] };
+      break;
+    case 'line':
+      s.type = 'line';
+      s.symbol = 'circle';
+      s.symbolSize = 7;
+      s.lineStyle = { color, width: 2.5, cap: 'round' };
+      s.itemStyle = { color, borderWidth: 2, borderColor: '#fff' };
+      break;
+    case 'curve':
+      s.type = 'line';
+      s.smooth = 0.35;
+      s.symbol = 'none';
+      s.lineStyle = { color, width: 3, cap: 'round' };
+      s.itemStyle = { color };
+      break;
+    case 'step':
+      s.type = 'line';
+      s.step = 'end';
+      s.symbol = 'circle';
+      s.symbolSize = 5;
+      s.lineStyle = { color, width: 2.5 };
+      s.itemStyle = { color };
+      break;
+    default:
+      s.type = 'line';
+      s.symbol = 'circle';
+      s.symbolSize = 6;
+      s.lineStyle = { color, width: 2 };
+      s.itemStyle = { color };
+  }
+  return s;
+}
+
+function scenarioData(method, payload, conns, fieldIdx){
+  const row = ROWS.find(r => r.method === method && r.payload === payload && r.concurrency === conns);
+  if (!row) return LABELS.map(() => null);
+  return row.values.map(v => v ? v[fieldIdx] : null);
+}
+
+function scenarioLabel(method, payload, conns){
+  const size = (payload>=1024 ? (payload/1024)+'K' : payload+'B') + ' ×' + conns;
+  if (!method) return size;
+  const shortM = method.replace('2022-blake3-','2022-').replace('aes-256-gcm','aes');
+  return shortM + ' ' + size;
+}
+
+function setChartType(t, btn){
+  chartType = t;
+  document.querySelectorAll('.ct-btn').forEach(b => b.classList.remove('on'));
+  if (btn) btn.classList.add('on');
+  update();
+}
+function initChartType(){
+  if (!isSingle) {
+    document.querySelector('.ct-btn[data-ct="line,curve,step"]').classList.add('on');
+  } else {
+    document.querySelector('.ct-btn[data-ct="bar"]').classList.add('on');
+  }
+}
+
+function toggleTheme(){
+  themeIdx = (themeIdx + 1) % themes.length;
+  update();
+}
+
+function update(){
+  if (isSingle) {
+    document.querySelectorAll('.ct-btn[data-ct]').forEach(b => {
+      b.style.display = b.dataset.ct === 'bar' ? '' : 'none';
+    });
+  }
+  document.body.className = themes[themeIdx];
+  document.getElementById('btn-theme').textContent = themeNames[themeIdx];
+  const tc = getThemeColors();
+
+  document.getElementById('subtitle').textContent = LABELS.join('  vs  ');
+
+  // Summary cards
+  const summary = {};
+  ROWS.forEach(r => {
+    r.values.forEach((v,i) => {
+      if (!v) return;
+      if (!summary[i]) summary[i] = { tput: 0, lat: 0, cpu: 0, n: 0 };
+      summary[i].tput += v[0];
+      summary[i].lat += v[3];
+      summary[i].cpu += v[1];
+      summary[i].n++;
+    });
+  });
+  const nRows = ROWS.length;
+
+  document.getElementById('cards').innerHTML = LABELS.map((l,i) => {
+    const s = summary[i] || { tput: 0, lat: 0, cpu: 0, n: 1 };
+    return `
+      <div class="card">
+        <div class="l">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
+          ${l} 平均吞吐
+        </div>
+        <div class="v">${fmtMbps(s.tput / Math.max(s.n,1))}</div>
+      </div>`;
+  }).join('') + `
+    <div class="card">
+      <div class="l">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>
+        测试场景数
+      </div>
+      <div class="v">${nRows}</div>
+    </div>`;
+
+  const showScenarios = uniqueScenarios.filter(k => {
+    const parts = k.split('|');
+    const m = parts.slice(0, -2).join('|');
+    const p = parseInt(parts[parts.length-2]);
+    const c = parseInt(parts[parts.length-1]);
+    return (selMethod === 'All' || m === selMethod) &&
+           (selPayload === -1 || p === selPayload) &&
+           (selConns === -1 || c === selConns);
+  });
+
+  const scenLabels = showScenarios.map(k => {
+    const parts = k.split('|');
+    const m = parts.slice(0, -2).join('|');
+    const p = parseInt(parts[parts.length-2]);
+    const c = parseInt(parts[parts.length-1]);
+    return scenarioLabel(m, p, c);
+  });
+
+  function buildMetricChart(title, yName, fieldIdx, fmtFn){
+    const o = baseOpt(title, 55);
+    o.yAxis.name = yName;
+    o.yAxis.nameTextStyle = { color: tc.muted, fontSize: 10, padding: [0, 0, 0, -40] };
+    o.series = showScenarios.map((k,i) => {
+      const parts = k.split('|');
+      const m = parts.slice(0, -2).join('|');
+      const p = parseInt(parts[parts.length-2]);
+      const c = parseInt(parts[parts.length-1]);
+      return mkSeries(scenLabels[i], scenarioData(m,p,c,fieldIdx), scColor(scenarioColors.get(k)));
+    });
+    o.tooltip.formatter = function(ps){
+      return ps.map(p => p.marker + ' <strong>' + p.seriesName + '</strong>: ' + fmtFn(p.value)).join('<br>');
+    };
+    return o;
+  }
+
+  c1.setOption(buildMetricChart('Throughput by Version', 'MB/s', 0, fmtMbps), true);
+  c2.setOption(buildMetricChart('Latency RTT p50', 'µs', 3, fmtUs), true);
+  c3.setOption(buildMetricChart('CPU Usage', '%', 1, v => v ? v.toFixed(0)+'%' : '-'), true);
+  c4.setOption(buildMetricChart('GC Time', 'ms', 2, v => v ? v.toFixed(1)+'ms' : '-'), true);
+  c5.setOption(buildMetricChart('Max Heap', 'MB', 4, v => v ? v.toFixed(0)+'MB' : '-'), true);
+  c6.setOption(buildMetricChart('GC Cycles', 'count', 5, v => v ? v.toFixed(0) : '-'), true);
+  c7.setOption(buildMetricChart('Cum Alloc', 'MB', 6, v => v ? v.toFixed(1)+'MB' : '-'), true);
+
+  // CPU efficiency: CPU% per MB/s (lower is better)
+  {
+    const efficScens = showScenarios.map(k => {
+      const parts = k.split('|');
+      const m = parts.slice(0, -2).join('|');
+      const p = parseInt(parts[parts.length-2]);
+      const c = parseInt(parts[parts.length-1]);
+      return {m, p, c};
+    });
+    const efficLabels = efficScens.map(s => scenarioLabel(s.m, s.p, s.c));
+
+    const o = baseOpt('CPU Efficiency (CPU% per MB/s)');
+    o.yAxis.name = '% / MB/s';
+    o.tooltip = {trigger: 'axis', confine: true,
+      formatter: function(ps) {
+        return ps.map(p => p.marker + p.seriesName + ': ' + (p.value != null ? p.value.toFixed(2) : '-') + ' %/(MB/s)').join('<br>');
+      }
+    };
+    o.series = efficScens.map((s, i) => {
+      const row = ROWS.find(r => r.method === s.m && r.payload === s.p && r.concurrency === s.c);
+      const colorKey = s.m+'|'+s.p+'|'+s.c;
+      if (!row) return mkSeries(efficLabels[i], LABELS.map(() => null), scColor(scenarioColors.get(colorKey)));
+      const data = row.values.map(v => {
+        if (!v || v[0] <= 0) return null;
+        return v[1] / v[0];
+      });
+      return mkSeries(efficLabels[i], data, scColor(scenarioColors.get(colorKey)));
+    });
+    c8.setOption(o, true);
+  }
+
+  buildTables();
+
+  // Inline legend — group by method for quick visual indexing
+  {
+    const groups = new Map();
+    showScenarios.forEach(k => {
+      const parts = k.split('|');
+      const m = parts.slice(0, -2).join('|');
+      if (!groups.has(m)) groups.set(m, []);
+      groups.get(m).push(k);
+    });
+    let html = '';
+    let first = true;
+    groups.forEach((keys, method) => {
+      if (!first) html += '<span class="legend-sep"></span>';
+      first = false;
+      html += '<span class="legend-group-label">'+shortMethod(method)+'</span>';
+      keys.forEach(k => {
+        const parts = k.split('|');
+        const p = parseInt(parts[parts.length-2]);
+        const c = parseInt(parts[parts.length-1]);
+        const label = scenarioLabel('', p, c); // payload × conns only, method already shown
+        const color = scColor(scenarioColors.get(k));
+        html += '<span class="legend-chip"><span class="swatch" style="background:'+color+'"></span>'+label+'</span>';
+      });
+    });
+    document.getElementById('legend-bar').innerHTML = html;
+  }
+}
+
+function shortMethod(m){ return m.replace('2022-blake3-','2022-').replace('aes-256-gcm','aes'); }
+function payloadLabel(p){ return p>=1024 ? (p/1024)+'K' : p+'B'; }
+
+function setMethodByIdx(i, btn){ setMethod(methods[i], btn); }
+
+function setMethod(m, btn){
+  selMethod = m;
+  document.querySelectorAll('#method-filters button').forEach(b => b.classList.remove('on'));
+  btn.classList.add('on');
+  update();
+}
+
+function setPayload(p, btn){
+  selPayload = p;
+  document.querySelectorAll('#payload-filters button').forEach(b => b.classList.remove('on'));
+  btn.classList.add('on');
+  update();
+}
+
+function setConns(c, btn){
+  selConns = c;
+  document.querySelectorAll('#conns-filters button').forEach(b => b.classList.remove('on'));
+  btn.classList.add('on');
+  update();
+}
+
+function buildFilters(){
+  let h = '';
+  h += '<button onclick="setMethodByIdx(0,this)">'+shortMethod(methods[0])+'</button>';
+  for (let i=1; i<methods.length; i++){
+    h += '<button onclick="setMethodByIdx('+i+',this)">'+shortMethod(methods[i])+'</button>';
+  }
+  h += '<button class="on" onclick="setMethod(\'All\',this)">All</button>';
+  document.getElementById('method-filters').innerHTML = h;
+
+  h = '<button onclick="setPayload('+payloads[0]+',this)">'+payloadLabel(payloads[0])+'</button>';
+  for (let i=1; i<payloads.length; i++){
+    h += '<button onclick="setPayload('+payloads[i]+',this)">'+payloadLabel(payloads[i])+'</button>';
+  }
+  h += '<button class="on" onclick="setPayload(-1,this)">All</button>';
+  document.getElementById('payload-filters').innerHTML = h;
+
+  h = '<button onclick="setConns('+concs[0]+',this)">'+concs[0]+'</button>';
+  for (let i=1; i<concs.length; i++){
+    h += '<button onclick="setConns('+concs[i]+',this)">'+concs[i]+'</button>';
+  }
+  h += '<button class="on" onclick="setConns(-1,this)">All</button>';
+  document.getElementById('conns-filters').innerHTML = h;
+}
+
+function buildTable(title, fieldIdx, fmtFn, lowerBetter){
+  let h = '<h2>'+title+'</h2>';
+  h += '<div class="table-wrap"><table>';
+  h += '<tr><th>Method</th><th>Payload</th><th>Conns</th>';
+  LABELS.forEach(l => h += '<th title="'+l+'">'+(l.length>12 ? l.substring(0,12)+'…' : l)+'</th>');
+  h += '</tr>';
+
+  uniqueScenarios.forEach(k => {
+    const parts = k.split('|');
+    const m = parts.slice(0, -2).join('|');
+    const p = parseInt(parts[parts.length-2]);
+    const c = parseInt(parts[parts.length-1]);
+    const row = ROWS.find(r => r.method === m && r.payload === p && r.concurrency === c);
+    const vals = (row ? row.values : []).map(v => v ? v[fieldIdx] : null);
+
+    let bestIdx = -1, bestVal = null, worstIdx = -1, worstVal = null;
+    vals.forEach((v,i) => {
+      if (v == null) return;
+      if (bestVal == null || (lowerBetter ? v < bestVal : v > bestVal)) {
+        bestVal = v; bestIdx = i;
+      }
+      if (worstVal == null || (lowerBetter ? v > worstVal : v < worstVal)) {
+        worstVal = v; worstIdx = i;
+      }
+    });
+    const multi = vals.filter(x => x != null).length > 1;
+
+    h += '<tr><td>'+shortMethod(m)+'</td><td>'+payloadLabel(p)+'</td><td>'+c+'</td>';
+    vals.forEach((v,i) => {
+      if (v == null) { h += '<td>-</td>'; return; }
+      const isBest = multi && i === bestIdx;
+      const isWorst = multi && i === worstIdx;
+      const cls = isBest ? ' class="best"' : (isWorst ? ' class="worst"' : '');
+      const tag = isBest ? '<span class="best">' : (isWorst ? '<span class="worst">' : '');
+      const end = isBest || isWorst ? '</span>' : '';
+      h += '<td'+cls+'>'+tag+fmtFn(v)+end+'</td>';
+    });
+    h += '</tr>';
+  });
+  h += '</table></div>';
+  return h;
+}
+
+function buildEfficiencyTable(){
+  let h = '<h2>CPU Efficiency (CPU% per MB/s)</h2>';
+  h += '<div class="table-wrap"><table>';
+  h += '<tr><th>Method</th><th>Payload</th><th>Conns</th>';
+  LABELS.forEach(l => h += '<th title="'+l+'">'+(l.length>12 ? l.substring(0,12)+'…' : l)+'</th>');
+  h += '</tr>';
+
+  uniqueScenarios.forEach(k => {
+    const parts = k.split('|');
+    const m = parts.slice(0, -2).join('|');
+    const p = parseInt(parts[parts.length-2]);
+    const c = parseInt(parts[parts.length-1]);
+    const row = ROWS.find(r => r.method === m && r.payload === p && r.concurrency === c);
+    // Compute efficiency: cpu / tput (values[i][1] / values[i][0])
+    const vals = row ? row.values.map(v => (v && v[0] > 0) ? v[1] / v[0] : null) : [];
+
+    let bestIdx = -1, worstIdx = -1;
+    let bestVal = null, worstVal = null;
+    vals.forEach((v,i) => {
+      if (v == null) return;
+      if (bestVal == null || v < bestVal) { bestVal = v; bestIdx = i; }
+      if (worstVal == null || v > worstVal) { worstVal = v; worstIdx = i; }
+    });
+    const multi = vals.filter(x => x != null).length > 1;
+
+    h += '<tr><td>'+shortMethod(m)+'</td><td>'+payloadLabel(p)+'</td><td>'+c+'</td>';
+    vals.forEach((v,i) => {
+      if (v == null) { h += '<td>-</td>'; return; }
+      const isBest = multi && i === bestIdx;
+      const isWorst = multi && i === worstIdx;
+      const cls = isBest ? ' class="best"' : (isWorst ? ' class="worst"' : '');
+      const tag = isBest ? '<span class="best">' : (isWorst ? '<span class="worst">' : '');
+      const end = isBest || isWorst ? '</span>' : '';
+      h += '<td'+cls+'>'+tag+v.toFixed(2)+end+'</td>';
+    });
+    h += '</tr>';
+  });
+  h += '</table></div>';
+  return h;
+}
+
+function buildTables(){
+  let h = buildTable('Throughput (MB/s)', 0, v => v.toFixed(1), false);
+  h += buildTable('Latency RTT p50 (µs)', 3, v => v.toFixed(0), true);
+  h += buildTable('CPU (%)', 1, v => v.toFixed(0), true);
+  h += buildTable('GC Time (ms)', 2, v => v.toFixed(1), true);
+  h += buildEfficiencyTable();
+  document.getElementById('tables').innerHTML = h;
+  buildPprofTables();
+}
+
+const pprofTypes = [
+  {key:'cpu_svg', rawKey:'cpu_raw', label:'CPU Profile', icon:'🔥'},
+  {key:'allocs_svg', rawKey:'allocs_raw', label:'Allocation (allocs)', icon:'📦'},
+  {key:'heap_svg', rawKey:'heap_raw', label:'Heap Inuse', icon:'📊'}
+];
+
+function switchPprofTab(vi, ti){
+  for (let i=0; i<3; i++) {
+    const pane = document.getElementById('pprof-tab-'+vi+'-'+i);
+    const btn = document.getElementById('tab-'+vi+'-'+i);
+    if (pane) pane.style.display = (i===ti ? '' : 'none');
+    if (btn) {
+      btn.classList.toggle('active', i===ti);
+    }
+  }
+  }
+
+function togglePprofExpand(vi){
+  const btn = document.getElementById('expand-btn-'+vi);
+  const expanded = btn.textContent === '⤡ 收起';
+  for (let i=0; i<pprofTypes.length; i++) {
+    const pane = document.getElementById('pprof-tab-'+vi+'-'+i);
+    if (pane) {
+      pane.style.maxHeight = expanded ? '600px' : 'none';
+    }
+  }
+  btn.textContent = expanded ? '⤢ 展开' : '⤡ 收起';
+}
+
+function openSVGWindow(vi){
+  // Find active tab, use raw SVG (un-stripped, has zoom/pan scripts)
+  for (let i=0; i<pprofTypes.length; i++) {
+    const btn = document.getElementById('tab-'+vi+'-'+i);
+    if (btn && btn.classList.contains('active')) {
+      const rawKey = pprofTypes[i].rawKey;
+      const svg = (PPROF_SVGS[vi] && PPROF_SVGS[vi][rawKey]) || '';
+      const w = window.open('');
+      if (!w) return;
+      w.document.write('<!DOCTYPE html><html style="height:100%"><body style="margin:0;height:100%;background:#fff">'+svg+'</body></html>');
+      w.document.close();
+      return;
+    }
+  }
+}
+
+function buildPprofTables(){
+  const div = document.getElementById('pprof-tables');
+  if (!PPROF_SVGS || !PPROF_SVGS.length) {
+    div.innerHTML = '<p style="color:var(--text-secondary);font-size:13px;padding:16px 0;">No pprof data. Add "pprof": true to bench config.</p>';
+    return;
+  }
+  let h = '';
+  PPROF_SVGS.forEach((v, vi) => {
+    h += '<div style="display:flex;align-items:center;gap:10px;margin:18px 0 6px;">';
+    h += '<span style="font-size:14px;font-weight:600;color:var(--text)">'+v.label+'</span>';
+    pprofTypes.forEach((t, ti) => {
+      if (v[t.key]) {
+        const activeCls = ti === 0 ? ' active' : '';
+        h += '<button id="tab-'+vi+'-'+ti+'" onclick="switchPprofTab('+vi+','+ti+')" class="pprof-tab-btn'+activeCls+'">'+t.icon+' '+t.label+'</button>';
+      }
+    });
+    h += '<button onclick="openSVGWindow('+vi+')" class="pprof-tab-btn" style="margin-left:4px;">↗ 新窗口</button>';
+    h += '<button id="expand-btn-'+vi+'" onclick="togglePprofExpand('+vi+')" class="pprof-tab-btn" style="margin-left:4px;">⤢ 展开</button>';
+    h += '</div>';
+
+    pprofTypes.forEach((t, ti) => {
+      if (!v[t.key]) return;
+      let svg = v[t.key];
+      let si = svg.indexOf('<svg');
+      if (si > 0) svg = svg.substring(si);
+      const display = ti > 0 ? 'display:none;' : '';
+      h += '<div id="pprof-tab-'+vi+'-'+ti+'" class="pprof-pane" style="'+display+'">'+svg+'</div>';
+    });
+  });
+
+  if (PPROF && PPROF.length) {
+    h += '<h3>Top Allocation Sites</h3>';
+    h += '<div class="table-wrap"><table>';
+    h += '<tr><th>Version</th><th>#1</th><th>#2</th><th>#3</th></tr>';
+    PPROF.forEach(v => {
+      h += '<tr><td>'+v.label+'</td>';
+      for (let i=0; i<3; i++) {
+        if (v.allocs && v.allocs[i]) {
+          const s = v.allocs[i];
+          h += '<td><div style="font-weight:600">'+s.function+'</div><div style="color:var(--text-secondary);font-size:11px;">'+s.flat.toLocaleString()+' ('+s.flat_pct.toFixed(1)+'%)</div></td>';
+        } else {
+          h += '<td>-</td>';
+        }
+      }
+      h += '</tr>';
+    });
+    h += '</table></div>';
+  }
+  div.innerHTML = h;
+}
+
+buildFilters();
+initChartType();
+update();
+</script>
+</body>
+</html>

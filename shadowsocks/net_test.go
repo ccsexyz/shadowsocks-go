@@ -18,7 +18,7 @@ func TestHasCryptoConn(t *testing.T) {
 	}
 
 	// CryptoConn wrapping BaseConn → should detect
-	cc := NewCryptoConnForTest(bc)
+	cc := NewCryptoConnStreamForTest(bc)
 	if !HasCryptoConn(cc) {
 		t.Error("CryptoConn should be detected directly")
 	}

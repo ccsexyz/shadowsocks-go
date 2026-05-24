@@ -17,7 +17,6 @@ type mockConn struct {
 	readPos    int
 	writeBuf   []byte
 	closed     bool
-	readDelay  time.Duration
 	localAddr  net.Addr
 	remoteAddr net.Addr
 	mu         sync.Mutex
@@ -117,7 +116,7 @@ func TestBaseConn_WriteBuffers(t *testing.T) {
 	bc := newBaseConn(mc, nil)
 
 	bufs := [][]byte{[]byte("hello "), []byte("world")}
-	n, err := bc.WriteBuffers(bufs)
+	n, err := bc.Write(bufs[0], bufs[1])
 	if err != nil {
 		t.Fatalf("WriteBuffers failed: %v", err)
 	}
@@ -188,7 +187,7 @@ func TestBaseConn_WriteBuffersWithNetBuffers(t *testing.T) {
 	defer rawConn.Close()
 
 	bc := newBaseConn(rawConn, nil)
-	n, err := bc.WriteBuffers([][]byte{[]byte("part1-"), []byte("part2")})
+	n, err := bc.Write([]byte("part1-"), []byte("part2"))
 	if err != nil {
 		t.Fatalf("WriteBuffers failed: %v", err)
 	}
@@ -217,7 +216,7 @@ func TestRemainConn_Read(t *testing.T) {
 
 	// First read should return from remain
 	buf := make([]byte, 5)
-	n, err := rc.Read(buf)
+	n, err := ReadN(rc, buf, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,7 +225,7 @@ func TestRemainConn_Read(t *testing.T) {
 	}
 
 	// Second read should get remainder of remain
-	n, err = rc.Read(buf)
+	n, err = ReadN(rc, buf, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,7 +234,7 @@ func TestRemainConn_Read(t *testing.T) {
 	}
 
 	// Third read: last byte of remain
-	n, err = rc.Read(buf)
+	n, err = ReadN(rc, buf, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -244,7 +243,7 @@ func TestRemainConn_Read(t *testing.T) {
 	}
 
 	// Fourth read: remain exhausted, reads from underlying conn
-	n, err = rc.Read(buf)
+	n, err = ReadN(rc, buf, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -261,7 +260,7 @@ func TestRemainConn_ReadExactRemain(t *testing.T) {
 	rc := &RemainConn{Conn: newBaseConn(mc, nil), remain: remain}
 
 	buf := make([]byte, 5)
-	n, err := rc.Read(buf)
+	n, err := ReadN(rc, buf, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -299,7 +298,7 @@ func TestRemainConn_Write(t *testing.T) {
 	}
 
 	// Subsequent write should go directly through
-	n, err = rc.Write([]byte("more"))
+	_, err = rc.Write([]byte("more"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -314,7 +313,7 @@ func TestRemainConn_WriteBuffers(t *testing.T) {
 	wremain := []byte("prefix-")
 	rc := &RemainConn{Conn: newBaseConn(mc, nil), wremain: wremain}
 
-	n, err := rc.WriteBuffers([][]byte{[]byte("hello"), []byte("-world")})
+	n, err := rc.Write([]byte("hello"), []byte("-world"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -367,7 +366,7 @@ func TestLimitConn_Read(t *testing.T) {
 	}
 
 	buf := make([]byte, 9)
-	n, err := lc.Read(buf)
+	n, err := ReadN(lc, buf, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -489,11 +488,11 @@ func TestWrapperChain_Unwrap(t *testing.T) {
 
 func TestGetConn_ConvertsRawConn(t *testing.T) {
 	mc := newMockConn()
-	// raw net.Conn should be wrapped in BaseConn by GetConn
-	result := GetConn(mc)
-	bc, ok := result.(*BaseConn)
-	if !ok {
-		t.Fatalf("GetConn should wrap raw net.Conn in BaseConn, got %T", result)
+	// raw net.Conn should be wrapped in BaseConn before GetConn
+	bc := newBaseConn(mc, nil)
+	result := GetConn(bc)
+	if result != bc {
+		t.Fatalf("GetConn should return the same Conn, got %T", result)
 	}
 	if bc.GetCfg() != nil {
 		t.Error("GetConn with nil config should have nil cfg")
@@ -547,7 +546,7 @@ func TestWrapperChain_ReadWriteRoundtrip(t *testing.T) {
 
 	// Read through the chain
 	buf := make([]byte, 32)
-	n, err = rc.Read(buf)
+	n, err = ReadN(rc, buf, nil)
 	if err != nil {
 		t.Fatalf("Read failed: %v", err)
 	}
@@ -567,7 +566,7 @@ func TestRemainConn_BufferOverflow(t *testing.T) {
 
 	// Read with a tiny buffer
 	buf := make([]byte, 4)
-	n, err := rc.Read(buf)
+	n, err := ReadN(rc, buf, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -576,7 +575,7 @@ func TestRemainConn_BufferOverflow(t *testing.T) {
 	}
 
 	// Second tiny read
-	n, err = rc.Read(buf)
+	n, err = ReadN(rc, buf, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -586,7 +585,7 @@ func TestRemainConn_BufferOverflow(t *testing.T) {
 
 	// Third read: consume remaining cached data
 	bigBuf := make([]byte, 128)
-	n, err = rc.Read(bigBuf)
+	n, err = ReadN(rc, bigBuf, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -596,7 +595,7 @@ func TestRemainConn_BufferOverflow(t *testing.T) {
 	}
 
 	// Fourth read: cached data exhausted, reads from underlying conn
-	n, err = rc.Read(bigBuf)
+	n, err = ReadN(rc, bigBuf, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -674,8 +673,8 @@ func testSS2022Exchange(t *testing.T, doReverse bool) {
 	serverCiph.DecryptPacket(hdr2)
 
 	svSalt := make([]byte, 32)
-	sConn := newCryptoConn(newBaseConn(rawServer, cfg), newServerAead2022Codec(method, psk, svSalt, cliSalt, serverCiph))
-	clientAead := newCryptoConn(newBaseConn(rawClient, cfg), newClientAead2022Codec(method, psk, ciph))
+	sConn := newServerCryptoConn2022(newBaseConn(rawServer, cfg), method, psk, svSalt, cliSalt, serverCiph)
+	clientAead := newClientCryptoConn2022(newBaseConn(rawClient, cfg), method, psk, ciph)
 	defer sConn.Close()
 	defer clientAead.Close()
 
@@ -685,7 +684,7 @@ func testSS2022Exchange(t *testing.T, doReverse bool) {
 			t.Fatalf("payload %d write: %v", i, err)
 		}
 		buf := make([]byte, 256)
-		n, err := sConn.Read(buf)
+		n, err := ReadN(sConn, buf, nil)
 		if err != nil {
 			t.Fatalf("payload %d read: %v", i, err)
 		}
@@ -698,7 +697,7 @@ func testSS2022Exchange(t *testing.T, doReverse bool) {
 		// Server to client (exercises handshake)
 		go sConn.Write([]byte("response-from-server"))
 		buf := make([]byte, 256)
-		n, err := clientAead.Read(buf)
+		n, err := ReadN(clientAead, buf, nil)
 		if err != nil {
 			t.Fatalf("reverse read: %v", err)
 		}
@@ -710,6 +709,165 @@ func testSS2022Exchange(t *testing.T, doReverse bool) {
 
 func TestAEAD2022Roundtrip(t *testing.T) {
 	testSS2022Exchange(t, true)
+}
+
+func TestAEAD2022LargePayload(t *testing.T) {
+	testAEAD2022Large(t, 65536)  // exactly 64KB, single frame
+	testAEAD2022Large(t, 131072) // 128KB, requires 2 frames (splitting)
+}
+
+func testAEAD2022Large(t *testing.T, size int) {
+	t.Helper()
+	psk := []byte("0123456789abcdef0123456789abcdef")
+	method := "2022-blake3-aes-256-gcm"
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		rawClient, err := net.Dial("tcp", ln.Addr().String())
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer rawClient.Close()
+
+		// Send client header (salt + encrypted header)
+		salt := make([]byte, 32)
+		for i := range salt {
+			salt[i] = byte(i)
+		}
+		ciph, _ := crypto.NewTcpCipher2022(method, psk, salt)
+		addr := &SockAddr{Hdr: []byte{1, 127, 0, 0, 1, 0, 80}}
+		header := buildAead2022Header(ciph, salt, addr, nil)
+		if _, err := rawClient.Write(header); err != nil {
+			t.Error(err)
+			return
+		}
+
+		// Let the codec handle the server handshake via doServerHandshake.
+		clientAead := newClientCryptoConn2022(newBaseConn(rawClient, nil), method, psk, ciph)
+
+		// Read the handshake greeting ("ok")
+		greeting := make([]byte, 2)
+		if _, err := ReadN(clientAead, greeting, nil); err != nil {
+			t.Errorf("read greeting: %v", err)
+			return
+		}
+
+		// Round-trip: send large payload, read echo
+		payload := make([]byte, size)
+		for i := range payload {
+			payload[i] = byte(i%251 + 1) // non-zero pattern
+		}
+		if _, err := clientAead.Write(payload); err != nil {
+			t.Errorf("write %d bytes: %v", size, err)
+			return
+		}
+		echo := make([]byte, size)
+		for off := 0; off < len(echo); {
+			n, err := ReadN(clientAead, echo[off:], nil)
+			if err != nil {
+				t.Errorf("read echo %d bytes (offset %d): %v", size, off, err)
+				return
+			}
+			if n == 0 {
+				break
+			}
+			off += n
+		}
+		for i := range echo {
+			if echo[i] != payload[i] {
+				t.Errorf("mismatch at byte %d: %d != %d", i, echo[i], payload[i])
+				return
+			}
+		}
+	}()
+
+	// Server side
+	rawServer, err := ln.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rawServer.Close()
+
+	// Read client header and create server codec
+	cliSalt, serverCiph := readClientHeader(t, rawServer, psk, method)
+
+	svSalt := make([]byte, 32)
+	sConn := newServerCryptoConn2022(newBaseConn(rawServer, nil), method, psk, svSalt, cliSalt, serverCiph)
+	sConn.DeferClose()
+	defer sConn.Close()
+
+	// Write a small message first to trigger the server handshake
+	if _, err := sConn.Write([]byte("ok")); err != nil {
+		t.Fatalf("server handshake write: %v", err)
+	}
+
+	// Read large payload and echo via CryptoConn
+	recv := make([]byte, size)
+	for off := 0; off < len(recv); {
+		n, err := ReadN(sConn, recv[off:], nil)
+		if err != nil {
+			t.Fatalf("server read %d bytes (offset %d): %v", size, off, err)
+		}
+		if n == 0 {
+			break
+		}
+		off += n
+	}
+	if _, err := sConn.Write(recv); err != nil {
+		t.Fatalf("server write echo %d bytes: %v", size, err)
+	}
+
+	wg.Wait()
+}
+
+// readClientHeader parses the raw 2022 client header from the connection.
+func readClientHeader(t *testing.T, conn net.Conn, psk []byte, method string) (cliSalt []byte, ciph *crypto.TcpCipher2022) {
+	t.Helper()
+	buf := make([]byte, 4096)
+	if _, err := io.ReadFull(conn, buf[:32]); err != nil {
+		t.Fatalf("read client salt: %v", err)
+	}
+	cliSalt = make([]byte, 32)
+	copy(cliSalt, buf[:32])
+
+	ciph, err := crypto.NewTcpCipher2022(method, psk, cliSalt)
+	if err != nil {
+		t.Fatalf("NewTcpCipher2022: %v", err)
+	}
+
+	hdr1Len := 1 + 8 + 2 + ciph.Overhead()
+	if _, err := io.ReadFull(conn, buf[:hdr1Len]); err != nil {
+		t.Fatalf("read client hdr1: %v", err)
+	}
+	hdr1 := make([]byte, hdr1Len)
+	copy(hdr1, buf[:hdr1Len])
+	var ok bool
+	hdr1, ok = ciph.DecryptPacket(hdr1)
+	if !ok {
+		t.Fatal("decrypt client hdr1 failed")
+	}
+
+	addrLen := int(uint16(hdr1[9])<<8 | uint16(hdr1[10]))
+	hdr2Len := addrLen + ciph.Overhead()
+	if _, err := io.ReadFull(conn, buf[:hdr2Len]); err != nil {
+		t.Fatalf("read client hdr2: %v", err)
+	}
+	hdr2 := make([]byte, hdr2Len)
+	copy(hdr2, buf[:hdr2Len])
+	_, ok = ciph.DecryptPacket(hdr2)
+	if !ok {
+		t.Fatal("decrypt client hdr2 failed")
+	}
+	return
 }
 
 // Test concurrent read/write safety (regression test for aead2022.go buffer fix)
@@ -760,8 +918,8 @@ func TestAEAD2022ConcurrentReadWrite(t *testing.T) {
 	serverCiph.DecryptPacket(hdr2)
 
 	svSalt := make([]byte, 32)
-	serverAead := newCryptoConn(newBaseConn(rawServer, cfg), newServerAead2022Codec(method, psk, svSalt, cliSalt, serverCiph))
-	clientAead := newCryptoConn(newBaseConn(rawClient, cfg), newClientAead2022Codec(method, psk, ciph))
+	serverAead := newServerCryptoConn2022(newBaseConn(rawServer, cfg), method, psk, svSalt, cliSalt, serverCiph)
+	clientAead := newClientCryptoConn2022(newBaseConn(rawClient, cfg), method, psk, ciph)
 	defer clientAead.Close()
 	defer serverAead.Close()
 
@@ -784,7 +942,7 @@ func TestAEAD2022ConcurrentReadWrite(t *testing.T) {
 		defer wg.Done()
 		buf := make([]byte, 256)
 		for i := 0; i < 100; i++ {
-			if _, err := serverAead.Read(buf); err != nil {
+			if _, err := ReadN(serverAead, buf, nil); err != nil {
 				errCh <- err
 				return
 			}
@@ -807,7 +965,7 @@ func TestAEAD2022ConcurrentReadWrite(t *testing.T) {
 		defer wg.Done()
 		buf := make([]byte, 256)
 		for i := 0; i < 100; i++ {
-			if _, err := clientAead.Read(buf); err != nil {
+			if _, err := ReadN(clientAead, buf, nil); err != nil {
 				errCh <- err
 				return
 			}
@@ -825,9 +983,9 @@ func TestAEAD2022ConcurrentReadWrite(t *testing.T) {
 // --- DeferClose tests ---
 
 func TestDeferClose_DelaysClose(t *testing.T) {
-	server, client := net.Pipe()
+	server, _ := net.Pipe()
 
-	cc := newCryptoConn(newBaseConn(client, nil), nil)
+	cc := newCryptoConnStream(newBaseConn(server, nil), nil, nil)
 	cc.DeferClose()
 
 	start := time.Now()
@@ -855,9 +1013,9 @@ func TestDeferClose_DelaysClose(t *testing.T) {
 }
 
 func TestDeferClose_NoDeferClosesImmediately(t *testing.T) {
-	server, client := net.Pipe()
+	server, _ := net.Pipe()
 
-	cc := newCryptoConn(newBaseConn(client, nil), nil)
+	cc := newCryptoConnStream(newBaseConn(server, nil), nil, nil)
 
 	cc.Close()
 
@@ -873,9 +1031,9 @@ func TestDeferClose_NoDeferClosesImmediately(t *testing.T) {
 }
 
 func TestDeferClose_CancelRestoresImmediate(t *testing.T) {
-	server, client := net.Pipe()
+	server, _ := net.Pipe()
 
-	cc := newCryptoConn(newBaseConn(client, nil), nil)
+	cc := newCryptoConnStream(newBaseConn(server, nil), nil, nil)
 	cc.DeferClose()
 	cc.CancelDeferClose()
 
@@ -894,7 +1052,7 @@ func TestDeferClose_CancelRestoresImmediate(t *testing.T) {
 func TestDeferClose_FlagToggle(t *testing.T) {
 	server, _ := net.Pipe()
 
-	cc := newCryptoConn(newBaseConn(server, nil), nil)
+	cc := newCryptoConnStream(newBaseConn(server, nil), nil, nil)
 	cc.DeferClose()
 
 	if !cc.deferClose {
@@ -906,3 +1064,5 @@ func TestDeferClose_FlagToggle(t *testing.T) {
 		t.Error("CancelDeferClose() did not clear deferClose flag")
 	}
 }
+
+

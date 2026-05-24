@@ -230,7 +230,7 @@ func dialSSWithOptions(opt *DialOptions) (conn Conn, err error) {
 	if err != nil {
 		return
 	}
-	C := newCryptoConn(conn, newCipherStreamCodec(enc, dec))
+	C := newCryptoConnStream(conn, enc, dec)
 	conn = C
 	if c.Nonop {
 		conn = &RemainConn{
@@ -260,7 +260,7 @@ func DialSSWithOptions(opt *DialOptions) (conn Conn, err error) {
 	defer func() {
 		if conn != nil {
 			if err == nil && len(opt.Data) > 0 {
-				if _, ok := conn.(*CryptoConn); !ok {
+				if _, ok := conn.(*cryptoConnStream); !ok {
 					_, err = conn.Write(opt.Data)
 				}
 			}
@@ -322,7 +322,7 @@ func DialSSWithOptions(opt *DialOptions) (conn Conn, err error) {
 			proxy = true
 		}
 	} else {
-		if c.AutoProxy == false || c.getAutoProxyCtx() == nil {
+		if !c.AutoProxy || c.getAutoProxyCtx() == nil {
 			proxy = true
 		} else if c.getAutoProxyCtx().checkIfByPass(host) {
 			c.LogD("host", host, "hit bypass list")

@@ -3,24 +3,44 @@
 
 package ss
 
-import "sync"
+import (
+	"encoding/binary"
+	"sync"
+)
 
 type mapFilter struct {
-	m sync.Map
+	mu sync.Mutex
+	m  map[uint64]struct{}
 }
 
-func (m *mapFilter) Close() error {
+func (f *mapFilter) Close() error {
 	return nil
 }
 
-func (m *mapFilter) TestAndAdd(v []byte) bool {
+func (f *mapFilter) TestAndAdd(v []byte) bool {
 	if len(v) == 0 {
 		return false
 	}
-	_, ok := m.m.LoadOrStore(string(v), nil)
+	var key uint64
+	if len(v) < 8 {
+		var padded [8]byte
+		copy(padded[:], v)
+		key = binary.BigEndian.Uint64(padded[:])
+	} else {
+		key = binary.BigEndian.Uint64(v[:8])
+	}
+	f.mu.Lock()
+	_, ok := f.m[key]
+	if !ok {
+		f.m[key] = struct{}{}
+	}
+	f.mu.Unlock()
 	return ok
 }
 
-func newBloomFilter(_ int, _ float64) bytesFilter {
-	return &mapFilter{}
+func newBloomFilter(cap int, _ float64) bytesFilter {
+	if cap <= 0 {
+		cap = 100000
+	}
+	return &mapFilter{m: make(map[uint64]struct{}, cap)}
 }

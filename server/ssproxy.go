@@ -35,7 +35,7 @@ func ssproxyHandler(ac *ss.AcceptedConn) {
 		return
 	}
 	buf := utils.GetBuf(1024)
-	n, err := conn.Read(buf)
+	n, err := ss.ReadN(conn, buf, nil)
 	if err != nil {
 		c.Log(err)
 		utils.PutBuf(buf)

@@ -48,7 +48,7 @@ func RunRtunnelClient(c *ss.Config) {
 
 		backoff = 2 * time.Second
 
-		session, err := smux.Client(rconn, smuxConfig)
+		session, err := smux.Client(ss.AsReadWriteCloser(rconn, nil), smuxConfig)
 		if err != nil {
 			rconn.Close()
 			select {
@@ -76,7 +76,7 @@ func RunRtunnelClient(c *ss.Config) {
 					return
 				}
 				defer localConn.Close()
-				ss.Pipe(s, localConn, c)
+				ss.Pipe(ss.AsNetConn(s), localConn, c)
 			}(stream)
 		}
 		session.Close()
@@ -125,8 +125,10 @@ func rtunnelServerHandler(ac *ss.AcceptedConn) {
 	defer conn.Close()
 
 	backendCfg := topCfg
-	if cfg := conn.GetCfg(); cfg != nil {
-		backendCfg = cfg
+	if cm, ok := conn.(ss.ConnMeta); ok {
+		if cfg := cm.GetCfg(); cfg != nil {
+			backendCfg = cfg
+		}
 	}
 
 	serviceAddr := backendCfg.RtunnelService
@@ -145,7 +147,7 @@ func rtunnelServerHandler(ac *ss.AcceptedConn) {
 
 	smuxConfig := smux.DefaultConfig()
 	smuxConfig.KeepAliveInterval = 10 * time.Second
-	session, err := smux.Server(conn, smuxConfig)
+	session, err := smux.Server(ss.AsReadWriteCloser(conn, nil), smuxConfig)
 	if err != nil {
 		backendCfg.Log("rtunnel server: smux session init failed:", err)
 		return
@@ -186,7 +188,7 @@ func rtunnelServerHandler(ac *ss.AcceptedConn) {
 		go func(s *smux.Stream, client net.Conn) {
 			defer s.Close()
 			defer client.Close()
-			ss.Pipe(client, s, backendCfg)
+			ss.Pipe(ss.AsNetConn(client), ss.AsNetConn(s), backendCfg)
 		}(stream, connA)
 	}
 }
