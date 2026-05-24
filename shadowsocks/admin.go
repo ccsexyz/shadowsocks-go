@@ -118,24 +118,6 @@ func connEventPublish(connID uint64, event string, data []byte) {
 	connEventHub.mu.RUnlock()
 }
 
-func adminConfigIndex(c *Config) int {
-	cfgs := getAdminConfigs()
-	for i, cfg := range cfgs {
-		if cfg == c {
-			return i
-		}
-	}
-	return -1
-}
-
-func ssePublishConfig(event string, c *Config, data any) {
-	i := adminConfigIndex(c)
-	if i < 0 {
-		return
-	}
-	ssePublishIndex(event, i, data)
-}
-
 func ssePublishIndex(event string, idx int, data any) {
 	b, err := json.Marshal(data)
 	if err != nil {

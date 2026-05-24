@@ -11,6 +11,7 @@ import (
 	"github.com/ccsexyz/shadowsocks-go/internal/utils"
 )
 
+
 const (
 	aead2022ClientType = 0
 	aead2022ServerType = 1
@@ -68,7 +69,7 @@ func ss2022AcceptHandler(conn Conn, lis *listener) AcceptResult {
 		lis.c.getStat().incReject("other")
 		return AcceptResult{AcceptReject, nil}
 	}
-	_, err := io.ReadFull(conn, buf[:saltLen])
+	_, err := io.ReadFull(AsReader(conn, nil), buf[:saltLen])
 	if err != nil {
 		lis.c.getStat().incReject("other")
 		return AcceptResult{AcceptReject, nil}
@@ -91,7 +92,7 @@ func ss2022AcceptHandler(conn Conn, lis *listener) AcceptResult {
 	}
 
 	hdr1Len := 1 + 8 + 2 + ciph.Overhead()
-	_, err = io.ReadFull(conn, buf[:hdr1Len])
+	_, err = io.ReadFull(AsReader(conn, nil), buf[:hdr1Len])
 	if err != nil {
 		lis.c.getStat().incReject("other")
 		return AcceptResult{AcceptReject, nil}
@@ -138,7 +139,7 @@ func ss2022AcceptHandler(conn Conn, lis *listener) AcceptResult {
 	if cap(buf) < hdr2Len {
 		buf = make([]byte, hdr2Len)
 	}
-	_, err = io.ReadFull(conn, buf[:hdr2Len])
+	_, err = io.ReadFull(AsReader(conn, nil), buf[:hdr2Len])
 	if err != nil {
 		lis.c.getStat().incReject("other")
 		return AcceptResult{AcceptReject, nil}
@@ -183,9 +184,9 @@ func ss2022AcceptHandler(conn Conn, lis *listener) AcceptResult {
 	data := rest[2+padSize:]
 
 	svSalt := utils.GetRandomBytes(saltLen)
-	ssConn := newCryptoConn(conn, newServerAead2022Codec(lis.c.Method, psk, svSalt, salt, ciph))
+	ssConn := newServerCryptoConn2022(conn, lis.c.Method, psk, svSalt, salt, ciph)
 	ssConn.DeferClose()
-	conn.SetDst(addr)
+	if cm, ok := conn.(ConnMeta); ok { cm.SetDst(addr) }
 
 	if len(data) > 0 {
 		return AcceptResult{AcceptContinue, &RemainConn{Conn: ssConn, remain: data}}
@@ -248,7 +249,7 @@ func ss2022Dial(opt *DialOptions) (conn Conn, err error) {
 	c.Log("ss2022Dial: header sent")
 	opt.Data = nil
 
-	ssConn := newCryptoConn(conn, newClientAead2022Codec(c.Method, psk, ciph))
+	ssConn := newClientCryptoConn2022(conn, c.Method, psk, ciph)
 	return ssConn, nil
 }
 

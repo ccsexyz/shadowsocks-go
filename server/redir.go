@@ -26,15 +26,16 @@ func (conn *redirUDPLocalConn) Read(b []byte) (n int, err error) {
 	return
 }
 
-func getCreateFuncOfUDPRedirServer(c *ss.Config) func(*utils.SubConn) (net.Conn, net.Conn, error) {
-	return func(conn *utils.SubConn) (c1, c2 net.Conn, err error) {
+func getCreateFuncOfUDPRedirServer(c *ss.Config) func(*utils.SubConn) (utils.Conn, utils.Conn, error) {
+	return func(conn *utils.SubConn) (c1, c2 utils.Conn, err error) {
 		buf := make([]byte, 2048)
 		n, err := conn.Read(buf)
 		if err != nil {
-			return nil, nil, err
+			return
 		}
 		if n < 6 {
-			return nil, nil, fmt.Errorf("can't read orig dst")
+			err = fmt.Errorf("can't read orig dst")
+			return
 		}
 		rconn, err := ss.DialUDP(c)
 		if err != nil {

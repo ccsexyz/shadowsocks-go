@@ -9,6 +9,7 @@ import (
 	"time"
 
 	ss "github.com/ccsexyz/shadowsocks-go/shadowsocks"
+	"github.com/ccsexyz/shadowsocks-go/crypto"
 )
 
 // TestSocksProxyWithSSProxy_Integration verifies the full socksproxy+ssproxy flow:
@@ -250,7 +251,7 @@ func TestSocksProxySSProxy_DirectSSClient(t *testing.T) {
 
 	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	buf := make([]byte, 1024)
-	n, err := conn.Read(buf)
+	n, err := ss.ReadN(conn, buf, nil)
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
@@ -363,7 +364,7 @@ func TestSocksProxySSProxy_MultipleSequentialClients(t *testing.T) {
 
 		conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 		buf := make([]byte, 1024)
-		n, err := conn.Read(buf)
+		n, err := ss.ReadN(conn, buf, nil)
 		if err != nil {
 			conn.Close()
 			cliCfg.Close()
@@ -498,5 +499,163 @@ func TestSocksProxy_SOCKS5Only(t *testing.T) {
 	}
 	if string(buf[:n]) != payload {
 		t.Errorf("echo mismatch: got %q, want %q", string(buf[:n]), payload)
+	}
+}
+
+// TestSocksProxy2022MultiPacket verifies that the 2022 crypto path in
+// socksproxy correctly handles the transition from initial header data
+// to subsequent Pipe data. Each pkt packet is a separate write→echo cycle;
+// the first packet is sent as initial data in the 2022 header, and the
+// remaining packets flow through the Pipe. This catches bugs where the
+// defer double-writes opt.Data after the 2022 header already included it.
+
+func socks5Handshake(conn net.Conn, target string) error {
+	// SOCKS5 greeting
+	conn.Write([]byte{0x05, 0x01, 0x00})
+	resp := make([]byte, 2)
+	if _, err := io.ReadFull(conn, resp); err != nil {
+		return err
+	}
+	if resp[0] != 0x05 || resp[1] != 0x00 {
+		return fmt.Errorf("unexpected greeting response: %x", resp)
+	}
+
+	// SOCKS5 connect request
+	host, portStr, err := net.SplitHostPort(target)
+	if err != nil {
+		return err
+	}
+	ip := net.ParseIP(host)
+	if ip == nil || ip.To4() == nil {
+		return fmt.Errorf("only IPv4 targets supported in test")
+	}
+	port := 0
+	fmt.Sscanf(portStr, "%d", &port)
+
+	req := []byte{0x05, 0x01, 0x00, 0x01}
+	req = append(req, ip.To4()...)
+	req = append(req, byte(port>>8), byte(port))
+	conn.Write(req)
+
+	resp2 := make([]byte, 10)
+	if _, err := io.ReadFull(conn, resp2); err != nil {
+		return err
+	}
+	if resp2[0] != 0x05 || resp2[1] != 0x00 {
+		return fmt.Errorf("SOCKS5 connect failed: %x", resp2[:2])
+	}
+	return nil
+}
+
+func TestSocksProxy2022MultiPacket(t *testing.T) {
+	echoLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer echoLn.Close()
+	_, echoPort, _ := net.SplitHostPort(echoLn.Addr().String())
+	echoAddr := "127.0.0.1:" + echoPort
+
+	go func() {
+		for {
+			conn, err := echoLn.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				io.Copy(c, c)
+			}(conn)
+		}
+	}()
+
+	psk := "AAAAAAAAAAAAAAAAAAAAAA=="
+	method := "2022-blake3-aes-128-gcm"
+
+	// 2022 backend server
+	backendCfg := &ss.Config{}
+	backendCfg.Type = "server"
+	backendCfg.Method = method
+	backendCfg.Password = psk
+	ss.CheckConfig(backendCfg)
+	defer backendCfg.Close()
+
+	backendLn, err := ss.Listen("127.0.0.1:0", backendCfg,
+		[]ss.AcceptHandler{ss.LimitHandler, ss.SS2022Handler})
+	if err != nil {
+		t.Fatal("backend listen:", err)
+	}
+	defer backendLn.Close()
+	backendAddr := backendLn.Addr().String()
+
+	go func() {
+		for {
+			conn, err := backendLn.Accept()
+			if err != nil {
+				return
+			}
+			go tcpRemoteHandler(conn.(*ss.AcceptedConn))
+		}
+	}()
+
+	// socksproxy with 2022 backend
+	ssCfg := &ss.Config{}
+	ssCfg.Type = "socksproxy"
+	ssCfg.Method = method
+	ssCfg.Password = psk
+	ssCfg.SSProxy = true
+	ssCfg.Backends = []*ss.Config{{
+		NetworkConfig: ss.NetworkConfig{Remoteaddr: backendAddr},
+		CryptoConfig:  ss.CryptoConfig{Method: method, Password: psk},
+	}}
+	ss.CheckConfig(ssCfg)
+	defer ssCfg.Close()
+
+	socksLn, err := ss.Listen("127.0.0.1:0", ssCfg,
+		[]ss.AcceptHandler{ss.LimitHandler, ss.SocksAcceptor})
+	if err != nil {
+		t.Fatal("socksproxy listen:", err)
+	}
+	defer socksLn.Close()
+	socksAddr := socksLn.Addr().String()
+
+	go func() {
+		for {
+			conn, err := socksLn.Accept()
+			if err != nil {
+				return
+			}
+			go socksProxyHandler(conn.(*ss.AcceptedConn))
+		}
+	}()
+
+	// SOCKS5 client sends 5 pkt packets sequentially and verifies echo.
+	conn, err := net.Dial("tcp", socksAddr)
+	if err != nil {
+		t.Fatal("dial socksproxy:", err)
+	}
+	defer conn.Close()
+
+	if err := socks5Handshake(conn, echoAddr); err != nil {
+		t.Fatal("SOCKS5 handshake:", err)
+	}
+
+	_ = crypto.IsAEAD2022
+	for i := 0; i < 5; i++ {
+		payload := fmt.Sprintf("pkt-%d-%s", i, strings.Repeat("x", 32))
+		pkt := append([]byte{0, 0, 0, byte(len(payload))}, []byte(payload)...)
+		if _, err := conn.Write(pkt); err != nil {
+			t.Fatalf("write pkt %d: %v", i, err)
+		}
+		conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+		echo := make([]byte, len(pkt))
+		if _, err := io.ReadFull(conn, echo); err != nil {
+			t.Fatalf("read echo pkt %d: %v", i, err)
+		}
+		for j := range echo {
+			if echo[j] != pkt[j] {
+				t.Fatalf("pkt %d byte %d: got %d want %d", i, j, echo[j], pkt[j])
+			}
+		}
 	}
 }

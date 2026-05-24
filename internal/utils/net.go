@@ -11,6 +11,8 @@ import (
 	"time"
 )
 
+type ctxKey string
+
 // UDPServerCtx is the control centor of the udp server
 type UDPServerCtx struct {
 	Mtu     int
@@ -20,13 +22,13 @@ type UDPServerCtx struct {
 	connsMap *sync.Map
 	die      chan bool
 	cm       sync.Mutex
-}
+	}
 
 func (ctx *UDPServerCtx) init() {
 	ctx.once.Do(func() {
 		ctx.die = make(chan bool)
 		ctx.connsMap = &sync.Map{}
-	})
+		})
 }
 
 func (ctx *UDPServerCtx) close() {
@@ -73,7 +75,7 @@ func (ctx *UDPServerCtx) runUDPServer(conn net.PacketConn, handle func(*SubConn)
 }
 
 // RunUDPServer runs the udp server
-func (ctx *UDPServerCtx) RunUDPServer(conn net.PacketConn, create func(*SubConn) (net.Conn, net.Conn, error)) {
+func (ctx *UDPServerCtx) RunUDPServer(conn net.PacketConn, create func(*SubConn) (Conn, Conn, error)) {
 	ctx.runUDPServer(conn, func(subconn *SubConn) {
 		defer subconn.Close()
 		c1, c2, err := create(subconn)
@@ -95,28 +97,25 @@ func NewUDPListener(address string) (conn *net.UDPConn, err error) {
 	return
 }
 
-var udpPipeBufPool = sync.Pool{
-	New: func() any { return make([]byte, 2048) },
-}
-
-// PipeForUDPServer is a simple pipe loop for udp server
-func PipeForUDPServer(c1, c2 net.Conn, ctx *UDPServerCtx) {
+// PipeForUDPServer is a simple pipe loop for udp server.
+// Uses ReadBuffer/WriteBuffer for zero-copy when available.
+func PipeForUDPServer(c1, c2 Conn, ctx *UDPServerCtx) {
 	c1die := make(chan bool)
 	c2die := make(chan bool)
-	f := func(dst, src net.Conn, die chan bool) {
+	f := func(dst, src Conn, die chan bool) {
 		defer close(die)
-		var n, nw int
-		var err error
-		buf := udpPipeBufPool.Get().([]byte)
-		defer udpPipeBufPool.Put(buf)
-		for err == nil {
+		buf := make([]byte, 65536)
+		var pool BufPool
+		for {
 			src.SetReadDeadline(time.Now().Add(time.Second * time.Duration(ctx.Expires)))
-			n, err = src.Read(buf)
-			if n > 0 || err == nil {
-				nw, err = dst.Write(buf[:n])
-				if err == nil && nw < n {
-					err = io.ErrShortWrite
-				}
+			segs, err := src.Read(buf, &pool)
+			if err != nil {
+				return
+			}
+			_, err = dst.Write(segs...)
+			pool.Reset()
+			if err != nil {
+				return
 			}
 		}
 	}
@@ -134,7 +133,7 @@ var VirtualDialer func(network, addr string) (net.Conn, error)
 
 var httpProxyTransport = &http.Transport{
 	DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-		itarget := ctx.Value("target")
+		itarget := ctx.Value(ctxKey("target"))
 		if itarget != nil {
 			target, ok := itarget.(string)
 			if ok {
@@ -163,7 +162,7 @@ func HttpProxyTo(w http.ResponseWriter, r *http.Request, target string) {
 		writeErrorPage(w, err)
 		return
 	}
-	r2 = r2.WithContext(context.WithValue(context.Background(), "target", target))
+	r2 = r2.WithContext(context.WithValue(context.Background(), ctxKey("target"), target))
 	for key, values := range r.Header {
 		for _, value := range values {
 			r2.Header.Add(key, value)

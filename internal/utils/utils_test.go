@@ -11,5 +11,4 @@ func BenchmarkAtomicAdd(b *testing.B) {
 		atomic.AddInt32(&n, 1)
 	}
 	b.SetBytes(int64(n))
-	return
 }

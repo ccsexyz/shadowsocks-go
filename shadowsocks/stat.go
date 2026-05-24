@@ -1,15 +1,13 @@
 package ss
 
 import (
-	"net"
 	"sync"
 	"sync/atomic"
-	"time"
+
+	"github.com/ccsexyz/shadowsocks-go/internal/utils"
 )
 
 type statServer struct {
-	startTime        time.Time
-	reloadTime       time.Time
 	configIndex      int
 	connections      int32
 	totalConnections int64
@@ -19,9 +17,6 @@ type statServer struct {
 	readSnap         int64
 	writSnap         int64
 	connSnap         int64
-	readSpeed        int32
-	writSpeed        int32
-	connErrNum       int32
 	tracker          *ConnTracker
 
 	// reject reason counters
@@ -57,7 +52,23 @@ type statConn struct {
 // StatConn is the exported alias for type assertions.
 type StatConn = statConn
 
-func (c *statConn) Unwrap() net.Conn { return c.Conn }
+func (c *statConn) Unwrap() Conn { return c.Conn }
+
+func (c *statConn) GetCfg() *Config {
+	if cm, ok := c.Conn.(ConnMeta); ok { return cm.GetCfg() }
+	return nil
+}
+func (c *statConn) SetDst(dst Addr) {
+	if cm, ok := c.Conn.(ConnMeta); ok { cm.SetDst(dst) }
+}
+func (c *statConn) GetDst() Addr {
+	if cm, ok := c.Conn.(ConnMeta); ok { return cm.GetDst() }
+	return nil
+}
+func (c *statConn) GetHost() string {
+	if cm, ok := c.Conn.(ConnMeta); ok { return cm.GetHost() }
+	return ""
+}
 
 func newStatConn(conn Conn, s *statServer) *statConn {
 	atomic.AddInt64(&s.totalConnections, 1)
@@ -76,16 +87,25 @@ func newStatConn(conn Conn, s *statServer) *statConn {
 		srcAddr = ra.String()
 	}
 	dstAddr := ""
-	if dst := conn.GetDst(); dst != nil {
-		dstAddr = dst.String()
+	if cm, ok := conn.(ConnMeta); ok {
+		if dst := cm.GetDst(); dst != nil {
+			dstAddr = dst.String()
+		}
 	}
-	host := conn.GetHost()
+	host := ""
+	if cm, ok := conn.(ConnMeta); ok {
+		host = cm.GetHost()
+	}
 	if s.tracker == nil {
 		s.tracker = newConnTracker()
 	}
 	rec := s.tracker.Register(srcAddr, dstAddr, host)
 	method := ""
-	if cfg := conn.GetCfg(); cfg != nil {
+	var cfg *Config
+	if cm, ok := conn.(ConnMeta); ok {
+		cfg = cm.GetCfg()
+	}
+	if cfg != nil {
 		method = cfg.Method
 	}
 	if method != "" {
@@ -124,35 +144,33 @@ func (conn *statConn) Close() error {
 	return conn.Conn.Close()
 }
 
-func (conn *statConn) Read(b []byte) (n int, err error) {
-	defer func() {
-		if n > 0 {
-			atomic.AddInt64(&conn.s.totalReadBytes, int64(n))
-			if conn.method != "" {
-				conn.s.addMethodReadBytes(conn.method, int64(n))
-			}
-			if conn.record != nil {
-				conn.record.addRead(n)
-			}
+func (conn *statConn) Read(buf []byte, pool *utils.BufPool) (segs [][]byte, err error) {
+	segs, err = conn.Conn.Read(buf, pool)
+	if err == nil && len(segs) > 0 {
+		n := 0
+		for _, s := range segs { n += len(s) }
+		atomic.AddInt64(&conn.s.totalReadBytes, int64(n))
+		if conn.method != "" {
+			conn.s.addMethodReadBytes(conn.method, int64(n))
 		}
-	}()
-	n, err = conn.Conn.Read(b)
+		if conn.record != nil {
+			conn.record.addRead(n)
+		}
+	}
 	return
 }
 
-func (conn *statConn) Write(b []byte) (n int, err error) {
-	defer func() {
-		if n > 0 {
-			atomic.AddInt64(&conn.s.totalWritBytes, int64(n))
-			if conn.method != "" {
-				conn.s.addMethodWritBytes(conn.method, int64(n))
-			}
-			if conn.record != nil {
-				conn.record.addWrite(n)
-			}
+func (conn *statConn) Write(bufs ...[]byte) (n int, err error) {
+	n, err = conn.Conn.Write(bufs...)
+	if err == nil && n > 0 {
+		atomic.AddInt64(&conn.s.totalWritBytes, int64(n))
+		if conn.method != "" {
+			conn.s.addMethodWritBytes(conn.method, int64(n))
 		}
-	}()
-	n, err = conn.Conn.Write(b)
+		if conn.record != nil {
+			conn.record.addWrite(n)
+		}
+	}
 	return
 }
 
@@ -269,20 +287,4 @@ func (s *statServer) getMethodStats() map[string]*methodStat {
 		}
 	}
 	return out
-}
-
-func (conn *statConn) WriteBuffers(bufs [][]byte) (n int, err error) {
-	defer func() {
-		if n > 0 {
-			atomic.AddInt64(&conn.s.totalWritBytes, int64(n))
-			if conn.method != "" {
-				conn.s.addMethodWritBytes(conn.method, int64(n))
-			}
-			if conn.record != nil {
-				conn.record.addWrite(n)
-			}
-		}
-	}()
-	n, err = conn.Conn.WriteBuffers(bufs)
-	return
 }

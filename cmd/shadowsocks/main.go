@@ -47,6 +47,7 @@ func main() {
 	flag.BoolVar(&c.HttpConfig.SecureOrigin, "secure_origin", false, "enable WebSocket origin validation")
 	flag.StringVar(&c.NetworkConfig.RtunnelService, "rtunnel-service", "", "rtunnel server service address for external access")
 	flag.Int64Var(&domain.IvExpireSecond, "iv_expire_second", 30, "specifies the expiration time for IVs in the checker, in seconds")
+	flag.IntVar(&c.FilterCapacity, "filtcap", 0, "filter capacity for IV dedup (0 = default)")
 	flag.Parse()
 
 	if len(os.Args) == 1 {

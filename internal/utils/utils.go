@@ -6,7 +6,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"unsafe"
 )
 
@@ -33,8 +32,7 @@ func StringToSlice(s string) []byte {
 
 // DomainRoot is a simple trie tree
 type DomainRoot struct {
-	node      *domainNode
-	nodesPool sync.Pool
+	node *domainNode
 }
 
 type domainNode struct {

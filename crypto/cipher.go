@@ -7,12 +7,13 @@ import (
 	"fmt"
 	"io"
 	"sync"
+
 )
 
 var errInvalidKeyLength = errors.New("invalid key length for cipher method")
 var errInvalidMethod = errors.New("invalid cipher method")
 
-const cipherBlockLen = 8192
+const cipherBlockLen = 65536
 const aeadSizeMask = 0x3FFF
 
 type cipherMemBlock struct {
@@ -36,6 +37,10 @@ func putCipherMemBlock(b *cipherMemBlock) {
 type CipherStream interface {
 	io.ReadWriter
 	GetIV() []byte
+	WriteFrame(data []byte) error
+	ReadFrame(buf []byte) ([]byte, error)
+	// WriteEncryptedTo writes any buffered encrypted data directly to w.
+	WriteEncryptedTo(w io.Writer) (int64, error)
 }
 
 type PlainCipherStream struct {
@@ -52,6 +57,33 @@ func (p *PlainCipherStream) Write(b []byte) (n int, err error) {
 
 func (p *PlainCipherStream) GetIV() []byte {
 	return []byte{}
+}
+
+func (p *PlainCipherStream) WriteFrame(data []byte) error {
+	_, err := p.b.Write(data)
+	return err
+}
+
+func (p *PlainCipherStream) ReadFrame(buf []byte) ([]byte, error) {
+	if p.b.Len() == 0 {
+		return nil, io.EOF
+	}
+	n := p.b.Len()
+	var out []byte
+	if cap(buf) >= n {
+		out = buf[:n]
+	} else {
+		out = make([]byte, n)
+	}
+	m, _ := p.b.Read(out)
+	if m == 0 {
+		return nil, io.EOF
+	}
+	return out[:m], nil
+}
+
+func (p *PlainCipherStream) WriteEncryptedTo(w io.Writer) (int64, error) {
+	return writeBufferTo(&p.b, w)
 }
 
 type dataWriter interface {
@@ -133,6 +165,64 @@ func (b *baseCipherStream) writeIV(p []byte) (n int, err error) {
 	}
 	b.iv = append(b.iv, p[:n]...)
 	return
+}
+
+func (b *baseCipherStream) WriteFrame(data []byte) error {
+	n1, err := b.writeIV(data)
+	if err != nil { return err }
+	data = data[n1:]
+	if len(data) == 0 { return nil }
+	numChunks := (len(data) + cipherBlockLen - 1) / cipherBlockLen
+	if b.isEnc {
+		b.b.Grow(len(data) + numChunks*50)
+	} else {
+		b.b.Grow(len(data))
+	}
+	for len(data) > 0 {
+		p2 := data
+		if len(p2) > cipherBlockLen { p2 = p2[:cipherBlockLen] }
+		data = data[len(p2):]
+		if _, err := b.dw.writeData(p2); err != nil { return err }
+	}
+	return nil
+}
+
+func (b *baseCipherStream) ReadFrame(buf []byte) ([]byte, error) {
+	if b.b.Len() == 0 { return nil, io.EOF }
+	n := b.b.Len()
+	var out []byte
+	if cap(buf) >= n {
+		out = buf[:n]
+	} else {
+		out = make([]byte, n)
+	}
+	m, _ := b.b.Read(out)
+	if m == 0 { return nil, io.EOF }
+	return out[:m], nil
+}
+
+func (b *baseCipherStream) WriteEncryptedTo(w io.Writer) (int64, error) {
+	return writeBufferTo(&b.b, w)
+}
+
+// writeBufferTo writes all data from buf to w without an intermediate scratch buffer.
+// It handles partial writes correctly by using Bytes() to peek and Next() to consume.
+func writeBufferTo(buf *bytes.Buffer, w io.Writer) (int64, error) {
+	total := int64(0)
+	for buf.Len() > 0 {
+		data := buf.Bytes()
+		n, err := w.Write(data)
+		if n > 0 {
+			buf.Next(n)
+			total += int64(n)
+		} else if err == nil {
+			return total, io.ErrUnexpectedEOF
+		}
+		if err != nil {
+			return total, err
+		}
+	}
+	return total, nil
 }
 
 func (b *baseCipherStream) GetIV() []byte {

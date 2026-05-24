@@ -179,6 +179,7 @@ func dialSSWithOptions(opt *DialOptions) (conn Conn, err error) {
 		if conn == nil {
 			err = errNoBackends
 		}
+		opt.Data = nil
 		return
 	}
 	if len(opt.RawHeader) == 0 {
@@ -230,7 +231,7 @@ func dialSSWithOptions(opt *DialOptions) (conn Conn, err error) {
 	if err != nil {
 		return
 	}
-	C := newCryptoConn(conn, newCipherStreamCodec(enc, dec))
+	C := newCryptoConnStream(conn, enc, dec)
 	conn = C
 	if c.Nonop {
 		conn = &RemainConn{
@@ -253,6 +254,10 @@ func dialSSWithOptions(opt *DialOptions) (conn Conn, err error) {
 			wremain: append(header[:headerLen], opt.RawHeader...),
 		}
 	}
+	if len(opt.Data) > 0 {
+		conn.Write(opt.Data)
+		opt.Data = nil
+	}
 	return
 }
 
@@ -260,9 +265,7 @@ func DialSSWithOptions(opt *DialOptions) (conn Conn, err error) {
 	defer func() {
 		if conn != nil {
 			if err == nil && len(opt.Data) > 0 {
-				if _, ok := conn.(*CryptoConn); !ok {
-					_, err = conn.Write(opt.Data)
-				}
+				_, err = conn.Write(opt.Data)
 			}
 			if err != nil {
 				conn.Close()
@@ -322,7 +325,7 @@ func DialSSWithOptions(opt *DialOptions) (conn Conn, err error) {
 			proxy = true
 		}
 	} else {
-		if c.AutoProxy == false || c.getAutoProxyCtx() == nil {
+		if !c.AutoProxy || c.getAutoProxyCtx() == nil {
 			proxy = true
 		} else if c.getAutoProxyCtx().checkIfByPass(host) {
 			c.LogD("host", host, "hit bypass list")

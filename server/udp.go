@@ -14,18 +14,31 @@ import (
 )
 
 type udpLocalConn struct {
-	net.Conn
+	ss.Conn
 }
 
-func (conn *udpLocalConn) Read(b []byte) (n int, err error) {
-	if len(b) < 3 {
-		err = fmt.Errorf("the length of buffer can't be less than three")
-		return
+func (conn *udpLocalConn) Read(buf []byte, pool *utils.BufPool) ([][]byte, error) {
+	var b []byte
+	if buf != nil && len(buf) >= 3 {
+		b = buf
+	} else {
+		b = make([]byte, 65536)
 	}
-	// Read SIP022-format response from SS tunnel: [Type][TS][PadLen][Pad][Addr][Port][Payload]
-	n, err = conn.Conn.Read(b[3:])
+	// Read SIP022-format response from SS tunnel
+	segs, err := conn.Conn.Read(b[3:], pool)
 	if err != nil {
-		return
+		return nil, err
+	}
+	n := 0
+	for _, s := range segs {
+		n += len(s)
+	}
+	// Flatten into b if segments are not in b[3:]
+	if len(segs) > 0 && cap(segs[0]) > 0 && &segs[0][0] != &b[3] {
+		off := 3
+		for _, s := range segs {
+			off += copy(b[off:], s)
+		}
 	}
 	// Parse SIP022 and convert to SOCKS5: [RSV(2)][FRAG(1)][ATYP(1)][ADDR][PORT(2)][PAYLOAD]
 	hdr, host, port, payload, perr := crypto.ParseSIP022(b[3 : 3+n])
@@ -35,23 +48,24 @@ func (conn *udpLocalConn) Read(b []byte) (n int, err error) {
 		b[0] = 0
 		b[1] = 0
 		b[2] = 0
-		return n + 3, nil
+		return [][]byte{b[:n+3]}, nil
 	}
-	return crypto.BuildSOCKS5Response(b, host, port, payload), nil
+	return [][]byte{b[:crypto.BuildSOCKS5Response(b, host, port, payload)]}, nil
 }
 
-func (conn *udpLocalConn) Write(b []byte) (n int, err error) {
-	if len(b) < 3 {
-		err = fmt.Errorf("the length of buffer can't be less than three")
-		return
+func (conn *udpLocalConn) Write(bufs ...[]byte) (n int, err error) {
+	for _, b := range bufs {
+		if len(b) < 3 {
+			return n, fmt.Errorf("the length of buffer can't be less than three")
+		}
+		sipPkt := crypto.BuildSIP022Request(b[3:])
+		_, err = conn.Conn.Write(sipPkt)
+		if err != nil {
+			return n, err
+		}
+		n += len(b)
 	}
-	// Convert SOCKS5 to SIP022 format, then write to SS tunnel
-	sipPkt := crypto.BuildSIP022Request(b[3:])
-	_, err = conn.Conn.Write(sipPkt)
-	if err != nil {
-		return
-	}
-	return len(b), nil
+	return
 }
 
 type udpRemoteConn struct {
@@ -59,7 +73,7 @@ type udpRemoteConn struct {
 	header []byte // SIP022 header: [Type][TS][PadLen][Pad][Addr][Port]
 }
 
-func (conn *udpRemoteConn) Read(b []byte) (n int, err error) {
+func (conn *udpRemoteConn) readFromTarget(b []byte) (n int, err error) {
 	hdrlen := len(conn.header)
 	if len(b) < hdrlen {
 		err = fmt.Errorf("the length of buffer can't be less than hdrlen %d", hdrlen)
@@ -77,29 +91,57 @@ func (conn *udpRemoteConn) Read(b []byte) (n int, err error) {
 	return
 }
 
-func (conn *udpRemoteConn) Write(b []byte) (n int, err error) {
-	// Try SIP022 format first, then fall back to legacy ATYP format
-	_, _, _, payload, perr := crypto.ParseSIP022(b)
-	if perr != nil {
+// writePayload extracts SIP022/ATYP payload and writes to the target.
+func (conn *udpRemoteConn) writePayload(b []byte) (int, error) {
+	payload := crypto.Sip022Payload(b)
+	if payload == nil {
+		var err error
 		_, payload, err = ss.ParseAddr(b)
 		if err != nil {
 			log.Printf("[UDP] remote Write: parse failed: %v", err)
-			return
+			return 0, err
 		}
 	}
-	_, err = conn.Conn.Write(payload)
+	_, err := conn.Conn.Write(payload)
 	if err != nil {
-		return
+		return 0, err
 	}
 	return len(b), nil
 }
 
-func getCreateFuncOfUDPRemoteServer(c *ss.Config) func(*utils.SubConn) (net.Conn, net.Conn, error) {
-	return func(subconn *utils.SubConn) (c1, c2 net.Conn, err error) {
-		conn := net.Conn(subconn)
-		buf := utils.GetBuf(2048)
+func (conn *udpRemoteConn) Read(buf []byte, pool *utils.BufPool) ([][]byte, error) {
+	var b []byte
+	if buf != nil {
+		b = buf
+	} else if pool != nil {
+		b = pool.Get(65536)
+	} else {
+		b = make([]byte, 65536)
+	}
+	n, err := conn.readFromTarget(b)
+	if err != nil {
+		return nil, err
+	}
+	return [][]byte{b[:n]}, nil
+}
+
+func (conn *udpRemoteConn) Write(bufs ...[]byte) (n int, err error) {
+	for _, b := range bufs {
+		nn, e := conn.writePayload(b)
+		n += nn
+		if e != nil {
+			return n, e
+		}
+	}
+	return
+}
+
+
+func getCreateFuncOfUDPRemoteServer(c *ss.Config) func(*utils.SubConn) (utils.Conn, utils.Conn, error) {
+	return func(subconn *utils.SubConn) (c1, c2 utils.Conn, err error) {
+		buf := utils.GetBuf(65536)
 		defer utils.PutBuf(buf)
-		n, err := conn.Read(buf)
+		n, err := subconn.Read(buf)
 		if err != nil {
 			log.Printf("udp remote handler: SubConn.Read failed: %v", err)
 			return
@@ -107,7 +149,8 @@ func getCreateFuncOfUDPRemoteServer(c *ss.Config) func(*utils.SubConn) (net.Conn
 		b := buf[:n]
 
 		// Try SIP022 format first, fall back to legacy ATYP format
-		sipHdr, host, port, data, perr := crypto.ParseSIP022(b)
+		var sipHdr []byte
+		_, host, port, data, perr := crypto.ParseSIP022(b)
 		if perr == nil {
 			// SIP022 parsed: build response header with Type=1 (SERVER), ClientSID=0
 			sipHdr = crypto.BuildSIP022Response(makeATYPHeader(host, port), 0)
@@ -126,7 +169,7 @@ func getCreateFuncOfUDPRemoteServer(c *ss.Config) func(*utils.SubConn) (net.Conn
 
 		target := net.JoinHostPort(host, portStr(port))
 
-		var rconn net.Conn
+		var rconn utils.Conn
 		if len(c.Backends) != 0 && c.Type == "ssproxy" {
 			v := c.Backends[rand.Int()%len(c.Backends)]
 			rconn, err = ss.DialUDP(v)
@@ -134,23 +177,24 @@ func getCreateFuncOfUDPRemoteServer(c *ss.Config) func(*utils.SubConn) (net.Conn
 				return
 			}
 			rconn.Write(b)
-			c1 = conn
+			c1 = ss.AsNetConn(subconn)
 			c2 = rconn
 			return
 		}
-		rconn, err = net.Dial("udp", target)
+		rc, err := net.Dial("udp", target)
 		if err != nil {
 			log.Printf("udp remote handler: dial target %s failed: %v", target, err)
 			return
 		}
+		rconn = ss.AsNetConn(rc)
 		_, err = rconn.Write(data)
 		if err != nil {
 			log.Printf("udp remote handler: write to target %s failed: %v", target, err)
 			return
 		}
-		c1 = conn
+		c1 = ss.AsNetConn(subconn)
 		c2 = &udpRemoteConn{
-			Conn:   rconn,
+			Conn:   rc,
 			header: ss.DupBuffer(sipHdr),
 		}
 		return
@@ -196,8 +240,8 @@ func RunMultiUDPRemoteServer(c *ss.Config) {
 	RunUDPServer(lis, c, getCreateFuncOfUDPRemoteServer)
 }
 
-func getCreateFuncOfUDPLocalServer(c *ss.Config) func(*utils.SubConn) (net.Conn, net.Conn, error) {
-	return func(conn *utils.SubConn) (c1, c2 net.Conn, err error) {
+func getCreateFuncOfUDPLocalServer(c *ss.Config) func(*utils.SubConn) (utils.Conn, utils.Conn, error) {
+	return func(conn *utils.SubConn) (c1, c2 utils.Conn, err error) {
 		var subconfig *ss.Config
 		if len(c.Backends) != 0 && c.Type == "socksproxy" {
 			subconfig = c.Backends[rand.Int()%len(c.Backends)]
@@ -209,7 +253,7 @@ func getCreateFuncOfUDPLocalServer(c *ss.Config) func(*utils.SubConn) (net.Conn,
 			c.InitRuntime().Logger.Println(err)
 			return
 		}
-		c1 = conn
+		c1 = ss.AsNetConn(conn)
 		c2 = &udpLocalConn{Conn: rconn}
 		return
 	}

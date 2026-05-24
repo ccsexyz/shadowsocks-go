@@ -15,8 +15,8 @@ var services sync.Map
 
 func bultinServiceHandler(conn Conn, lis *listener) AcceptResult {
 	dst := ""
-	if conn.GetDst() != nil {
-		dst = conn.GetDst().String()
+	if cm := getConnMeta(conn); cm != nil && cm.GetDst() != nil {
+		dst = cm.GetDst().String()
 	}
 	if dst == "" {
 		return AcceptResult{AcceptContinue, conn}
@@ -99,7 +99,7 @@ func sendErrorPage(conn Conn, err error) {
 	if err != nil {
 		return
 	}
-	conn.WriteBuffers([][]byte{buf[:n], utils.StringToSlice(errstr)})
+	conn.Write(buf[:n], utils.StringToSlice(errstr))
 }
 
 func sendNormalPage(conn Conn, s string) {
@@ -121,7 +121,7 @@ func sendNormalPage(conn Conn, s string) {
 	if err != nil {
 		return
 	}
-	conn.WriteBuffers([][]byte{buf[:n], utils.StringToSlice(s)})
+	conn.Write(buf[:n], utils.StringToSlice(s))
 }
 
 func sendStatusPage(conn Conn, s *statServer) {
@@ -148,7 +148,7 @@ func adminHandler(conn Conn, lis *listener) (result AcceptResult) {
 			sendErrorPage(conn, err)
 		}
 	}()
-	r := bufio.NewReader(conn)
+	r := bufio.NewReader(AsReader(conn, nil))
 	_, err = r.ReadString(' ')
 	if err != nil {
 		lis.c.LogD(err)

@@ -21,6 +21,7 @@ function build_release() {
 	for os in ${OSES[@]}; do
 		for arch in ${ARCHS[@]}; do
 			suffix=""
+			if [ "$os" = "windows" ]; then suffix=".exe"; fi
 			cgo_enabled=0
 			env CGO_ENABLED=$cgo_enabled GOOS=$os GOARCH=$arch go build -ldflags "$LDFLAGS" -gcflags "$GCFLAGS" -tags "$TAGS" -o shadowsocks_${os}_${arch}${suffix} github.com/ccsexyz/shadowsocks-go/cmd/shadowsocks
 			tar -zcf shadowsocks-${os}-${arch}-$VERSION.tar.gz shadowsocks_${os}_${arch}${suffix}

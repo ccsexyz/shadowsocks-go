@@ -31,7 +31,7 @@ func switchHandler(ac *ss.AcceptedConn) {
 		return
 	}
 
-	var rconn net.Conn
+	var rconn ss.Conn
 	var err error
 
 	if backend.Target != "" {
@@ -39,9 +39,13 @@ func switchHandler(ac *ss.AcceptedConn) {
 		if !strings.HasPrefix(target, "@") {
 			target = "@" + target
 		}
-		rconn, err = ss.DialVirtual(target)
+		var nc net.Conn
+		nc, err = ss.DialVirtual(target)
 		if err != nil && !strings.HasPrefix(backend.Target, "@") {
-			rconn, err = net.Dial("tcp", backend.Target)
+			nc, err = net.Dial("tcp", backend.Target)
+		}
+		if err == nil {
+			rconn = ss.AsNetConn(nc)
 		}
 	} else if backend.Method != "" && backend.Method != "plain" {
 		target := backend.Forward
@@ -53,7 +57,11 @@ func switchHandler(ac *ss.AcceptedConn) {
 			C:      backend,
 		})
 	} else {
-		rconn, err = net.Dial("tcp", backend.Remoteaddr)
+		var nc net.Conn
+		nc, err = net.Dial("tcp", backend.Remoteaddr)
+		if err == nil {
+			rconn = ss.AsNetConn(nc)
+		}
 	}
 
 	if err != nil {

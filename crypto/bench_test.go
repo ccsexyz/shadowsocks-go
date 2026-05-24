@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/ccsexyz/shadowsocks-go/zerocopy"
 )
 
 // --- helpers ---
@@ -126,7 +125,7 @@ func BenchmarkUnpackerUnpackInPlace(b *testing.B) {
 				payload := makePayload(sz)
 				buf := make([]byte, hr.Front+sz+hr.Rear)
 				copy(buf[hr.Front:], payload)
-				_, packetLen, err := p.PackInPlace(buf, hr.Front, sz)
+				_, _, err = p.PackInPlace(buf, hr.Front, sz)
 				if err != nil {
 					b.Fatal(err)
 				}
@@ -136,7 +135,7 @@ func BenchmarkUnpackerUnpackInPlace(b *testing.B) {
 				for b.Loop() {
 					// Re-encrypt fresh packet for each iteration
 					copy(buf[hr.Front:], payload)
-					_, packetLen, err = p.PackInPlace(buf, hr.Front, sz)
+					_, packetLen, err := p.PackInPlace(buf, hr.Front, sz)
 					if err != nil {
 						b.Fatal(err)
 					}
@@ -165,7 +164,7 @@ func BenchmarkZerocopyRoundtrip(b *testing.B) {
 					b.Fatal(err)
 				}
 				ph, uh := p.Headroom(), u.Headroom()
-				hr := zerocopy.Headroom{Front: max(ph.Front, uh.Front), Rear: max(ph.Rear, uh.Rear)}
+				hr := Headroom{Front: max(ph.Front, uh.Front), Rear: max(ph.Rear, uh.Rear)}
 				payload := makePayload(sz)
 				buf := make([]byte, hr.Front+sz+hr.Rear)
 				b.SetBytes(int64(sz))
