@@ -309,8 +309,6 @@ func (l *Limiter) SetLimit(limit int) {
 	l.limit = limit
 }
 
-func GetConn(conn Conn) Conn { return conn }
-
 func GetInnerConn(conn Conn) (c Conn, err error) {
 	u, ok := conn.(Unwrapper)
 	if !ok {

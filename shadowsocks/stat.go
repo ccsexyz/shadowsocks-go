@@ -107,6 +107,9 @@ func newStatConn(conn Conn, s *statServer) *statConn {
 	}
 	if cfg != nil {
 		method = cfg.Method
+		if cfg.ConnLogPath != "" && s.tracker.logger == nil {
+			s.tracker.SetConnLogger(cfg.ConnLogPath)
+		}
 	}
 	if method != "" {
 		s.addMethodConn(method)

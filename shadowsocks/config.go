@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"hash/crc32"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -29,7 +30,6 @@ type ObfsConfig struct {
 	Obfs       bool     `json:"obfs"`
 	ObfsMethod string   `json:"obfsmethod"`
 	ObfsHost   []string `json:"obfshost"`
-	ObfsAlive  bool     `json:"obfsalive"`
 }
 
 // NetworkConfig groups network addressing and routing configuration.
@@ -78,10 +78,8 @@ type runtime struct {
 	Vlogger       *log.Logger
 	Dlogger       *log.Logger
 	Logger        *log.Logger
-	logfile       *os.File
 	Any           any
 	Die           chan bool
-	pool          *ConnPool
 	closers       []cb
 	tcpFilterLock sync.Mutex
 	tcpFilterOnce sync.Once
@@ -144,9 +142,8 @@ func (rt *runtime) initStat() {
 
 type Config struct {
 	Nickname       string    `json:"nickname"`
-	Verbose        bool      `json:"verbose"`
-	Debug          bool      `json:"debug"`
-	LogFile        string    `json:"logfile"`
+	Verbose        bool      // set by -verbose flag
+	Debug          bool      // set by -debug flag
 	UDPRelay       bool      `json:"udprelay"`
 	FilterCapacity int       `json:"filtcap"`
 	Backend        *Config   `json:"backend"`
@@ -177,8 +174,8 @@ const (
 )
 
 type targetEntry struct {
-	entryType targetEntryType
-	host      string // host match, lowercase
+	entryType  targetEntryType
+	host       string // host match, lowercase
 	headerName string // header match, lowercase key
 	headerVal  string // header match, value
 	method     string // method+URI match ("GET", "POST", etc.)
@@ -300,22 +297,7 @@ func (c *Config) getDLogger() *log.Logger {
 	return c.rt.Dlogger
 }
 
-func (c *Config) getLogFile() *os.File {
-	if c.rt == nil {
-		return nil
-	}
-	return c.rt.logfile
-}
-
 func (c *Config) DieChan() chan bool { return c.initRuntime().Die }
-
-func (c *Config) getPool() *ConnPool {
-	if c.rt == nil {
-		return nil
-	}
-	return c.rt.pool
-}
-func (c *Config) setPool(p *ConnPool) { c.initRuntime().pool = p }
 
 func (c *Config) getClosers() []cb {
 	if c.rt == nil {
@@ -401,6 +383,22 @@ func (c *Config) GetTargetTracker() *TargetTracker {
 	return nil
 }
 
+var globalLogWriter io.Writer = os.Stderr
+
+// SetGlobalLogFile redirects all future log output to the given file.
+// Call before ReadConfig or CheckConfig to take effect.
+func SetGlobalLogFile(path string) error {
+	if path == "" {
+		return nil
+	}
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0644)
+	if err != nil {
+		return err
+	}
+	globalLogWriter = f
+	return nil
+}
+
 func ReadConfig(path string) (configs []*Config, err error) {
 	bytes, err := os.ReadFile(path)
 	if err != nil {
@@ -428,19 +426,6 @@ func (c *Config) Close() error {
 		close(c.DieChan())
 	}
 	c.getTCPFilterLock().Unlock()
-	lf := c.getLogFile()
-	if len(c.LogFile) != 0 && lf != os.Stderr && lf != nil {
-		lf.Close()
-	}
-	for _, bkn := range c.Backends {
-		blf := bkn.getLogFile()
-		if blf != lf && blf != os.Stderr {
-			blf.Close()
-		}
-	}
-	if p := c.getPool(); p != nil {
-		p.Close()
-	}
 	for _, f := range c.getClosers() {
 		f()
 	}
@@ -470,21 +455,6 @@ func (c *Config) tcpFilterTestAndAdd(b []byte) bool {
 	return ok1
 }
 
-func CheckLogFile(c *Config) {
-	rt := c.initRuntime()
-	if len(c.LogFile) == 0 {
-		rt.logfile = os.Stderr
-		return
-	}
-	f, err := os.OpenFile(c.LogFile, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0644)
-	if err != nil {
-		rt.logfile = os.Stderr
-		log.Println(err)
-	} else {
-		rt.logfile = f
-	}
-}
-
 func CheckBasicConfig(c *Config) {
 	c.targetRouter = parseTargetRouter(c.TargetMap)
 	for i := range c.Backends {
@@ -507,12 +477,12 @@ func CheckBasicConfig(c *Config) {
 		}
 	}
 	rt := c.initRuntime()
-	rt.Logger = log.New(rt.logfile, fmt.Sprintf("[info] [%s] ", c.Nickname), log.Lshortfile|log.Ldate|log.Ltime|log.Lmicroseconds)
+	rt.Logger = log.New(globalLogWriter, fmt.Sprintf("[info] [%s] ", c.Nickname), log.Lshortfile|log.Ldate|log.Ltime|log.Lmicroseconds)
 	if c.Verbose {
-		rt.Vlogger = log.New(rt.logfile, fmt.Sprintf("[verbose] [%s] ", c.Nickname), log.Lshortfile|log.Ldate|log.Ltime|log.Lmicroseconds)
+		rt.Vlogger = log.New(globalLogWriter, fmt.Sprintf("[verbose] [%s] ", c.Nickname), log.Lshortfile|log.Ldate|log.Ltime|log.Lmicroseconds)
 	}
 	if c.Debug {
-		rt.Dlogger = log.New(rt.logfile, fmt.Sprintf("[debug] [%s] ", c.Nickname), log.Lshortfile|log.Ldate|log.Ltime|log.Lmicroseconds)
+		rt.Dlogger = log.New(globalLogWriter, fmt.Sprintf("[debug] [%s] ", c.Nickname), log.Lshortfile|log.Ldate|log.Ltime|log.Lmicroseconds)
 	}
 	if c.Limit != 0 {
 		rt.limiters = append(rt.limiters, NewLimiter(c.Limit))
@@ -544,11 +514,7 @@ func CheckConfig(c *Config) {
 		c.Backends = nil
 	}
 	c.initRuntime() // ensure Die is created
-	CheckLogFile(c)
 	CheckBasicConfig(c)
-	if c.getPool() == nil && c.Obfs && c.ObfsAlive && (c.Type == "server" || c.Type == "multiserver" || c.Type == "local") {
-		c.setPool(NewConnPool())
-	}
 	if c.Backend != nil {
 		c.Backends = append(c.Backends, c.Backend)
 	}
@@ -583,9 +549,6 @@ func CheckConfig(c *Config) {
 		}
 		if c.Obfs {
 			v.Obfs = true
-			if c.ObfsAlive {
-				v.ObfsAlive = true
-			}
 			v.ObfsHost = append(v.ObfsHost, c.ObfsHost...)
 		}
 		if c.Debug {
@@ -608,22 +571,6 @@ func CheckConfig(c *Config) {
 		}
 		if parentRt.autoProxyCtx != nil {
 			v.initRuntime().autoProxyCtx = parentRt.autoProxyCtx
-		}
-		if c.LogFile == v.LogFile {
-			v.initRuntime().logfile = parentRt.logfile
-		} else {
-			CheckLogFile(v)
-			vlf := v.getLogFile()
-			if vlf == os.Stderr && parentRt.logfile != os.Stderr {
-				v.initRuntime().logfile = parentRt.logfile
-			}
-		}
-		if v.Obfs && v.ObfsAlive {
-			if v.Type != "server" {
-				v.setPool(NewConnPool())
-			} else {
-				v.setPool(c.getPool())
-			}
 		}
 		CheckBasicConfig(v)
 		if c.LimitPerConn != 0 && v.LimitPerConn == 0 {

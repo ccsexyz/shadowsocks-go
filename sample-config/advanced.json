@@ -7,9 +7,7 @@
         "password": "your-password",
         "adminaddr": "127.0.0.1:8090",
         "udprelay": true,
-        "timeout": 120,
-        "verbose": true,
-        "logfile": "/var/log/ss-local.log"
+        "timeout": 120
     },
     {
         "type": "local",

@@ -31,7 +31,6 @@ type ObfsConn struct {
 	resp     bool
 	req      bool
 	chunkLen int
-	pool     *ConnPool
 	eos      bool // end of stream
 	lock     sync.Mutex
 	rlock    sync.Mutex
@@ -49,10 +48,6 @@ func (c *ObfsConn) Close() (err error) {
 		return
 	}
 	c.destroy = true
-	if c.pool == nil || c.req || c.resp {
-		c.lock.Unlock()
-		return c.RemainConn.Close()
-	}
 	c.lock.Unlock()
 
 	c.wlock.Lock()
@@ -73,22 +68,14 @@ func (c *ObfsConn) Close() (err error) {
 		if err != nil {
 			if c.eos {
 				break
-			} else {
-				c.rlock.Unlock()
-				return c.RemainConn.Close()
 			}
+			c.rlock.Unlock()
+			return c.RemainConn.Close()
 		}
 	}
 	c.rlock.Unlock()
 
-	err = c.pool.Put(&ObfsConn{
-		RemainConn: c.RemainConn,
-		pool:       c.pool,
-	})
-	if err != nil {
-		err = c.RemainConn.Close()
-	}
-	return
+	return c.RemainConn.Close()
 }
 
 func (c *ObfsConn) writeChunked(data []byte) (n int, err error) {
@@ -545,15 +532,10 @@ func DialObfs(target string, c *Config) (conn Conn, err error) {
 		return DialWsConn(target, host, c)
 	}
 
-	if c.getPool() != nil {
-		conn, err = c.getPool().GetNonblock()
-	}
-	if err != nil || c.getPool() == nil {
-		var tconn *BaseConn
-		tconn, err = DialTCP(target, c)
-		if tconn != nil {
-			conn = tconn
-		}
+	var tconn *BaseConn
+	tconn, err = DialTCP(target, c)
+	if tconn != nil {
+		conn = tconn
 	}
 	if err != nil {
 		return
@@ -588,7 +570,6 @@ func DialObfs(target string, c *Config) (conn Conn, err error) {
 	obfsconn, ok := conn.(*ObfsConn)
 	if !ok {
 		obfsconn = NewObfsConn(conn)
-		obfsconn.pool = c.getPool()
 	}
 	obfsconn.wremain = []byte(req)
 	obfsconn.resp = true
@@ -667,7 +648,6 @@ func obfsAcceptHandler(conn Conn, lis *listener) (result AcceptResult) {
 	obfsconn.remain = remain
 	obfsconn.wremain = []byte(resp)
 	obfsconn.req = true
-	obfsconn.pool = lis.c.getPool()
 	result = AcceptResult{AcceptContinue, obfsconn}
 	return
 }

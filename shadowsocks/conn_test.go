@@ -486,30 +486,6 @@ func TestWrapperChain_Unwrap(t *testing.T) {
 	}
 }
 
-func TestGetConn_ConvertsRawConn(t *testing.T) {
-	mc := newMockConn()
-	// raw net.Conn should be wrapped in BaseConn before GetConn
-	bc := newBaseConn(mc, nil)
-	result := GetConn(bc)
-	if result != bc {
-		t.Fatalf("GetConn should return the same Conn, got %T", result)
-	}
-	if bc.GetCfg() != nil {
-		t.Error("GetConn with nil config should have nil cfg")
-	}
-}
-
-func TestGetConn_PreservesExistingConn(t *testing.T) {
-	mc := newMockConn()
-	cfg := &Config{CryptoConfig: CryptoConfig{Method: "aes-256-gcm"}}
-	bc := newBaseConn(mc, cfg)
-
-	result := GetConn(bc)
-	if result != bc {
-		t.Error("GetConn should not re-wrap existing Conn")
-	}
-}
-
 // --- End-to-end wrapper chain test ---
 
 func TestWrapperChain_ReadWriteRoundtrip(t *testing.T) {

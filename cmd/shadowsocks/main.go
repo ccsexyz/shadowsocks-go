@@ -5,13 +5,11 @@ import (
 	"log"
 	"os"
 	"sync"
-	"time"
 
 	"github.com/ccsexyz/shadowsocks-go/domain"
 	"github.com/ccsexyz/shadowsocks-go/internal/utils"
 	"github.com/ccsexyz/shadowsocks-go/server"
 	ss "github.com/ccsexyz/shadowsocks-go/shadowsocks"
-	"github.com/fsnotify/fsnotify"
 )
 
 func main() {
@@ -21,7 +19,9 @@ func main() {
 	var target string
 	var configfile string
 	var pprofaddr string
+	var logfile string
 
+	flag.StringVar(&logfile, "log", "", "global log file path (default: stderr)")
 	flag.StringVar(&c.NetworkConfig.Type, "type", "", "server type(eg: server, local)")
 	flag.StringVar(&c.NetworkConfig.Remoteaddr, "s", "", "remote server address")
 	flag.StringVar(&c.NetworkConfig.Localaddr, "l", "", "local listen address")
@@ -34,7 +34,6 @@ func main() {
 	flag.BoolVar(&c.UDPRelay, "udprelay", false, "relay udp packets")
 	flag.StringVar(&c.Nickname, "name", "", "nickname for logging")
 	flag.BoolVar(&c.ObfsConfig.Obfs, "obfs", false, "enable obfs mode")
-	flag.StringVar(&c.LogFile, "log", "", "set the path of logfile")
 	flag.BoolVar(&c.Verbose, "verbose", false, "show verbose log")
 	flag.BoolVar(&c.Debug, "debug", false, "show debug log")
 	flag.StringVar(&pprofaddr, "pprof", "", "the pprof listen address")
@@ -64,6 +63,10 @@ func main() {
 		utils.RunProfileHTTPServer(pprofaddr)
 	}
 
+	if err := ss.SetGlobalLogFile(logfile); err != nil {
+		log.Println("failed to open log file:", err)
+	}
+
 	if len(configfile) == 0 {
 		if len(target) != 0 {
 			c.Backend = &ss.Config{CryptoConfig: ss.CryptoConfig{Method: c.CryptoConfig.Method, Password: c.CryptoConfig.Password}, NetworkConfig: ss.NetworkConfig{Remoteaddr: c.NetworkConfig.Remoteaddr}}
@@ -77,12 +80,6 @@ func main() {
 		runServer(&c)
 		return
 	}
-
-	watcher, err := fsnotify.NewWatcher()
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer watcher.Close()
 
 	configs, err := ss.ReadConfig(configfile)
 	if err != nil {
@@ -100,61 +97,15 @@ func main() {
 		ss.StartAdminServer(c.AdminAddr)
 	}
 	ss.SetAdminConfigs(configs)
-	for {
-		die := make(chan bool)
-		var wg sync.WaitGroup
-		for _, c := range configs {
-			wg.Add(1)
-			go func(c *ss.Config) {
-				defer wg.Done()
-				runServer(c)
-			}(c)
-		}
-		oldConfigs := configs
-		go func() {
-			<-die
-			for _, c := range oldConfigs {
-				c.Close()
-			}
-		}()
-		go func() {
-			err = watcher.Add(configfile)
-			if err != nil {
-				log.Println(err)
-				return
-			}
-			defer watcher.Remove(configfile)
-			for {
-				select {
-				case event := <-watcher.Events:
-					if event.Op&fsnotify.Write == fsnotify.Write || event.Op&fsnotify.Rename == fsnotify.Rename {
-						newConfigs, err := ss.ReadConfig(configfile)
-						if err != nil {
-							continue
-						}
-						configs = newConfigs
-						ss.SetAdminConfigs(configs)
-						close(die)
-						return
-					} else if event.Op&fsnotify.Remove == fsnotify.Remove {
-						return
-					}
-				case <-watcher.Errors:
-					// close(die)
-					// return
-				case <-die:
-					return
-				}
-			}
-		}()
-		wg.Wait()
-		select {
-		case <-die:
-		default:
-			return
-		}
-		time.Sleep(time.Second)
+	var wg sync.WaitGroup
+	for _, cfg := range configs {
+		wg.Add(1)
+		go func(c *ss.Config) {
+			defer wg.Done()
+			runServer(c)
+		}(cfg)
 	}
+	wg.Wait()
 }
 
 func runServer(c *ss.Config) {

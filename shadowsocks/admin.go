@@ -1170,14 +1170,12 @@ func handleAddBackend(w http.ResponseWriter, r *http.Request) {
 	}
 	b.initRuntime().Die = c.DieChan()
 	b.setStat(&statServer{})
-	b.setPool(c.getPool())
 	b.LogHTTP = c.LogHTTP
 	b.Timeout = c.Timeout
 	b.PreferIPv4 = c.PreferIPv4
 	b.Obfs = c.Obfs
 	b.ObfsHost = append([]string{}, c.ObfsHost...)
 	b.setAutoProxyCtx(c.getAutoProxyCtx())
-	CheckLogFile(b)
 	CheckBasicConfig(b)
 	if c.LimitPerConn != 0 {
 		b.LimitPerConn = c.LimitPerConn

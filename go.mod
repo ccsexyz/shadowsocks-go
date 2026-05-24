@@ -4,7 +4,6 @@ go 1.26.0
 
 require (
 	github.com/bits-and-blooms/bloom/v3 v3.7.1
-	github.com/fsnotify/fsnotify v1.10.0
 	github.com/gaissmai/bart v0.26.1
 	github.com/gorilla/websocket v1.5.3
 	github.com/quic-go/quic-go v0.59.0

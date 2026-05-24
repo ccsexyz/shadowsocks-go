@@ -1,7 +1,6 @@
 package ss
 
 import (
-	"os"
 	"testing"
 )
 
@@ -61,7 +60,6 @@ func TestConfig_AccessorsAfterInit(t *testing.T) {
 
 func TestConfig_LoggerAccessors(t *testing.T) {
 	c := &Config{Nickname: "test"}
-	CheckLogFile(c)
 	CheckBasicConfig(c)
 
 	l := c.getLogger()
@@ -72,7 +70,6 @@ func TestConfig_LoggerAccessors(t *testing.T) {
 
 func TestConfig_LogMethods(t *testing.T) {
 	c := &Config{Nickname: "testlog"}
-	CheckLogFile(c)
 	CheckBasicConfig(c)
 
 	// Should not panic
@@ -96,20 +93,6 @@ func TestConfig_Disabled(t *testing.T) {
 	c.setDisabled(false)
 	if c.isDisabled() {
 		t.Error("should not be disabled after clearing")
-	}
-}
-
-func TestConfig_SetGetPool(t *testing.T) {
-	c := &Config{}
-
-	if p := c.getPool(); p != nil {
-		t.Error("pool should be nil initially")
-	}
-
-	pool := NewConnPool()
-	c.setPool(pool)
-	if c.getPool() != pool {
-		t.Error("getPool should return set pool")
 	}
 }
 
@@ -157,7 +140,6 @@ func TestConfig_BackendInheritance(t *testing.T) {
 		},
 	})
 
-	CheckLogFile(c)
 	c.InitRuntime()
 	CheckConfig(c)
 
@@ -172,7 +154,6 @@ func TestConfig_BackendInheritance(t *testing.T) {
 
 func TestConfig_CheckBasicDefaults(t *testing.T) {
 	c := &Config{}
-	CheckLogFile(c)
 	CheckBasicConfig(c)
 
 	if c.Method != defaultMethod {
@@ -189,14 +170,6 @@ func TestConfig_CheckBasicDefaults(t *testing.T) {
 	}
 	if c.FilterCapacity == 0 {
 		t.Error("expected non-zero filter capacity")
-	}
-}
-
-func TestConfig_LogFileStderr(t *testing.T) {
-	c := &Config{}
-	CheckLogFile(c)
-	if lf := c.getLogFile(); lf != os.Stderr {
-		t.Errorf("expected logfile to be stderr, got %v", lf)
 	}
 }
 

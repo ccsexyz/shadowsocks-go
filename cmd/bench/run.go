@@ -214,12 +214,12 @@ func runOne(ssBin, loadBin, method, password, mode string, payload, conc int, bw
 	if isUDP {
 		udpFlag = "true"
 	}
-	srvCfg := fmt.Sprintf(`{"type":"server","localaddr":"127.0.0.1:%d","method":"%s","password":"%s","udprelay":%s,"obfs":true,"obfsalive":true,"loghttp":true}`, ssPort, method, password, udpFlag)
+	srvCfg := fmt.Sprintf(`{"type":"server","localaddr":"127.0.0.1:%d","method":"%s","password":"%s","udprelay":%s,"obfs":true,"loghttp":true}`, ssPort, method, password, udpFlag)
 	srvFile := fmt.Sprintf("%s/ss-srv-%d.json", td, os.Getpid())
 	os.WriteFile(srvFile, []byte(srvCfg), 0644)
 	defer os.Remove(srvFile)
 
-	cliCfg := fmt.Sprintf(`{"type":"local","localaddr":"127.0.0.1:%d","remoteaddr":"127.0.0.1:%d","method":"%s","password":"%s","udprelay":%s,"obfs":true,"obfsalive":true,"loghttp":true}`, socksPort, ssPort, method, password, udpFlag)
+	cliCfg := fmt.Sprintf(`{"type":"local","localaddr":"127.0.0.1:%d","remoteaddr":"127.0.0.1:%d","method":"%s","password":"%s","udprelay":%s,"obfs":true,"loghttp":true}`, socksPort, ssPort, method, password, udpFlag)
 	cliFile := fmt.Sprintf("%s/ss-cli-%d.json", td, os.Getpid())
 	os.WriteFile(cliFile, []byte(cliCfg), 0644)
 	defer os.Remove(cliFile)
