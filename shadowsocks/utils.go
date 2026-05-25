@@ -386,7 +386,6 @@ func HasCryptoConn(conn Conn) bool {
 	}
 }
 
-
 // CheckConn Check the Conn whether is still alive
 
 type Addr = domain.Addr

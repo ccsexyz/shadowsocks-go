@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"sync"
-
 )
 
 var errInvalidKeyLength = errors.New("invalid key length for cipher method")
@@ -169,9 +168,13 @@ func (b *baseCipherStream) writeIV(p []byte) (n int, err error) {
 
 func (b *baseCipherStream) WriteFrame(data []byte) error {
 	n1, err := b.writeIV(data)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	data = data[n1:]
-	if len(data) == 0 { return nil }
+	if len(data) == 0 {
+		return nil
+	}
 	numChunks := (len(data) + cipherBlockLen - 1) / cipherBlockLen
 	if b.isEnc {
 		b.b.Grow(len(data) + numChunks*50)
@@ -180,15 +183,21 @@ func (b *baseCipherStream) WriteFrame(data []byte) error {
 	}
 	for len(data) > 0 {
 		p2 := data
-		if len(p2) > cipherBlockLen { p2 = p2[:cipherBlockLen] }
+		if len(p2) > cipherBlockLen {
+			p2 = p2[:cipherBlockLen]
+		}
 		data = data[len(p2):]
-		if _, err := b.dw.writeData(p2); err != nil { return err }
+		if _, err := b.dw.writeData(p2); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
 func (b *baseCipherStream) ReadFrame(buf []byte) ([]byte, error) {
-	if b.b.Len() == 0 { return nil, io.EOF }
+	if b.b.Len() == 0 {
+		return nil, io.EOF
+	}
 	n := b.b.Len()
 	var out []byte
 	if cap(buf) >= n {
@@ -197,7 +206,9 @@ func (b *baseCipherStream) ReadFrame(buf []byte) ([]byte, error) {
 		out = make([]byte, n)
 	}
 	m, _ := b.b.Read(out)
-	if m == 0 { return nil, io.EOF }
+	if m == 0 {
+		return nil, io.EOF
+	}
 	return out[:m], nil
 }
 

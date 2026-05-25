@@ -13,10 +13,10 @@ import (
 // Build a minimal SIP022 request: Type=0, TS, PadLen=0, ATYP=1(IPv4)+IP+Port+Payload
 func makeSIP022Request(ip [4]byte, port uint16, payload []byte) []byte {
 	buf := make([]byte, 1+8+2+0+1+4+2+len(payload))
-	buf[0] = 0 // Type=0 request
+	buf[0] = 0                                                      // Type=0 request
 	binary.BigEndian.PutUint64(buf[1:9], uint64(time.Now().Unix())) // current TS
-	binary.BigEndian.PutUint16(buf[9:11], 0)          // PadLen=0
-	buf[11] = 1                                        // ATYP IPv4
+	binary.BigEndian.PutUint16(buf[9:11], 0)                        // PadLen=0
+	buf[11] = 1                                                     // ATYP IPv4
 	copy(buf[12:16], ip[:])
 	binary.BigEndian.PutUint16(buf[16:18], port)
 	copy(buf[18:], payload)
@@ -28,7 +28,7 @@ func makeSIP022RequestDomain(domain string, port uint16, payload []byte) []byte 
 	buf[0] = 0
 	binary.BigEndian.PutUint64(buf[1:9], 1234567890)
 	binary.BigEndian.PutUint16(buf[9:11], 0) // PadLen=0
-	buf[11] = 3                               // ATYP domain
+	buf[11] = 3                              // ATYP domain
 	buf[12] = byte(len(domain))
 	copy(buf[13:], domain)
 	binary.BigEndian.PutUint16(buf[13+len(domain):], port)
@@ -42,7 +42,7 @@ func makeSIP022Response(ip [4]byte, port uint16, payload []byte) []byte {
 	binary.BigEndian.PutUint64(buf[1:9], 1234567890)
 	// ClientSID at 9:17 (leave as zeroes)
 	binary.BigEndian.PutUint16(buf[17:19], 0) // PadLen=0
-	buf[19] = 1                                 // ATYP IPv4
+	buf[19] = 1                               // ATYP IPv4
 	copy(buf[20:24], ip[:])
 	binary.BigEndian.PutUint16(buf[24:26], port)
 	copy(buf[26:], payload)
@@ -186,7 +186,7 @@ func makeSIP022RequestIPv6(ip [16]byte, port uint16, payload []byte) []byte {
 	buf[0] = 0
 	binary.BigEndian.PutUint64(buf[1:9], uint64(time.Now().Unix()))
 	binary.BigEndian.PutUint16(buf[9:11], 0) // PadLen=0
-	buf[11] = 4                                 // ATYP IPv6
+	buf[11] = 4                              // ATYP IPv6
 	copy(buf[12:28], ip[:])
 	binary.BigEndian.PutUint16(buf[28:30], port)
 	copy(buf[30:], payload)

@@ -1026,7 +1026,7 @@ func (m *oversizedMockConn) Read(buf []byte, pool *utils.BufPool) ([][]byte, err
 	return [][]byte{m.data}, nil
 }
 
-func (m *oversizedMockConn) Write(bufs ...[]byte) (int, error) { return 0, nil }
+func (m *oversizedMockConn) Write(bufs ...[]byte) (int, error)  { return 0, nil }
 func (m *oversizedMockConn) Close() error                       { return nil }
 func (m *oversizedMockConn) LocalAddr() net.Addr                { return &net.TCPAddr{} }
 func (m *oversizedMockConn) RemoteAddr() net.Addr               { return &net.TCPAddr{} }
@@ -1328,5 +1328,3 @@ func TestDeferClose_FlagToggle(t *testing.T) {
 		t.Error("CancelDeferClose() did not clear deferClose flag")
 	}
 }
-
-

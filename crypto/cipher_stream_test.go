@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"io"
 	"testing"
-
 )
 
 // helpers
@@ -22,7 +21,7 @@ func drainEncrypted(t *testing.T, enc CipherStream) []byte {
 			for _, seg := range [][]byte{frame} {
 				out = append(out, seg...)
 			}
-			
+
 		}
 		if err == io.EOF {
 			break
@@ -43,7 +42,7 @@ func drainDecrypted(t *testing.T, dec CipherStream) []byte {
 			for _, seg := range [][]byte{frame} {
 				out = append(out, seg...)
 			}
-			
+
 		}
 		if err == io.EOF {
 			break
@@ -57,7 +56,7 @@ func feedDecrypter(t *testing.T, dec CipherStream, data []byte) {
 	pos := 0
 	for pos < len(data) {
 		chunkSize := min(len(data)-pos, 1500)
-		chunk := data[pos:pos+chunkSize]
+		chunk := data[pos : pos+chunkSize]
 		pos += chunkSize
 		if err := dec.WriteFrame(chunk); err != nil {
 			t.Fatal("WriteBuffer:", err)
@@ -181,7 +180,7 @@ func TestReadFrame_FreshEncrypterReturnsIV(t *testing.T) {
 	// After draining IV, should get io.EOF (no more data)
 	frame2, err := enc.ReadFrame(nil)
 	if frame2 != nil {
-		
+
 		t.Error("expected nil after draining IV")
 	}
 	if err != io.EOF {
@@ -206,7 +205,7 @@ func TestDecryptReadFrame_NotEnoughData(t *testing.T) {
 	// Not enough for a full AEAD frame yet — should get io.EOF
 	frame, err := dec.ReadFrame(nil)
 	if frame != nil {
-		
+
 	}
 	if err != io.EOF {
 		t.Errorf("expected io.EOF with only IV, got %v", err)
@@ -227,7 +226,7 @@ func TestDecryptReadFrame_NotEnoughData(t *testing.T) {
 	if string([][]byte{frame}[0]) != "hello" {
 		t.Errorf("got %q", [][]byte{frame}[0])
 	}
-	
+
 }
 
 // ---- PlainCipherStream ----
@@ -270,7 +269,7 @@ func TestWriteBufferReadFrame_MultiFrameDecrypt(t *testing.T) {
 	pos := 0
 	for pos < len(wire) {
 		chunkSize := min(len(wire)-pos, 1234) // uneven chunk
-		dec.WriteFrame(wire[pos:pos+chunkSize])
+		dec.WriteFrame(wire[pos : pos+chunkSize])
 		pos += chunkSize
 	}
 

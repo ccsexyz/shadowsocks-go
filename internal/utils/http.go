@@ -120,10 +120,10 @@ func isValidChar(b byte) bool {
 	return false
 }
 
-func isSpace(b byte) bool  { return b == ' ' }
-func isCR(b byte) bool     { return b == '\r' }
-func isEnter(b byte) bool  { return b == '\n' }
-func isColon(b byte) bool  { return b == ':' }
+func isSpace(b byte) bool { return b == ' ' }
+func isCR(b byte) bool    { return b == '\r' }
+func isEnter(b byte) bool { return b == '\n' }
+func isColon(b byte) bool { return b == ':' }
 
 // Read scan the bytes in buffer, ok == true if read a full http-header,
 // err != nil if error occurs

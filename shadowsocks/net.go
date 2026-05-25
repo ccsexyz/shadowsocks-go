@@ -556,7 +556,6 @@ func ssAcceptHandler(conn Conn, lis *listener) AcceptResult {
 	return AcceptResult{AcceptContinue, conn}
 }
 
-
 func httpProxyAcceptor(conn Conn, lis *listener) AcceptResult {
 	parser := utils.NewHTTPHeaderParser(utils.GetBuf(buffersize))
 	defer utils.PutBuf(parser.GetBuf())

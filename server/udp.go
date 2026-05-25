@@ -136,7 +136,6 @@ func (conn *udpRemoteConn) Write(bufs ...[]byte) (n int, err error) {
 	return
 }
 
-
 func getCreateFuncOfUDPRemoteServer(c *ss.Config) func(*utils.SubConn) (utils.Conn, utils.Conn, error) {
 	return func(subconn *utils.SubConn) (c1, c2 utils.Conn, err error) {
 		buf := utils.GetBuf(65536)

@@ -161,7 +161,9 @@ func (c *UDPConn) ReadFrom(b []byte) (n int, addr net.Addr, err error) {
 func (c *UDPConn) Read(buf []byte, pool *utils.BufPool) (segs [][]byte, err error) {
 	var n int
 	n, _, err = c.readImpl(buf, c.fakeReadFrom)
-	if err != nil { return }
+	if err != nil {
+		return
+	}
 	return [][]byte{buf[:n]}, nil
 }
 
@@ -205,12 +207,13 @@ func (c *UDPConn) WriteTo(b []byte, addr net.Addr) (n int, err error) {
 }
 
 func (c *UDPConn) Write(bufs ...[]byte) (n int, err error) {
-	for _, b := range bufs { n += len(b) }
+	for _, b := range bufs {
+		n += len(b)
+	}
 	b := flatten(bufs)
 	_, err = c.WriteTo(b, nil)
 	return
 }
-
 
 type MultiUDPConn struct {
 	net.PacketConn

@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	ss "github.com/ccsexyz/shadowsocks-go/shadowsocks"
 	"github.com/ccsexyz/shadowsocks-go/crypto"
+	ss "github.com/ccsexyz/shadowsocks-go/shadowsocks"
 )
 
 // TestSocksProxyWithSSProxy_Integration verifies the full socksproxy+ssproxy flow:

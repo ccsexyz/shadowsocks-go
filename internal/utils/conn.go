@@ -51,14 +51,14 @@ func (s *simpleBuf) Release() { PutBuf(s.full) }
 
 // SubConn is the child connection of a net.PacketConn
 type SubConn struct {
-	die     chan bool
-	pdie    chan bool
-	lock    sync.Mutex
-	sigch   chan int
-	rbuf    []byte
-	rbsig   chan struct{}
-	bufs    []simpleBuf
-	bufCap  int
+	die    chan bool
+	pdie   chan bool
+	lock   sync.Mutex
+	sigch  chan int
+	rbuf   []byte
+	rbsig  chan struct{}
+	bufs   []simpleBuf
+	bufCap int
 	net.PacketConn
 	connsMap *sync.Map
 	mtu      int
@@ -81,7 +81,7 @@ func newSubConn(c net.PacketConn, ctx *UDPServerCtx, raddr net.Addr) *SubConn {
 		raddr:      raddr,
 		rtimer:     time.NewTimer(time.Hour),
 		bufCap:     defaultBufCap,
-		}
+	}
 }
 
 func (conn *SubConn) input(b []byte) {

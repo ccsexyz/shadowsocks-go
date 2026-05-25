@@ -11,7 +11,6 @@ import (
 
 	"golang.org/x/crypto/chacha20poly1305"
 	"golang.org/x/crypto/hkdf"
-
 )
 
 type ssAEADNonce [32]byte
@@ -127,19 +126,29 @@ func (a *AEADDecryptCipherStream) ReadFrame(buf []byte) ([]byte, error) {
 			out = make([]byte, n)
 		}
 		m, _ := a.pb.Read(out)
-		if m == 0 { return nil, io.EOF }
+		if m == 0 {
+			return nil, io.EOF
+		}
 		return out[:m], nil
 	}
 
 	if a.crypt.AEAD == nil {
-		if len(a.iv) < a.ivLen { return nil, io.EOF }
-		if a.creater == nil { return nil, fmt.Errorf("creater is nil") }
+		if len(a.iv) < a.ivLen {
+			return nil, io.EOF
+		}
+		if a.creater == nil {
+			return nil, fmt.Errorf("creater is nil")
+		}
 		var err error
 		a.crypt.AEAD, err = a.creater.NewAEAD(a.iv)
-		if err != nil { return nil, err }
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	if a.b.Len() == 0 { return nil, io.EOF }
+	if a.b.Len() == 0 {
+		return nil, io.EOF
+	}
 
 	overhead := a.crypt.Overhead()
 	var tagBuf [22]byte // overhead (max 16) + 2
@@ -155,7 +164,9 @@ func (a *AEADDecryptCipherStream) ReadFrame(buf []byte) ([]byte, error) {
 	for {
 		if a.tagLen == 0 {
 			need := overhead + 2
-			if a.b.Len() < need { break }
+			if a.b.Len() < need {
+				break
+			}
 			io.ReadFull(&a.b, tag[:need])
 			if err := a.crypt.Decrypt(tag[:need], tag[:need]); err != nil {
 				return nil, fmt.Errorf("decrypt tag fail: %w", err)
@@ -164,7 +175,9 @@ func (a *AEADDecryptCipherStream) ReadFrame(buf []byte) ([]byte, error) {
 		}
 
 		expected := a.tagLen + overhead
-		if a.b.Len() < expected { break }
+		if a.b.Len() < expected {
+			break
+		}
 
 		if offset+a.tagLen > cap(dst) {
 			bigger := make([]byte, offset+a.b.Len())
@@ -187,7 +200,9 @@ func (a *AEADDecryptCipherStream) ReadFrame(buf []byte) ([]byte, error) {
 		a.tagLen = 0
 	}
 
-	if offset == 0 { return nil, io.EOF }
+	if offset == 0 {
+		return nil, io.EOF
+	}
 	return dst[:offset], nil
 }
 

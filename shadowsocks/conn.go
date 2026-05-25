@@ -36,7 +36,9 @@ type AcceptedConn struct {
 }
 
 func (ac *AcceptedConn) TargetStr() string {
-	if ac.Target == nil { return "" }
+	if ac.Target == nil {
+		return ""
+	}
 	return ac.Target.String()
 }
 
@@ -78,13 +80,17 @@ func (r *connReader) Read(p []byte) (int, error) {
 		return n, nil
 	}
 	segs, err := r.Conn.Read(p, r.pool)
-	if err != nil { return 0, err }
+	if err != nil {
+		return 0, err
+	}
 	if len(segs) == 1 && len(segs[0]) <= len(p) {
 		return copy(p, segs[0]), nil
 	}
 	// Multi-segment or oversized: flatten into pool or heap, buffer excess.
 	total := 0
-	for _, s := range segs { total += len(s) }
+	for _, s := range segs {
+		total += len(s)
+	}
 	var flat []byte
 	if r.pool != nil {
 		flat = r.pool.Get(total)
@@ -92,9 +98,13 @@ func (r *connReader) Read(p []byte) (int, error) {
 		flat = make([]byte, total)
 	}
 	off := 0
-	for _, s := range segs { off += copy(flat[off:], s) }
+	for _, s := range segs {
+		off += copy(flat[off:], s)
+	}
 	n := copy(p, flat)
-	if n < total { r.buf = flat[n:] }
+	if n < total {
+		r.buf = flat[n:]
+	}
 	return n, nil
 }
 
@@ -145,7 +155,9 @@ func (c *BaseConn) Read(buf []byte, pool *utils.BufPool) ([][]byte, error) {
 		b = make([]byte, 65536)
 	}
 	n, err := c.raw.Read(b)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	return [][]byte{b[:n]}, nil
 }
 
@@ -156,11 +168,11 @@ func (c *BaseConn) Write(bufs ...[]byte) (n int, err error) {
 }
 
 func (c *BaseConn) Close() error                       { return c.raw.Close() }
-func (c *BaseConn) LocalAddr() net.Addr                 { return c.raw.LocalAddr() }
-func (c *BaseConn) RemoteAddr() net.Addr                { return c.raw.RemoteAddr() }
-func (c *BaseConn) SetDeadline(t time.Time) error       { return c.raw.SetDeadline(t) }
-func (c *BaseConn) SetReadDeadline(t time.Time) error   { return c.raw.SetReadDeadline(t) }
-func (c *BaseConn) SetWriteDeadline(t time.Time) error  { return c.raw.SetWriteDeadline(t) }
+func (c *BaseConn) LocalAddr() net.Addr                { return c.raw.LocalAddr() }
+func (c *BaseConn) RemoteAddr() net.Addr               { return c.raw.RemoteAddr() }
+func (c *BaseConn) SetDeadline(t time.Time) error      { return c.raw.SetDeadline(t) }
+func (c *BaseConn) SetReadDeadline(t time.Time) error  { return c.raw.SetReadDeadline(t) }
+func (c *BaseConn) SetWriteDeadline(t time.Time) error { return c.raw.SetWriteDeadline(t) }
 
 func newBaseConn(conn net.Conn, cfg *cfg) *BaseConn {
 	return &BaseConn{raw: conn, cfg: cfg}
@@ -179,8 +191,12 @@ func (c *LimitConn) Read(buf []byte, pool *utils.BufPool) ([][]byte, error) {
 	segs, err := c.Conn.Read(buf, pool)
 	if err == nil {
 		n := 0
-		for _, s := range segs { n += len(s) }
-		for _, v := range c.Rlimiters { v.Update(n) }
+		for _, s := range segs {
+			n += len(s)
+		}
+		for _, v := range c.Rlimiters {
+			v.Update(n)
+		}
 	}
 	return segs, err
 }
@@ -188,31 +204,43 @@ func (c *LimitConn) Read(buf []byte, pool *utils.BufPool) ([][]byte, error) {
 func (c *LimitConn) Write(bufs ...[]byte) (n int, err error) {
 	n, err = c.Conn.Write(bufs...)
 	if err == nil {
-		for _, v := range c.Wlimiters { v.Update(n) }
+		for _, v := range c.Wlimiters {
+			v.Update(n)
+		}
 	}
 	return
 }
 
 func (c *LimitConn) GetCfg() *Config {
-	if cm := getConnMeta(c.Conn); cm != nil { return cm.GetCfg() }
+	if cm := getConnMeta(c.Conn); cm != nil {
+		return cm.GetCfg()
+	}
 	return nil
 }
 func (c *LimitConn) SetDst(dst Addr) {
-	if cm := getConnMeta(c.Conn); cm != nil { cm.SetDst(dst) }
+	if cm := getConnMeta(c.Conn); cm != nil {
+		cm.SetDst(dst)
+	}
 }
 func (c *LimitConn) GetDst() Addr {
-	if cm := getConnMeta(c.Conn); cm != nil { return cm.GetDst() }
+	if cm := getConnMeta(c.Conn); cm != nil {
+		return cm.GetDst()
+	}
 	return nil
 }
 func (c *LimitConn) GetHost() string {
-	if cm := getConnMeta(c.Conn); cm != nil { return cm.GetHost() }
+	if cm := getConnMeta(c.Conn); cm != nil {
+		return cm.GetHost()
+	}
 	return ""
 }
 
 func buildLimiters(c *Config) []*Limiter {
 	limiters := make([]*Limiter, len(c.getLimiters()))
 	copy(limiters, c.getLimiters())
-	if c.LimitPerConn != 0 { limiters = append(limiters, NewLimiter(c.LimitPerConn)) }
+	if c.LimitPerConn != 0 {
+		limiters = append(limiters, NewLimiter(c.LimitPerConn))
+	}
 	return limiters
 }
 
@@ -233,12 +261,20 @@ func NewHttpLogConn(conn Conn, c *Config) *HttpLogConn {
 }
 
 func cleanHTTPParser(p *utils.HTTPHeaderParser) {
-	if p != nil { utils.PutBuf(p.GetBuf()) }
+	if p != nil {
+		utils.PutBuf(p.GetBuf())
+	}
 }
 
 func (conn *HttpLogConn) Close() error {
-	if conn.pr != nil { cleanHTTPParser(conn.pr); conn.pr = nil }
-	if conn.pw != nil { cleanHTTPParser(conn.pw); conn.pw = nil }
+	if conn.pr != nil {
+		cleanHTTPParser(conn.pr)
+		conn.pr = nil
+	}
+	if conn.pw != nil {
+		cleanHTTPParser(conn.pw)
+		conn.pw = nil
+	}
 	return conn.Conn.Close()
 }
 
@@ -252,21 +288,30 @@ func (conn *HttpLogConn) Read(buf []byte, pool *utils.BufPool) ([][]byte, error)
 			n2, _ := conn.pr.Encode(buf)
 			conn.c.Log(conn.LocalAddr(), "->", conn.RemoteAddr(), utils.SliceToString(buf[:n2]))
 		}
-		if e != nil || ok { cleanHTTPParser(conn.pr); conn.pr = nil }
+		if e != nil || ok {
+			cleanHTTPParser(conn.pr)
+			conn.pr = nil
+		}
 	}
 	return segs, err
 }
 
 func (conn *HttpLogConn) Write(bufs ...[]byte) (n int, err error) {
-	for _, b := range bufs { n += len(b) }
+	for _, b := range bufs {
+		n += len(b)
+	}
 	if conn.pw != nil && len(bufs) > 0 {
 		ok, _ := conn.pw.Read(bufs[0])
 		if ok {
-			buf := utils.GetBuf(httpbuffersize); defer utils.PutBuf(buf)
+			buf := utils.GetBuf(httpbuffersize)
+			defer utils.PutBuf(buf)
 			n2, _ := conn.pw.Encode(buf)
 			conn.c.Log(conn.LocalAddr(), "->", conn.RemoteAddr(), utils.SliceToString(buf[:n2]))
 		}
-		if ok { cleanHTTPParser(conn.pw); conn.pw = nil }
+		if ok {
+			cleanHTTPParser(conn.pw)
+			conn.pw = nil
+		}
 	}
 	_, err = conn.Conn.Write(bufs...)
 	return
@@ -277,4 +322,3 @@ func (conn *HttpLogConn) Write(bufs ...[]byte) (n int, err error) {
 func ReadN(c Conn, buf []byte, pool *utils.BufPool) (int, error) {
 	return AsReader(c, pool).Read(buf)
 }
-

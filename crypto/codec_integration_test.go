@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"io"
 	"testing"
-
 )
 
 // TestBidirectionalNewMethods reproduces the full proxy data flow:
@@ -114,7 +113,7 @@ func TestReadFrameDrainAfterEOF(t *testing.T) {
 			for _, seg := range [][]byte{frame} {
 				recovered = append(recovered, seg...)
 			}
-			
+
 		}
 		if err == io.EOF {
 			break
@@ -139,7 +138,7 @@ func drainFrames(t *testing.T, c CipherStream, buf *bytes.Buffer) {
 			for _, seg := range [][]byte{frame} {
 				buf.Write(seg)
 			}
-			
+
 		}
 		if err == io.EOF {
 			break
@@ -162,7 +161,7 @@ func feedAndDecrypt(t *testing.T, dec CipherStream, wire []byte, expect []byte) 
 		// Feed more wire data if available
 		if pos < len(wire) {
 			chunkSize := min(len(wire)-pos, 1500)
-			chunk := wire[pos:pos+chunkSize]
+			chunk := wire[pos : pos+chunkSize]
 			pos += chunkSize
 			if err := dec.WriteFrame([][]byte{chunk}[0]); err != nil {
 				t.Fatal("WriteBuffer:", err)
@@ -174,7 +173,7 @@ func feedAndDecrypt(t *testing.T, dec CipherStream, wire []byte, expect []byte) 
 			for _, seg := range [][]byte{frame} {
 				recovered = append(recovered, seg...)
 			}
-			
+
 			continue
 		}
 		if err != nil && err != io.EOF {

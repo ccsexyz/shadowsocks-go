@@ -44,10 +44,14 @@ func (c *cryptoConnStream) Read(buf []byte, pool *utils.BufPool) ([][]byte, erro
 			}
 			return [][]byte{frame}, nil
 		}
-		if err != nil && err != io.EOF { return nil, err }
+		if err != nil && err != io.EOF {
+			return nil, err
+		}
 		nr, rerr := r.Read(buf)
 		if nr > 0 {
-			if werr := c.dec.WriteFrame(buf[:nr]); werr != nil { return nil, werr }
+			if werr := c.dec.WriteFrame(buf[:nr]); werr != nil {
+				return nil, werr
+			}
 		}
 		if rerr != nil {
 			frame, err := c.dec.ReadFrame(buf)
@@ -61,16 +65,22 @@ func (c *cryptoConnStream) Read(buf []byte, pool *utils.BufPool) ([][]byte, erro
 				}
 				return [][]byte{frame}, nil
 			}
-			if err == nil || err == io.EOF { return nil, rerr }
+			if err == nil || err == io.EOF {
+				return nil, rerr
+			}
 			return nil, err
 		}
 	}
 }
 
 func (c *cryptoConnStream) Write(bufs ...[]byte) (n int, err error) {
-	for _, b := range bufs { n += len(b) }
+	for _, b := range bufs {
+		n += len(b)
+	}
 	plaintext := flatten(bufs)
-	if err := c.enc.WriteFrame(plaintext); err != nil { return n, err }
+	if err := c.enc.WriteFrame(plaintext); err != nil {
+		return n, err
+	}
 	w := AsReadWriteCloser(c.Conn, nil)
 	_, err = c.enc.WriteEncryptedTo(w)
 	return n, err
@@ -205,35 +215,42 @@ func (c *cryptoConn2022) writeFrame(plaintext []byte) error {
 
 	// Server: send handshake response on first write
 	if c.svSalt != nil {
-		if totalLen > 0xFFFF {
-			return fmt.Errorf("handshake payload too large: %d bytes exceeds 2022 protocol limit of %d", totalLen, 0xFFFF)
-		}
 		svCiph, err := crypto.NewTcpCipher2022(c.method, c.psk, c.svSalt)
 		if err != nil {
 			return err
+		}
+		// If payload fits in a single handshake frame, bundle it.
+		// Otherwise send empty handshake then fall through to chunked write.
+		hdrPayloadLen := totalLen
+		if hdrPayloadLen > 0xFFFF {
+			hdrPayloadLen = 0
 		}
 		svHdr := make([]byte, 1+8+len(c.cliSalt)+2)
 		svHdr[0] = aead2022ServerType
 		binary.BigEndian.PutUint64(svHdr[1:9], uint64(time.Now().Unix()))
 		copy(svHdr[9:9+len(c.cliSalt)], c.cliSalt)
-		binary.BigEndian.PutUint16(svHdr[9+len(c.cliSalt):11+len(c.cliSalt)], uint16(totalLen))
+		binary.BigEndian.PutUint16(svHdr[9+len(c.cliSalt):11+len(c.cliSalt)], uint16(hdrPayloadLen))
 		svHdr = svCiph.EncryptPacket(svHdr)
 
-		data := make([]byte, totalLen+svCiph.Overhead())
-		copy(data, plaintext)
-		data = svCiph.EncryptPacket(data[:totalLen])
-
-		resp := make([]byte, len(c.svSalt)+len(svHdr)+len(data))
+		resp := make([]byte, len(c.svSalt)+len(svHdr))
 		copy(resp, c.svSalt)
 		copy(resp[len(c.svSalt):], svHdr)
-		copy(resp[len(c.svSalt)+len(svHdr):], data)
+		if hdrPayloadLen > 0 {
+			data := make([]byte, totalLen+svCiph.Overhead())
+			copy(data, plaintext)
+			data = svCiph.EncryptPacket(data[:totalLen])
+			resp = append(resp, data...)
+		}
 		if _, err := w.Write(resp); err != nil {
 			return err
 		}
 		c.writeCipher = svCiph
 		c.svSalt = nil
 		c.cliSalt = nil
-		return nil
+		if hdrPayloadLen > 0 {
+			return nil
+		}
+		// fall through to chunked write below
 	}
 
 	// Chunked encryption with length tags
@@ -324,18 +341,26 @@ func (c *cryptoConn2022) CancelDeferClose() { c.deferClose = false }
 func (c *cryptoConn2022) Unwrap() Conn      { return c.Conn }
 
 func (c *cryptoConn2022) GetCfg() *Config {
-	if cm := getConnMeta(c.Conn); cm != nil { return cm.GetCfg() }
+	if cm := getConnMeta(c.Conn); cm != nil {
+		return cm.GetCfg()
+	}
 	return nil
 }
 func (c *cryptoConn2022) SetDst(dst Addr) {
-	if cm := getConnMeta(c.Conn); cm != nil { cm.SetDst(dst) }
+	if cm := getConnMeta(c.Conn); cm != nil {
+		cm.SetDst(dst)
+	}
 }
 func (c *cryptoConn2022) GetDst() Addr {
-	if cm := getConnMeta(c.Conn); cm != nil { return cm.GetDst() }
+	if cm := getConnMeta(c.Conn); cm != nil {
+		return cm.GetDst()
+	}
 	return nil
 }
 func (c *cryptoConn2022) GetHost() string {
-	if cm := getConnMeta(c.Conn); cm != nil { return cm.GetHost() }
+	if cm := getConnMeta(c.Conn); cm != nil {
+		return cm.GetHost()
+	}
 	return ""
 }
 
@@ -355,18 +380,26 @@ func (c *cryptoConnStream) CancelDeferClose() { c.deferClose = false }
 func (c *cryptoConnStream) Unwrap() Conn      { return c.Conn }
 
 func (c *cryptoConnStream) GetCfg() *Config {
-	if cm := getConnMeta(c.Conn); cm != nil { return cm.GetCfg() }
+	if cm := getConnMeta(c.Conn); cm != nil {
+		return cm.GetCfg()
+	}
 	return nil
 }
 func (c *cryptoConnStream) SetDst(dst Addr) {
-	if cm := getConnMeta(c.Conn); cm != nil { cm.SetDst(dst) }
+	if cm := getConnMeta(c.Conn); cm != nil {
+		cm.SetDst(dst)
+	}
 }
 func (c *cryptoConnStream) GetDst() Addr {
-	if cm := getConnMeta(c.Conn); cm != nil { return cm.GetDst() }
+	if cm := getConnMeta(c.Conn); cm != nil {
+		return cm.GetDst()
+	}
 	return nil
 }
 func (c *cryptoConnStream) GetHost() string {
-	if cm := getConnMeta(c.Conn); cm != nil { return cm.GetHost() }
+	if cm := getConnMeta(c.Conn); cm != nil {
+		return cm.GetHost()
+	}
 	return ""
 }
 
@@ -375,7 +408,9 @@ func flatten(bufs [][]byte) []byte {
 		return bufs[0]
 	}
 	n := 0
-	for _, b := range bufs { n += len(b) }
+	for _, b := range bufs {
+		n += len(b)
+	}
 	out := make([]byte, n)
 	off := 0
 	for _, b := range bufs {

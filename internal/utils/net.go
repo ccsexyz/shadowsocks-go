@@ -22,13 +22,13 @@ type UDPServerCtx struct {
 	connsMap *sync.Map
 	die      chan bool
 	cm       sync.Mutex
-	}
+}
 
 func (ctx *UDPServerCtx) init() {
 	ctx.once.Do(func() {
 		ctx.die = make(chan bool)
 		ctx.connsMap = &sync.Map{}
-		})
+	})
 }
 
 func (ctx *UDPServerCtx) close() {

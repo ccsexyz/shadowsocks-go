@@ -55,18 +55,26 @@ type StatConn = statConn
 func (c *statConn) Unwrap() Conn { return c.Conn }
 
 func (c *statConn) GetCfg() *Config {
-	if cm, ok := c.Conn.(ConnMeta); ok { return cm.GetCfg() }
+	if cm, ok := c.Conn.(ConnMeta); ok {
+		return cm.GetCfg()
+	}
 	return nil
 }
 func (c *statConn) SetDst(dst Addr) {
-	if cm, ok := c.Conn.(ConnMeta); ok { cm.SetDst(dst) }
+	if cm, ok := c.Conn.(ConnMeta); ok {
+		cm.SetDst(dst)
+	}
 }
 func (c *statConn) GetDst() Addr {
-	if cm, ok := c.Conn.(ConnMeta); ok { return cm.GetDst() }
+	if cm, ok := c.Conn.(ConnMeta); ok {
+		return cm.GetDst()
+	}
 	return nil
 }
 func (c *statConn) GetHost() string {
-	if cm, ok := c.Conn.(ConnMeta); ok { return cm.GetHost() }
+	if cm, ok := c.Conn.(ConnMeta); ok {
+		return cm.GetHost()
+	}
 	return ""
 }
 
@@ -151,7 +159,9 @@ func (conn *statConn) Read(buf []byte, pool *utils.BufPool) (segs [][]byte, err 
 	segs, err = conn.Conn.Read(buf, pool)
 	if err == nil && len(segs) > 0 {
 		n := 0
-		for _, s := range segs { n += len(s) }
+		for _, s := range segs {
+			n += len(s)
+		}
 		atomic.AddInt64(&conn.s.totalReadBytes, int64(n))
 		if conn.method != "" {
 			conn.s.addMethodReadBytes(conn.method, int64(n))

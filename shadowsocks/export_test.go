@@ -2,7 +2,6 @@ package ss
 
 import (
 	"net"
-
 )
 
 // --- test helpers to construct conn wrapper chains ---

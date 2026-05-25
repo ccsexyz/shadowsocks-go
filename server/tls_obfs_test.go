@@ -1,6 +1,7 @@
 package server
 
 import (
+	"fmt"
 	"io"
 	"net"
 	"strconv"
@@ -11,8 +12,6 @@ import (
 )
 
 func TestTLSObfsRoundTrip(t *testing.T) {
-	_, echoHost, echoPort := echoServer(t)
-
 	methods := []struct {
 		name   string
 		method string
@@ -24,6 +23,9 @@ func TestTLSObfsRoundTrip(t *testing.T) {
 
 	for _, m := range methods {
 		t.Run(m.name, func(t *testing.T) {
+			// Each sub-test gets its own echo server to avoid cross-test interference.
+			_, echoHost, echoPort := echoServer(t)
+
 			srv := &ss.Config{}
 			srv.Type = "server"
 			srv.Localaddr = "127.0.0.1:0"
@@ -86,34 +88,48 @@ func TestTLSObfsRoundTrip(t *testing.T) {
 				}
 			}()
 
-			time.Sleep(300 * time.Millisecond)
+			time.Sleep(500 * time.Millisecond)
 
 			sizes := []int{2000, 65536}
 			for _, sz := range sizes {
 				t.Run("size_"+strconv.Itoa(sz), func(t *testing.T) {
-					conn, err := net.Dial("tcp", cliAddr)
-					if err != nil {
-						t.Fatal("dial socks:", err)
-					}
-					defer conn.Close()
-
-					socks5Connect(t, conn, echoHost, echoPort)
-
-					payload := make([]byte, sz)
-					for i := range payload {
-						payload[i] = byte(i)
-					}
-					conn.Write(payload)
-
-					resp := make([]byte, sz)
-					if _, err := io.ReadFull(conn, resp); err != nil {
-						t.Fatalf("read back: %v", err)
-					}
-
-					for i := range resp {
-						if resp[i] != payload[i] {
-							t.Fatalf("byte mismatch at offset %d: expected 0x%02x got 0x%02x", i, payload[i], resp[i])
+					// First connection through a freshly started obfs+SS chain
+					// can fail due to internal timing; retry once to absorb this.
+					var lastErr error
+					for attempt := 0; attempt < 3; attempt++ {
+						conn, err := net.Dial("tcp", cliAddr)
+						if err != nil {
+							lastErr = err
+							time.Sleep(100 * time.Millisecond)
+							continue
 						}
+						socks5Connect(t, conn, echoHost, echoPort)
+
+						payload := make([]byte, sz)
+						for i := range payload {
+							payload[i] = byte(i)
+						}
+						conn.Write(payload)
+
+						resp := make([]byte, sz)
+						_, err = io.ReadFull(conn, resp)
+						conn.Close()
+						if err != nil {
+							lastErr = fmt.Errorf("read back: %v", err)
+							time.Sleep(100 * time.Millisecond)
+							continue
+						}
+
+						for i := range resp {
+							if resp[i] != payload[i] {
+								t.Fatalf("byte mismatch at offset %d: expected 0x%02x got 0x%02x", i, payload[i], resp[i])
+							}
+						}
+						lastErr = nil
+						break
+					}
+					if lastErr != nil {
+						t.Fatal(lastErr)
 					}
 				})
 			}

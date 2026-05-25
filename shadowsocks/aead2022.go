@@ -11,7 +11,6 @@ import (
 	"github.com/ccsexyz/shadowsocks-go/internal/utils"
 )
 
-
 const (
 	aead2022ClientType = 0
 	aead2022ServerType = 1
@@ -186,7 +185,9 @@ func ss2022AcceptHandler(conn Conn, lis *listener) AcceptResult {
 	svSalt := utils.GetRandomBytes(saltLen)
 	ssConn := newServerCryptoConn2022(conn, lis.c.Method, psk, svSalt, salt, ciph)
 	ssConn.DeferClose()
-	if cm, ok := conn.(ConnMeta); ok { cm.SetDst(addr) }
+	if cm, ok := conn.(ConnMeta); ok {
+		cm.SetDst(addr)
+	}
 
 	if len(data) > 0 {
 		return AcceptResult{AcceptContinue, &RemainConn{Conn: ssConn, remain: data}}
