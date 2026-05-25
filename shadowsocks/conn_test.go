@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/ccsexyz/shadowsocks-go/crypto"
+	"github.com/ccsexyz/shadowsocks-go/internal/utils"
 )
 
 // --- mock connection for testing ---
@@ -1004,6 +1005,293 @@ func TestDeferClose_NoDeferClosesImmediately(t *testing.T) {
 	} else if nerr, ok := err.(net.Error); ok && nerr.Timeout() {
 		t.Error("read timed out — conn should be closed, not just idle")
 	}
+}
+
+// oversizedMockConn is a minimal Conn that returns data larger than the read
+// buffer, triggering the connReader's oversized-data buffering path.
+type oversizedMockConn struct {
+	data      []byte
+	readCalls int
+	mu        sync.Mutex
+}
+
+func (m *oversizedMockConn) Read(buf []byte, pool *utils.BufPool) ([][]byte, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.readCalls++
+	if m.readCalls > 1 {
+		return nil, io.EOF
+	}
+	// Return data larger than buf — connReader must buffer the excess.
+	return [][]byte{m.data}, nil
+}
+
+func (m *oversizedMockConn) Write(bufs ...[]byte) (int, error) { return 0, nil }
+func (m *oversizedMockConn) Close() error                       { return nil }
+func (m *oversizedMockConn) LocalAddr() net.Addr                { return &net.TCPAddr{} }
+func (m *oversizedMockConn) RemoteAddr() net.Addr               { return &net.TCPAddr{} }
+func (m *oversizedMockConn) SetDeadline(t time.Time) error      { return nil }
+func (m *oversizedMockConn) SetReadDeadline(t time.Time) error  { return nil }
+func (m *oversizedMockConn) SetWriteDeadline(t time.Time) error { return nil }
+
+// TestReadN_ConnReaderDataLoss demonstrates that ReadN silently drops data
+// when the underlying Conn returns more data than fits in the read buffer.
+//
+// Root cause: each ReadN call creates a new connReader via AsReader. If a
+// previous connReader buffered excess data (from oversized or multi-segment
+// results), that buffer is discarded on the next call — the new connReader
+// reads fresh from the Conn, permanently skipping the buffered bytes.
+func TestReadN_ConnReaderDataLoss(t *testing.T) {
+	fullData := make([]byte, 100)
+	for i := range fullData {
+		fullData[i] = byte(i)
+	}
+
+	mc := &oversizedMockConn{data: fullData}
+
+	// Use a small buffer so connReader must buffer excess.
+	smallBuf := make([]byte, 10)
+
+	// First ReadN: only 10 bytes fit, remaining 90 buffered in connReader.buf.
+	n, err := ReadN(mc, smallBuf, nil)
+	if err != nil {
+		t.Fatalf("first ReadN: %v", err)
+	}
+	if n != 10 {
+		t.Fatalf("first ReadN: got %d bytes, want 10", n)
+	}
+	for i := 0; i < 10; i++ {
+		if smallBuf[i] != fullData[i] {
+			t.Fatalf("first ReadN: wrong byte at %d: got %d, want %d", i, smallBuf[i], fullData[i])
+		}
+	}
+
+	// BUG: ReadN creates a new connReader. The 90 buffered bytes are lost.
+	// The new connReader calls mc.Read again, which now returns EOF.
+	n, err = ReadN(mc, smallBuf, nil)
+	if err != io.EOF {
+		t.Errorf("second ReadN: got err=%v, want io.EOF (connReader lost buffered data and called Read again)", err)
+	}
+	if n != 0 {
+		t.Errorf("second ReadN: got %d bytes, want 0 (connReader should have been drained via EOF)", n)
+	}
+
+	// The underlying conn was called twice (once per ReadN) instead of once.
+	if mc.readCalls != 2 {
+		t.Errorf("readCalls=%d, want 2 (Read was called again instead of draining buffer)", mc.readCalls)
+	}
+
+	// Total data received: 10 bytes out of 100. 90 bytes silently lost.
+	t.Log("BUG CONFIRMED: 90/100 bytes silently lost due to connReader recreation in ReadN")
+}
+
+// TestReadN_ConnReaderReused shows the correct behavior when connReader is
+// reused across ReadN calls — no data is lost.
+func TestReadN_ConnReaderReused(t *testing.T) {
+	fullData := make([]byte, 100)
+	for i := range fullData {
+		fullData[i] = byte(i)
+	}
+
+	mc := &oversizedMockConn{data: fullData}
+
+	// Reuse the same connReader across reads — the fix approach.
+	r := AsReader(mc, nil)
+	smallBuf := make([]byte, 10)
+
+	totalRead := 0
+	for totalRead < len(fullData) {
+		n, err := r.Read(smallBuf)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("read at offset %d: %v", totalRead, err)
+		}
+		for i := 0; i < n; i++ {
+			if smallBuf[i] != fullData[totalRead+i] {
+				t.Fatalf("wrong byte at offset %d: got %d, want %d", totalRead+i, smallBuf[i], fullData[totalRead+i])
+			}
+		}
+		totalRead += n
+	}
+
+	if totalRead != 100 {
+		t.Errorf("totalRead=%d, want 100", totalRead)
+	}
+	if mc.readCalls != 1 {
+		t.Errorf("readCalls=%d, want 1 (buffered data served without re-reading)", mc.readCalls)
+	}
+	t.Log("OK: all 100 bytes received, underlying Read called only once")
+}
+
+// TestCryptoConnStream_InnerConnReaderReused verifies that the inner
+// connReader is now persistent across cryptoConnStream.Read calls.
+// Previously, a new AsReader was created per call, causing buffered data loss.
+func TestCryptoConnStream_InnerConnReaderReused(t *testing.T) {
+	rawData := make([]byte, 200)
+	for i := range rawData {
+		rawData[i] = byte(i)
+	}
+	inner := &oversizedMockConn{data: rawData}
+
+	enc, _ := crypto.NewPlainEncrypter(nil, nil)
+	dec, _ := crypto.NewPlainDecrypter(nil, 0)
+
+	cc := newCryptoConnStream(inner, enc, dec)
+
+	// Read all data in small chunks. The persistent inner reader should
+	// buffer excess and serve it on subsequent calls without re-reading.
+	smallBuf := make([]byte, 10)
+	totalRead := 0
+	for totalRead < len(rawData) {
+		segs, err := cc.Read(smallBuf, nil)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("Read at offset %d: %v", totalRead, err)
+		}
+		for _, s := range segs {
+			for j, b := range s {
+				exp := byte(totalRead + j)
+				if b != exp {
+					t.Errorf("byte at offset %d: got %d, want %d", totalRead+j, b, exp)
+				}
+			}
+			totalRead += len(s)
+		}
+	}
+
+	if totalRead != 200 {
+		t.Errorf("totalRead=%d, want 200", totalRead)
+	}
+	if inner.readCalls != 1 {
+		t.Errorf("inner readCalls=%d, want 1 (persistent reader should not re-read)", inner.readCalls)
+	}
+	t.Log("OK: persistent inner connReader, all 200 bytes received, inner conn read once")
+}
+
+// TestCryptoConnStream_ReadWithExactBuffer tests that data is NOT lost when
+// connReader doesn't need to buffer — i.e., when ReadFrame output fits in
+// the caller's buffer. This is the common case in production.
+func TestCryptoConnStream_ReadWithExactBuffer(t *testing.T) {
+	// Use net.Pipe to get real TCP-like behavior with BaseConn.
+	clientRaw, serverRaw := net.Pipe()
+	defer clientRaw.Close()
+	defer serverRaw.Close()
+
+	enc, _ := crypto.NewPlainEncrypter(nil, nil)
+	dec, _ := crypto.NewPlainDecrypter(nil, 0)
+
+	serverConn := newCryptoConnStream(newBaseConn(serverRaw, nil), enc, dec)
+
+	// Write known data from client side, then close to unblock server reads.
+	testData := []byte("hello world from the other side of the pipe")
+	go func() {
+		clientRaw.Write(testData)
+		clientRaw.Close()
+	}()
+
+	// Read with a buffer larger than data — no buffering needed.
+	buf := make([]byte, 1024)
+	n, err := ReadN(serverConn, buf, nil)
+	if err != nil {
+		t.Fatalf("ReadN: %v", err)
+	}
+	if n != len(testData) {
+		t.Errorf("got %d bytes, want %d", n, len(testData))
+	}
+	if string(buf[:n]) != string(testData) {
+		t.Errorf("data mismatch: got %q, want %q", buf[:n], testData)
+	}
+
+	// Second read should get EOF (client closed)
+	n, err = ReadN(serverConn, buf, nil)
+	if err != io.EOF {
+		t.Errorf("second ReadN: got err=%v n=%d, want io.EOF", err, n)
+	}
+}
+
+// TestReadN_MultiReadCalls verifies data integrity across multiple ReadN calls
+// when using a real crypto connection. Each ReadN creates a new connReader —
+// if the inner connReader in cryptoConnStream drops data, this test catches it.
+func TestReadN_MultiReadCallsDataIntegrity(t *testing.T) {
+	clientRaw, serverRaw := net.Pipe()
+	defer clientRaw.Close()
+	defer serverRaw.Close()
+
+	// Use a real AEAD cipher so the cryptoConnStream read path is fully exercised.
+	password := "testpassword"
+	method := "aes-256-gcm"
+
+	enc, err := crypto.NewEncrypter(method, password)
+	if err != nil {
+		t.Fatalf("NewEncrypter: %v", err)
+	}
+	dec, err := crypto.NewDecrypter(method, password)
+	if err != nil {
+		t.Fatalf("NewDecrypter: %v", err)
+	}
+
+	serverConn := newCryptoConnStream(newBaseConn(serverRaw, nil), enc, dec)
+
+	// Write: 100 small writes from client, each encrypted separately.
+	// Goal: produce many AEAD chunks so ReadFrame may return multi-chunk data.
+	const numWrites = 50
+	const payloadSize = 128
+	totalSent := numWrites * payloadSize
+	var sentData []byte
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer clientRaw.Close()
+		clientEnc, _ := crypto.NewEncrypter(method, password)
+		clientCC := newCryptoConnStream(newBaseConn(clientRaw, nil), clientEnc, nil)
+		for i := 0; i < numWrites; i++ {
+			chunk := make([]byte, payloadSize)
+			for j := range chunk {
+				chunk[j] = byte((i*payloadSize + j) % 251)
+			}
+			sentData = append(sentData, chunk...)
+			if _, werr := clientCC.Write(chunk); werr != nil {
+				t.Errorf("client write %d: %v", i, werr)
+				return
+			}
+		}
+	}()
+
+	// Read using ReadN — each call creates a new connReader.
+	// We use a small-ish buffer to increase chance of triggering buffering.
+	buf := make([]byte, 512)
+	var receivedData []byte
+	for len(receivedData) < totalSent {
+		n, rerr := ReadN(serverConn, buf, nil)
+		if rerr != nil {
+			if rerr == io.EOF {
+				break
+			}
+			t.Fatalf("ReadN at offset %d: %v", len(receivedData), rerr)
+		}
+		receivedData = append(receivedData, buf[:n]...)
+		if len(receivedData) > totalSent+1024 {
+			t.Fatal("received more data than sent — loop guard")
+		}
+	}
+	wg.Wait()
+
+	if len(receivedData) != totalSent {
+		t.Errorf("data length mismatch: got %d bytes, want %d", len(receivedData), totalSent)
+	}
+	for i := 0; i < len(receivedData) && i < len(sentData); i++ {
+		if receivedData[i] != sentData[i] {
+			t.Fatalf("data mismatch at byte %d: got %d, want %d (total received=%d, total sent=%d)",
+				i, receivedData[i], sentData[i], len(receivedData), len(sentData))
+		}
+	}
+	t.Logf("OK: %d bytes transferred correctly across %d ReadN calls", len(receivedData), numWrites)
 }
 
 func TestDeferClose_CancelRestoresImmediate(t *testing.T) {

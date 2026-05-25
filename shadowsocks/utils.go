@@ -225,11 +225,12 @@ func Pipe(c1, c2 Conn, c *Config) {
 		var n int
 		var err error
 		var totalRead, totalWrote int64
+		r := AsReader(src, &pool)
 		for err == nil {
 			if timeout > 0 {
 				src.SetReadDeadline(time.Now().Add(time.Duration(timeout) * time.Second))
 			}
-			n, err = ReadN(src, buf, &pool)
+			n, err = r.Read(buf)
 			pool.Reset()
 			if err != nil {
 				c.LogD("pipe read error:", err, "from", src.RemoteAddr(), "to", src.LocalAddr())

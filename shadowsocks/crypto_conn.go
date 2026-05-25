@@ -18,6 +18,7 @@ type cryptoConnStream struct {
 	enc        crypto.CipherStream
 	dec        crypto.CipherStream
 	deferClose bool
+	rr         io.Reader // persistent reader for inner conn, lazy-init in Read
 }
 
 func newCryptoConnStream(conn Conn, enc, dec crypto.CipherStream) *cryptoConnStream {
@@ -25,7 +26,10 @@ func newCryptoConnStream(conn Conn, enc, dec crypto.CipherStream) *cryptoConnStr
 }
 
 func (c *cryptoConnStream) Read(buf []byte, pool *utils.BufPool) ([][]byte, error) {
-	r := AsReader(c.Conn, pool)
+	if c.rr == nil {
+		c.rr = AsReader(c.Conn, nil)
+	}
+	r := c.rr
 	for {
 		frame, err := c.dec.ReadFrame(buf)
 		if frame != nil {
