@@ -44,6 +44,10 @@ func dialSocks5WithOptions(opt *DialOptions) (conn Conn, err error) {
 	}
 
 	conn = newBaseConn(rawConn, c)
+	if len(opt.Data) > 0 {
+		_, err = conn.Write(opt.Data)
+		opt.Data = nil
+	}
 	return
 }
 
@@ -121,6 +125,7 @@ func dialSSWithOptions(opt *DialOptions) (conn Conn, err error) {
 		return
 	}
 	if newOpt != nil {
+		opt.Data = nil // prevent double-write from caller
 		opt = newOpt
 	}
 
