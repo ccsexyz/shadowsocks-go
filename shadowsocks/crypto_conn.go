@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"math/rand/v2"
+	"sync"
 	"time"
 
 	"github.com/ccsexyz/shadowsocks-go/crypto"
@@ -18,17 +19,16 @@ type cryptoConnStream struct {
 	enc        crypto.CipherStream
 	dec        crypto.CipherStream
 	deferClose bool
-	rr         io.Reader // persistent reader for inner conn, lazy-init in Read
+	rr         io.Reader // persistent reader for inner conn, init in constructor
+	wlock      sync.Mutex
+	closeOnce  sync.Once
 }
 
 func newCryptoConnStream(conn Conn, enc, dec crypto.CipherStream) *cryptoConnStream {
-	return &cryptoConnStream{Conn: conn, enc: enc, dec: dec}
+	return &cryptoConnStream{Conn: conn, enc: enc, dec: dec, rr: AsReader(conn, nil)}
 }
 
 func (c *cryptoConnStream) Read(buf []byte, pool *utils.BufPool) ([][]byte, error) {
-	if c.rr == nil {
-		c.rr = AsReader(c.Conn, nil)
-	}
 	r := c.rr
 	for {
 		frame, err := c.dec.ReadFrame(buf)
@@ -74,16 +74,17 @@ func (c *cryptoConnStream) Read(buf []byte, pool *utils.BufPool) ([][]byte, erro
 }
 
 func (c *cryptoConnStream) Write(bufs ...[]byte) (n int, err error) {
-	for _, b := range bufs {
-		n += len(b)
-	}
+	c.wlock.Lock()
+	defer c.wlock.Unlock()
 	plaintext := flatten(bufs)
 	if err := c.enc.WriteFrame(plaintext); err != nil {
-		return n, err
+		return 0, err
 	}
 	w := AsReadWriteCloser(c.Conn, nil)
-	_, err = c.enc.WriteEncryptedTo(w)
-	return n, err
+	if _, err = c.enc.WriteEncryptedTo(w); err != nil {
+		return 0, err
+	}
+	return len(plaintext), nil
 }
 
 // cryptoConn2022 implements Conn with direct AEAD-2022 frame encryption/decryption.
@@ -100,11 +101,13 @@ type cryptoConn2022 struct {
 	// Server-side handshake state
 	svSalt  []byte
 	cliSalt []byte
+	hslock  sync.Mutex
 
 	initBuf    []byte // initial data from server handshake (client side)
 	wlbuf      []byte // write length-tag buffer: 2+overhead
 	wdbuf      []byte // write data buffer: max chunk + overhead
 	deferClose bool
+	closeOnce  sync.Once
 }
 
 func newServerCryptoConn2022(conn Conn, method string, psk, svSalt, cliSalt []byte, readCipher *crypto.TcpCipher2022) *cryptoConn2022 {
@@ -199,21 +202,21 @@ func (c *cryptoConn2022) readFrame(buf []byte, pool *utils.BufPool) ([][]byte, e
 }
 
 func (c *cryptoConn2022) Write(bufs ...[]byte) (n int, err error) {
-	for _, b := range bufs {
-		n += len(b)
-	}
 	plaintext := flatten(bufs)
 	if err := c.writeFrame(plaintext); err != nil {
-		return n, err
+		return 0, err
 	}
-	return n, nil
+	return len(plaintext), nil
 }
 
 func (c *cryptoConn2022) writeFrame(plaintext []byte) error {
+	c.hslock.Lock()
+	defer c.hslock.Unlock()
+
 	w := AsReadWriteCloser(c.Conn, nil)
 	totalLen := len(plaintext)
 
-	// Server: send handshake response on first write
+	// Server: send handshake response on first write.
 	if c.svSalt != nil {
 		svCiph, err := crypto.NewTcpCipher2022(c.method, c.psk, c.svSalt)
 		if err != nil {
@@ -326,14 +329,18 @@ func (c *cryptoConn2022) clientHandshake(pool *utils.BufPool) error {
 }
 
 func (c *cryptoConn2022) Close() error {
-	if c.deferClose {
-		go func() {
-			time.Sleep(time.Duration(rand.Int()%64+8) * time.Second)
-			c.Conn.Close()
-		}()
-		return nil
-	}
-	return c.Conn.Close()
+	var err error
+	c.closeOnce.Do(func() {
+		if c.deferClose {
+			go func() {
+				time.Sleep(time.Duration(rand.Int()%64+8) * time.Second)
+				c.Conn.Close()
+			}()
+			return
+		}
+		err = c.Conn.Close()
+	})
+	return err
 }
 
 func (c *cryptoConn2022) DeferClose()       { c.deferClose = true }
@@ -365,14 +372,18 @@ func (c *cryptoConn2022) GetHost() string {
 }
 
 func (c *cryptoConnStream) Close() error {
-	if c.deferClose {
-		go func() {
-			time.Sleep(time.Duration(rand.Int()%64+8) * time.Second)
-			c.Conn.Close()
-		}()
-		return nil
-	}
-	return c.Conn.Close()
+	var err error
+	c.closeOnce.Do(func() {
+		if c.deferClose {
+			go func() {
+				time.Sleep(time.Duration(rand.Int()%64+8) * time.Second)
+				c.Conn.Close()
+			}()
+			return
+		}
+		err = c.Conn.Close()
+	})
+	return err
 }
 
 func (c *cryptoConnStream) DeferClose()       { c.deferClose = true }

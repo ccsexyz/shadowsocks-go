@@ -135,16 +135,19 @@ func ss2022AcceptHandler(conn Conn, lis *listener) AcceptResult {
 	addrLen := int(binary.BigEndian.Uint16(hdr1[9:11]))
 
 	hdr2Len := addrLen + ciph.Overhead()
-	if cap(buf) < hdr2Len {
-		buf = make([]byte, hdr2Len)
+	var readBuf []byte
+	if cap(buf) >= hdr2Len {
+		readBuf = buf[:hdr2Len]
+	} else {
+		readBuf = make([]byte, hdr2Len)
 	}
-	_, err = io.ReadFull(AsReader(conn, nil), buf[:hdr2Len])
+	_, err = io.ReadFull(AsReader(conn, nil), readBuf)
 	if err != nil {
 		lis.c.getStat().incReject("other")
 		return AcceptResult{AcceptReject, nil}
 	}
 	hdr2 := make([]byte, hdr2Len)
-	copy(hdr2, buf[:hdr2Len])
+	copy(hdr2, readBuf)
 	hdr2, ok = ciph.DecryptPacket(hdr2)
 	if !ok {
 		lis.c.Log("decrypt header packet 2 failed")

@@ -210,7 +210,11 @@ func notifySessionClose(session *smux.Session, c *ss.Config, ln net.Listener) {
 	}
 }
 
+var rtunnelBusyInitMu sync.Mutex
+
 func ensureRtunnelBusyMap(c *ss.Config) *sync.Map {
+	rtunnelBusyInitMu.Lock()
+	defer rtunnelBusyInitMu.Unlock()
 	if m := c.InitRuntime().Any; m != nil {
 		if sm, ok := m.(*sync.Map); ok {
 			return sm

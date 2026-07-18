@@ -13,18 +13,18 @@ import (
 
 // ConnRecord holds metadata for a single proxied connection.
 type ConnRecord struct {
-	ID           uint64     `json:"id"`
-	SrcAddr      string     `json:"srcAddr"`
-	DstAddr      string     `json:"dstAddr"`
-	Host         string     `json:"host"`
-	StartTime    time.Time  `json:"startTime"`
-	EndTime      *time.Time `json:"endTime,omitempty"`
-	ReadBytes    int64      `json:"readBytes"`
-	WritBytes    int64      `json:"writBytes"`
-	PairedID     uint64     `json:"pairedID"`
-	Samples      []BwSample `json:"samples,omitempty"`
-	LastActivity int64      `json:"lastActive"` // UnixNano of last read/write
-	lastPublish  int64      // UnixNano of last SSE publish (throttle)
+	ID           uint64       `json:"id"`
+	SrcAddr      string       `json:"srcAddr"`
+	DstAddr      string       `json:"dstAddr"`
+	Host         string       `json:"host"`
+	StartTime    time.Time    `json:"startTime"`
+	EndTime      *time.Time   `json:"endTime,omitempty"`
+	ReadBytes    int64        `json:"readBytes"`
+	WritBytes    int64        `json:"writBytes"`
+	PairedID     uint64       `json:"pairedID"`
+	Samples      []BwSample   `json:"samples,omitempty"`
+	LastActivity int64        `json:"lastActive"` // UnixNano of last read/write
+	lastPublish  atomic.Int64 // UnixNano of last SSE publish (throttle)
 }
 
 // ConnTracker tracks active and recently-closed connections for one Config.
@@ -59,6 +59,42 @@ type BwSample struct {
 	Write int64 `json:"w"`
 }
 
+// MarshalJSON avoids racing with concurrent atomic writes to ConnRecord fields
+// by snapshotting atomically-modified values before encoding.
+func (r *ConnRecord) MarshalJSON() ([]byte, error) {
+	samples := make([]BwSample, len(r.Samples))
+	for i := range r.Samples {
+		samples[i].Read = atomic.LoadInt64(&r.Samples[i].Read)
+		samples[i].Write = atomic.LoadInt64(&r.Samples[i].Write)
+	}
+	aux := struct {
+		ID           uint64     `json:"id"`
+		SrcAddr      string     `json:"srcAddr"`
+		DstAddr      string     `json:"dstAddr"`
+		Host         string     `json:"host"`
+		StartTime    time.Time  `json:"startTime"`
+		EndTime      *time.Time `json:"endTime,omitempty"`
+		ReadBytes    int64      `json:"readBytes"`
+		WritBytes    int64      `json:"writBytes"`
+		PairedID     uint64     `json:"pairedID"`
+		Samples      []BwSample `json:"samples,omitempty"`
+		LastActivity int64      `json:"lastActive"`
+	}{
+		ID:           r.ID,
+		SrcAddr:      r.SrcAddr,
+		DstAddr:      r.DstAddr,
+		Host:         r.Host,
+		StartTime:    r.StartTime,
+		EndTime:      r.EndTime,
+		ReadBytes:    atomic.LoadInt64(&r.ReadBytes),
+		WritBytes:    atomic.LoadInt64(&r.WritBytes),
+		PairedID:     r.PairedID,
+		Samples:      samples,
+		LastActivity: atomic.LoadInt64(&r.LastActivity),
+	}
+	return json.Marshal(aux)
+}
+
 func newConnTracker() *ConnTracker {
 	return &ConnTracker{
 		active:     make(map[uint64]*ConnRecord),
@@ -80,6 +116,7 @@ func (t *ConnTracker) Register(srcAddr, dstAddr, host string) *ConnRecord {
 		Host:         host,
 		StartTime:    now,
 		LastActivity: now.UnixNano(),
+		Samples:      make([]BwSample, maxBwSamples),
 	}
 	t.active[id] = rec
 	t.mu.Unlock()
@@ -174,10 +211,10 @@ type connDelta struct {
 func (r *ConnRecord) publishUpdate() {
 	// Throttle: at most once per 500ms
 	now := time.Now().UnixNano()
-	if now-r.lastPublish < 500_000_000 {
+	if now-r.lastPublish.Load() < 500_000_000 {
 		return
 	}
-	r.lastPublish = now
+	r.lastPublish.Store(now)
 
 	sec := int(time.Since(r.StartTime).Seconds())
 	if sec < 0 {
@@ -208,10 +245,6 @@ func (r *ConnRecord) bwSample(rn, wn int64) {
 	if sec >= maxBwSamples {
 		sec = maxBwSamples - 1
 	}
-	// lazily allocate samples
-	if r.Samples == nil {
-		r.Samples = make([]BwSample, maxBwSamples)
-	}
 	atomic.AddInt64(&r.Samples[sec].Read, rn)
 	atomic.AddInt64(&r.Samples[sec].Write, wn)
 }
@@ -233,6 +266,7 @@ func (t *ConnTracker) TrackOutbound(conn net.Conn, inboundRec *ConnRecord, dstAd
 		StartTime:    now,
 		LastActivity: now.UnixNano(),
 		PairedID:     inboundRec.ID,
+		Samples:      make([]BwSample, maxBwSamples),
 	}
 	t.active[id] = rec
 	inboundRec.PairedID = id
@@ -268,12 +302,31 @@ func (c *trackedOutConn) Close() error {
 
 // TargetStats holds aggregated stats for a destination target.
 type TargetStats struct {
-	Target          string    `json:"target"`
-	Host            string    `json:"host,omitempty"`
-	TotalReadBytes  int64     `json:"totalReadBytes"`
-	TotalWritBytes  int64     `json:"totalWritBytes"`
-	ConnectionCount int64     `json:"connectionCount"`
-	LastSeen        time.Time `json:"lastSeen"`
+	Target          string       `json:"target"`
+	Host            string       `json:"host,omitempty"`
+	TotalReadBytes  int64        `json:"totalReadBytes"`
+	TotalWritBytes  int64        `json:"totalWritBytes"`
+	ConnectionCount int64        `json:"connectionCount"`
+	lastSeen        atomic.Int64 // UnixNano of last activity
+}
+
+// MarshalJSON atomically snapshots fields that may be concurrently modified.
+func (ts *TargetStats) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Target          string `json:"target"`
+		Host            string `json:"host,omitempty"`
+		TotalReadBytes  int64  `json:"totalReadBytes"`
+		TotalWritBytes  int64  `json:"totalWritBytes"`
+		ConnectionCount int64  `json:"connectionCount"`
+		LastSeen        string `json:"lastSeen"`
+	}{
+		Target:          ts.Target,
+		Host:            ts.Host,
+		TotalReadBytes:  atomic.LoadInt64(&ts.TotalReadBytes),
+		TotalWritBytes:  atomic.LoadInt64(&ts.TotalWritBytes),
+		ConnectionCount: atomic.LoadInt64(&ts.ConnectionCount),
+		LastSeen:        time.Unix(0, ts.lastSeen.Load()).UTC().Format(time.RFC3339Nano),
+	})
 }
 
 // TargetTracker maintains per-destination aggregate statistics.
@@ -290,7 +343,7 @@ func (tt *TargetTracker) addConn(dstAddr string, host string) {
 		tt.targets[dstAddr] = ts
 	}
 	atomic.AddInt64(&ts.ConnectionCount, 1)
-	ts.LastSeen = time.Now()
+	ts.lastSeen.Store(time.Now().UnixNano())
 	tt.mu.Unlock()
 }
 
@@ -313,7 +366,7 @@ func (tt *TargetTracker) updateLastSeen(dstAddr string) {
 	ts := tt.targets[dstAddr]
 	tt.mu.RUnlock()
 	if ts != nil {
-		ts.LastSeen = time.Now()
+		ts.lastSeen.Store(time.Now().UnixNano())
 	}
 }
 

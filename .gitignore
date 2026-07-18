@@ -39,3 +39,4 @@ CLAUDE.md
 /cmd/udpforward/udpforward
 /cmd/udpbench/udpbench
 /cmd/h3test/h3test
+.claude

@@ -46,7 +46,18 @@ func init() {
 }
 
 func echoHandler(conn Conn, lis *listener) AcceptResult {
-	go Pipe(conn, conn, lis.c)
+	go func() {
+		done := make(chan struct{})
+		go func() {
+			select {
+			case <-lis.die:
+				conn.Close()
+			case <-done:
+			}
+		}()
+		Pipe(conn, conn, lis.c)
+		close(done)
+	}()
 	return AcceptResult{AcceptDrop, nil}
 }
 

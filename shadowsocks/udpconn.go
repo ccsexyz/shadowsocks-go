@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ccsexyz/shadowsocks-go/crypto"
@@ -217,14 +218,49 @@ func (c *UDPConn) Write(bufs ...[]byte) (n int, err error) {
 
 type MultiUDPConn struct {
 	net.PacketConn
-	c        *Config
-	sessions sync.Map
+	c         *Config
+	sessions  sync.Map
+	die       chan struct{}
+	closeOnce sync.Once
 }
 
 func NewMultiUDPConn(conn net.PacketConn, c *Config) *MultiUDPConn {
-	return &MultiUDPConn{
+	mc := &MultiUDPConn{
 		PacketConn: conn,
 		c:          c,
+		die:        make(chan struct{}),
+	}
+	go mc.cleanupLoop()
+	return mc
+}
+
+func (c *MultiUDPConn) Close() error {
+	var err error
+	c.closeOnce.Do(func() {
+		close(c.die)
+		err = c.PacketConn.Close()
+	})
+	return err
+}
+
+func (c *MultiUDPConn) cleanupLoop() {
+	const sessionTimeout = 5 * time.Minute
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-c.die:
+			return
+		case <-ticker.C:
+		}
+		now := time.Now()
+		c.sessions.Range(func(key, value any) bool {
+			s := value.(*multiSession)
+			if now.Sub(s.lastSeen()) > sessionTimeout {
+				c.sessions.Delete(key)
+			}
+			return true
+		})
 	}
 }
 
@@ -234,11 +270,21 @@ type multiSession struct {
 	unpacker crypto.Unpacker
 	once     sync.Once
 	initErr  error
+	lastUsed atomic.Int64 // unix nano timestamp
+}
+
+func (s *multiSession) lastSeen() time.Time {
+	return time.Unix(0, s.lastUsed.Load())
+}
+
+func (s *multiSession) touch() {
+	s.lastUsed.Store(time.Now().UnixNano())
 }
 
 func (c *MultiUDPConn) getSession(addrStr string, cfg *Config) *multiSession {
 	v, _ := c.sessions.LoadOrStore(addrStr, &multiSession{cfg: cfg})
 	s := v.(*multiSession)
+	s.touch()
 	s.once.Do(func() {
 		s.packer, s.initErr = crypto.NewPacker(cfg.Method, cfg.Password, true)
 		if s.initErr != nil {
@@ -275,6 +321,7 @@ func (c *MultiUDPConn) ReadFrom(b []byte) (n int, addr net.Addr, err error) {
 			n += copy(b[n:], ctx.data)
 		} else {
 			s := v.(*multiSession)
+			s.touch()
 			if s.initErr != nil {
 				log.Printf("udp multi ReadFrom: session init failed: %v", s.initErr)
 				err = s.initErr
@@ -305,6 +352,7 @@ func (c *MultiUDPConn) WriteTo(b []byte, addr net.Addr) (int, error) {
 		return 0, nil
 	}
 	s := v.(*multiSession)
+	s.touch()
 	if s.initErr != nil {
 		return 0, s.initErr
 	}

@@ -214,12 +214,15 @@ func (lis *listener) acceptor() {
 		if err != nil {
 			if operr, ok := err.(*net.OpError); ok {
 				lis.c.Log(operr.Net, operr.Op, operr.Addr, operr.Err)
-				if operr.Timeout() {
+				if operr.Timeout() || operr.Temporary() {
 					time.Sleep(time.Second)
 					continue
 				}
 			}
-			lis.errch <- err
+			select {
+			case lis.errch <- err:
+			default:
+			}
 			return
 		}
 		if isWstunnel {

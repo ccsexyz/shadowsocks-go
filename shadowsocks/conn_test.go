@@ -397,6 +397,38 @@ func TestLimitConn_Write(t *testing.T) {
 	}
 }
 
+// TestLimiter_TimeAccumulation verifies that the token bucket correctly
+// accumulates time across refill iterations.
+// Before the fix, l.last was incorrectly set to ns (the entry time) instead
+// of nextNs, so subsequent Update calls would see no elapsed time and allow
+// instant token refills regardless of rate.
+func TestLimiter_TimeAccumulation(t *testing.T) {
+	// Limit: 10000 bytes/sec. Consume 50000 bytes → needs 5 refills.
+	l := NewLimiter(10000)
+
+	// Large consumption: 50000 bytes at 10000 B/s should take ~4 seconds.
+	start := time.Now()
+	l.Update(50000)
+	firstElapsed := time.Since(start)
+	t.Logf("first Update(50000) took %v", firstElapsed)
+
+	// Now consume a small amount immediately after.
+	// Correct behavior: last was set to ~now after the sleep, so tokens
+	// are exhausted and this should also need refill time.
+	// Bug behavior: last is still set to the old entry-time ns, so this
+	// Update sees a huge time gap and refills instantly.
+	start2 := time.Now()
+	l.Update(20000)
+	secondElapsed := time.Since(start2)
+	t.Logf("second Update(20000) took %v", secondElapsed)
+
+	// With correct behavior, second Update(20000) should take ~2 seconds
+	// (20000 / 10000 tokens per refill = 2 refills).
+	if secondElapsed < 1500*time.Millisecond {
+		t.Errorf("second Update too fast: %v, expected >= 1.5s (time accumulation bug: last not advancing)", secondElapsed)
+	}
+}
+
 // --- buildLimiters tests ---
 
 func TestBuildLimiters_None(t *testing.T) {
@@ -1292,6 +1324,86 @@ func TestReadN_MultiReadCallsDataIntegrity(t *testing.T) {
 		}
 	}
 	t.Logf("OK: %d bytes transferred correctly across %d ReadN calls", len(receivedData), numWrites)
+}
+
+// TestConnReader_BufPoolUseAfterFree demonstrates that reusing a connReader
+// across pool.Reset() calls can cause use-after-free: connReader.buf may point
+// into BufPool memory that pool.Reset() releases back to sync.Pool.
+//
+// This is the pattern used in Pipe():
+//
+//	r := AsReader(src, &pool)
+//	for ... {
+//	    n, err = r.Read(buf)
+//	    pool.Reset()  // ← releases chunks that r.buf may reference!
+//	}
+func TestConnReader_BufPoolUseAfterFree(t *testing.T) {
+	// Create data larger than the read buffer to trigger oversized path.
+	fullData := make([]byte, 200)
+	for i := range fullData {
+		fullData[i] = byte(i)
+	}
+
+	mc := &oversizedMockConn{data: fullData}
+
+	// Simulate the Pipe pattern: reuse connReader, Reset pool after each read.
+	var pool utils.BufPool
+	r := AsReader(mc, &pool)
+
+	smallBuf := make([]byte, 50) // smaller than fullData → triggers buffering
+
+	// First read: connReader reads 200 bytes, copies 50 to buf,
+	// buffers remaining 150 in r.buf (allocated from pool).
+	n, err := r.Read(smallBuf)
+	if err != nil {
+		t.Fatalf("first read: %v", err)
+	}
+	if n != 50 {
+		t.Fatalf("first read: got %d bytes, want 50", n)
+	}
+	for i := 0; i < 50; i++ {
+		if smallBuf[i] != fullData[i] {
+			t.Fatalf("first read byte %d: got %d, want %d", i, smallBuf[i], fullData[i])
+		}
+	}
+
+	// pool.Reset() releases the chunk backing r.buf back to sync.Pool!
+	pool.Reset()
+
+	// Write garbage into a new bufPool allocation to simulate the chunk
+	// being reused by another allocation.
+	var pool2 utils.BufPool
+	garbage := pool2.Get(200)
+	for i := range garbage {
+		garbage[i] = 0xFF
+	}
+	pool2.Reset() // releases garbage back to sync.Pool (may be the same chunk)
+
+	// Second read from the connReader: serves from r.buf first.
+	// If r.buf still points into the released chunk, data will be corrupted.
+	n, err = r.Read(smallBuf)
+	if err != nil {
+		t.Fatalf("second read: %v", err)
+	}
+	if n != 50 {
+		t.Fatalf("second read: got %d bytes, want 50", n)
+	}
+
+	// Check if the data matches expected bytes 50-99.
+	// If use-after-free occurred, r.buf might contain garbage (0xFF).
+	allMatch := true
+	for i := 0; i < 50; i++ {
+		if smallBuf[i] != fullData[50+i] {
+			t.Errorf("second read byte %d: got %d, want %d — POSSIBLE USE-AFTER-FREE", i, smallBuf[i], fullData[50+i])
+			allMatch = false
+		}
+	}
+
+	if !allMatch {
+		t.Log("BUG CONFIRMED: connReader.buf referenced freed BufPool memory after pool.Reset()")
+	} else {
+		t.Log("(sync.Pool did not reclaim the chunk this run — race is non-deterministic)")
+	}
 }
 
 func TestDeferClose_CancelRestoresImmediate(t *testing.T) {

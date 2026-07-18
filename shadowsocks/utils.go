@@ -232,6 +232,11 @@ func Pipe(c1, c2 Conn, c *Config) {
 			}
 			n, err = r.Read(buf)
 			pool.Reset()
+			// connReader.buf may point into BufPool memory released by
+			// Reset. Clear it to prevent use-after-free on next Read.
+			if cr, ok := r.(*connReader); ok {
+				cr.buf = nil
+			}
 			if err != nil {
 				c.LogD("pipe read error:", err, "from", src.RemoteAddr(), "to", src.LocalAddr())
 			}
@@ -241,10 +246,17 @@ func Pipe(c1, c2 Conn, c *Config) {
 					dst.SetWriteDeadline(time.Now().Add(time.Duration(timeout) * time.Second))
 					alive.Store(true)
 				}
-				_, err = dst.Write(buf[:n])
-				totalWrote += int64(n)
-				if err != nil {
+				wn, werr := dst.Write(buf[:n])
+				totalWrote += int64(wn)
+				if werr != nil {
+					err = werr
 					c.LogD("pipe write error:", err, "from", src.LocalAddr(), "to", dst.RemoteAddr())
+				}
+				if wn < n {
+					// partial write: data lost, close this direction
+					if err == nil {
+						err = fmt.Errorf("partial write: %d of %d bytes", wn, n)
+					}
 				}
 			}
 			if err != nil && IsTimeoutError(err) && alive.Load() {
@@ -284,18 +296,23 @@ func (l *Limiter) Update(nbytes int) {
 	if l.limit == 0 {
 		return
 	}
-	ns := time.Now().UnixNano()
+	now := time.Now().UnixNano()
 	if l.last == 0 {
-		l.last = ns
+		l.last = now
 		l.nbytes = l.limit
+	}
+	// Cap credit accumulation: max burst = 1 second's worth of tokens.
+	if l.last < now-int64(time.Second) {
+		l.last = now - int64(time.Second)
 	}
 	l.nbytes -= nbytes
 	for l.nbytes <= 0 {
 		nextNs := l.last + int64(1000000000)
-		if nextNs > ns {
-			time.Sleep(time.Nanosecond * time.Duration(nextNs-ns))
+		now2 := time.Now().UnixNano()
+		if nextNs > now2 {
+			time.Sleep(time.Nanosecond * time.Duration(nextNs-now2))
 		}
-		l.last = ns
+		l.last = nextNs
 		l.nbytes += l.limit
 	}
 }

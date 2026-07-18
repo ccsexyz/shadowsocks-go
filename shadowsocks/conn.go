@@ -297,9 +297,6 @@ func (conn *HttpLogConn) Read(buf []byte, pool *utils.BufPool) ([][]byte, error)
 }
 
 func (conn *HttpLogConn) Write(bufs ...[]byte) (n int, err error) {
-	for _, b := range bufs {
-		n += len(b)
-	}
 	if conn.pw != nil && len(bufs) > 0 {
 		ok, _ := conn.pw.Read(bufs[0])
 		if ok {
@@ -313,8 +310,7 @@ func (conn *HttpLogConn) Write(bufs ...[]byte) (n int, err error) {
 			conn.pw = nil
 		}
 	}
-	_, err = conn.Conn.Write(bufs...)
-	return
+	return conn.Conn.Write(bufs...)
 }
 
 // ReadN reads from c into buf, returning total byte count.

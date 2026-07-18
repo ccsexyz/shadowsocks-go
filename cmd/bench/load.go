@@ -125,15 +125,22 @@ func runLoad(socksAddr, targetAddr string, concurrency int, dur time.Duration, p
 			defer conn.Close()
 
 			buf := make([]byte, payloadSize)
+			// Per-operation deadline: a stalled read must not block
+			// the goroutine forever.  With a 15s window a single
+			// slow/lost connection will fail gracefully rather than
+			// hanging the whole benchmark via wg.Wait().
+			const opTimeout = 15 * time.Second
 			for time.Now().Before(deadline) {
 				if limiter != nil {
 					limiter.WaitN(ctx, payloadSize)
 				}
+				conn.SetDeadline(time.Now().Add(opTimeout))
 				if _, err := conn.Write(payload); err != nil {
 					errors.Add(1)
 					return
 				}
 				t0 := time.Now()
+				conn.SetDeadline(time.Now().Add(opTimeout))
 				if _, err := io.ReadFull(conn, buf); err != nil {
 					errors.Add(1)
 					return
@@ -173,6 +180,9 @@ func dialSocksBench(socksAddr, target string) (net.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Set a deadline so a stalled SOCKS handshake doesn't block
+	// the goroutine forever. The proxy should respond within seconds.
+	c.SetDeadline(time.Now().Add(15 * time.Second))
 	c.Write([]byte{5, 1, 0})
 	buf := make([]byte, 512)
 	if _, err := io.ReadFull(c, buf[:2]); err != nil {

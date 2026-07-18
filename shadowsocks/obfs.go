@@ -60,7 +60,7 @@ func (c *ObfsConn) Close() (err error) {
 
 	c.SetReadDeadline(time.Now())
 	c.rlock.Lock()
-	c.SetReadDeadline(time.Time{})
+	c.SetReadDeadline(time.Now().Add(30 * time.Second))
 	buf := utils.GetBuf(buffersize)
 	defer utils.PutBuf(buf)
 	for !c.eos {

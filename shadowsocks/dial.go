@@ -1,6 +1,7 @@
 package ss
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"hash/crc32"
@@ -68,7 +69,9 @@ func checkAndModifyTarget(opt *DialOptions) (newOpt *DialOptions, err error) {
 		return
 	}
 
-	ips, err := net.LookupIP(host)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	ips, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
 	if err != nil {
 		return
 	}
@@ -143,7 +146,7 @@ func dialSSWithOptions(opt *DialOptions) (conn Conn, err error) {
 		die := make(chan bool)
 		num := len(c.Backends)
 		errch := make(chan error, num)
-		conch := make(chan Conn)
+		conch := make(chan Conn, num)
 		for _, v := range c.Backends {
 			if v.isDisabled() {
 				num--
@@ -170,6 +173,8 @@ func dialSSWithOptions(opt *DialOptions) (conn Conn, err error) {
 				case <-die:
 					rconn.Close()
 				case conch <- rconn:
+				default:
+					rconn.Close()
 				}
 			}(&newOpts)
 		}

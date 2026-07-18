@@ -112,9 +112,16 @@ func PipeForUDPServer(c1, c2 Conn, ctx *UDPServerCtx) {
 			if err != nil {
 				return
 			}
-			_, err = dst.Write(segs...)
+			total := 0
+			for _, s := range segs {
+				total += len(s)
+			}
+			wn, werr := dst.Write(segs...)
 			pool.Reset()
-			if err != nil {
+			if werr != nil {
+				return
+			}
+			if wn < total {
 				return
 			}
 		}

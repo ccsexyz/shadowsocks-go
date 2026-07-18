@@ -8,6 +8,7 @@ import (
 	"io"
 	"math/bits"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/crypto/chacha20poly1305"
@@ -74,9 +75,9 @@ func (w *slidingWindow) check(id uint64) bool {
 
 type udpSession struct {
 	sessionKey []byte
-	sendPID    uint64         // next packet ID for outgoing packets
+	sendPID    atomic.Uint64  // next packet ID for outgoing packets
 	recvWindow *slidingWindow // sliding window for incoming packets
-	lastSeen   time.Time
+	lastSeen   atomic.Int64   // UnixNano of last activity
 }
 
 // --- global session manager ---
@@ -89,17 +90,20 @@ func udp2022GetSession(id uint64) *udpSession {
 		return nil
 	}
 	s := v.(*udpSession)
-	s.lastSeen = time.Now()
+	s.lastSeen.Store(time.Now().UnixNano())
 	return s
 }
 
 func udp2022CreateSession(id uint64, sessionKey []byte) *udpSession {
 	s := &udpSession{
 		sessionKey: sessionKey,
-		lastSeen:   time.Now(),
 		recvWindow: newSlidingWindow(udp2022WindowSize),
 	}
-	udp2022Sessions.Store(id, s)
+	s.lastSeen.Store(time.Now().UnixNano())
+	actual, loaded := udp2022Sessions.LoadOrStore(id, s)
+	if loaded {
+		return actual.(*udpSession)
+	}
 	return s
 }
 
@@ -107,7 +111,7 @@ func udp2022CleanupSessions() {
 	now := time.Now()
 	udp2022Sessions.Range(func(key, value any) bool {
 		s := value.(*udpSession)
-		if now.Sub(s.lastSeen) > udp2022SessionTimeout {
+		if now.Sub(time.Unix(0, s.lastSeen.Load())) > udp2022SessionTimeout {
 			udp2022Sessions.Delete(key)
 		}
 		return true
@@ -216,8 +220,7 @@ func (a *udp2022AESCipherBlock) Encrypt(dst, src []byte) (ciphertext []byte, iv 
 		sessionKey := kdf2022(a.psk, uint64ToBytes(sid), len(a.psk))
 		s = udp2022CreateSession(sid, sessionKey)
 	}
-	packetID := s.sendPID
-	s.sendPID++
+	packetID := s.sendPID.Add(1) - 1
 
 	// construct separate header
 	var sepHdr [16]byte
@@ -327,8 +330,7 @@ func (c *udp2022ChaChaCipherBlock) Encrypt(dst, src []byte) (ciphertext []byte, 
 	if s == nil {
 		s = udp2022CreateSession(sid, nil)
 	}
-	packetID := s.sendPID
-	s.sendPID++
+	packetID := s.sendPID.Add(1) - 1
 
 	// Prepend session ID + packet ID to plaintext before encrypting
 	hdr := make([]byte, 16+len(src))

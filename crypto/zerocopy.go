@@ -109,8 +109,7 @@ func (p *udp2022AESPacker) PackInPlace(b []byte, payloadStart, payloadLen int) (
 		sessionKey := kdf2022(p.psk, uint64ToBytes(sid), len(p.psk))
 		s = udp2022CreateSession(sid, sessionKey)
 	}
-	pid := s.sendPID
-	s.sendPID++
+	pid := s.sendPID.Add(1) - 1
 
 	sepHdr := b[payloadStart-16 : payloadStart]
 	binary.BigEndian.PutUint64(sepHdr[0:8], sid)
@@ -200,8 +199,7 @@ func (p *udp2022ChaChaPacker) PackInPlace(b []byte, payloadStart, payloadLen int
 	if s == nil {
 		s = udp2022CreateSession(sid, nil)
 	}
-	pid := s.sendPID
-	s.sendPID++
+	pid := s.sendPID.Add(1) - 1
 
 	nonce := b[payloadStart-40 : payloadStart-16]
 	PutRandomBytes(nonce)

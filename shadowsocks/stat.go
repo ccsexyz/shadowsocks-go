@@ -142,7 +142,7 @@ func (conn *statConn) Close() error {
 			conn.s.tracker.Unregister(conn.record)
 		}
 		if conn.record != nil && conn.s.targetTracker != nil {
-			conn.s.targetTracker.addBytes(conn.record.DstAddr, conn.record.ReadBytes, conn.record.WritBytes)
+			conn.s.targetTracker.addBytes(conn.record.DstAddr, atomic.LoadInt64(&conn.record.ReadBytes), atomic.LoadInt64(&conn.record.WritBytes))
 			conn.s.targetTracker.updateLastSeen(conn.record.DstAddr)
 		}
 		if conn.s.configIndex >= 0 {
