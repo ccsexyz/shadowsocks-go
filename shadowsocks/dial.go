@@ -7,6 +7,7 @@ import (
 	"hash/crc32"
 	"math/rand/v2"
 	"net"
+	"net/netip"
 	"strconv"
 	"strings"
 	"time"
@@ -76,50 +77,64 @@ func checkAndModifyTarget(opt *DialOptions) (newOpt *DialOptions, err error) {
 		return
 	}
 
-	noIPv6 := c.NoIPv6
-	if c.PreferIPv4 && !noIPv6 {
-		hasV4 := false
-		hasV6 := false
-
-		addrCount := len(ips)
-		for i := 0; i < addrCount && !(hasV4 && hasV6); i++ {
-			ip := ips[i]
-			if ip.To4() != nil {
-				hasV4 = true
-			} else if ip.To16() != nil && ip.To4() == nil {
-				hasV6 = true
-			}
-		}
-
-		if hasV4 && hasV6 {
-			noIPv6 = true
-		}
-	}
-
-	for _, idx := range rand.Perm(len(ips)) {
-		ip := ips[idx]
-
-		if c.NoIPv4 && ip.To4() != nil {
-			continue
-		}
-		if noIPv6 && ip.To16() != nil && ip.To4() == nil {
-			continue
-		}
-
-		newOpt = new(DialOptions)
-		*newOpt = *opt
-		if newOpt.Data != nil {
-			newOpt.Data = append([]byte{}, opt.Data...)
-		}
-		if newOpt.RawHeader != nil {
-			newOpt.RawHeader = append([]byte{}, opt.RawHeader...)
-		}
-		newOpt.Target = net.JoinHostPort(ip.String(), strconv.Itoa(port))
-		c.Log("resolve", host, "to", ip.String())
+	ip := pickTargetIP(c, ips)
+	if ip == nil {
+		err = fmt.Errorf("resolve %s fail, no ip found", host)
 		return
 	}
-	err = fmt.Errorf("resolve %s fail, no ip found", host)
+
+	newOpt = new(DialOptions)
+	*newOpt = *opt
+	if newOpt.Data != nil {
+		newOpt.Data = append([]byte{}, opt.Data...)
+	}
+	if newOpt.RawHeader != nil {
+		newOpt.RawHeader = append([]byte{}, opt.RawHeader...)
+	}
+	newOpt.Target = net.JoinHostPort(ip.String(), strconv.Itoa(port))
+	c.Log("resolve", host, "to", ip.String())
 	return
+}
+
+// pickTargetIP applies the family policy and picks one candidate IP from the
+// resolved set. Note: the pick is uniform random — client-side scoring of
+// target IPs is deliberately NOT done here because in local mode the dial
+// succeeds as soon as the proxy handshake completes, which carries no signal
+// about whether the proxy server could actually reach the target.
+func pickTargetIP(c *Config, ips []net.IP) net.IP {
+	var v4, v6 []netip.Addr
+	for _, ip := range ips {
+		addr, ok := netip.AddrFromSlice(ip)
+		if !ok {
+			continue
+		}
+		addr = addr.Unmap()
+		if addr.Is4() {
+			v4 = append(v4, addr)
+		} else {
+			v6 = append(v6, addr)
+		}
+	}
+
+	// Keep the historical PreferIPv4 semantics on this path: when the
+	// domain has both families, prefer means v4 only.
+	noIPv6 := c.NoIPv6
+	if c.PreferIPv4 && !c.NoIPv6 && len(v4) > 0 && len(v6) > 0 {
+		noIPv6 = true
+	}
+
+	var cand []netip.Addr
+	if !c.NoIPv4 {
+		cand = append(cand, v4...)
+	}
+	if !noIPv6 {
+		cand = append(cand, v6...)
+	}
+	if len(cand) == 0 {
+		return nil
+	}
+
+	return net.IP(cand[rand.IntN(len(cand))].AsSlice())
 }
 
 func dialSSWithOptions(opt *DialOptions) (conn Conn, err error) {

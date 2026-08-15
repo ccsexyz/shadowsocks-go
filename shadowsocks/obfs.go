@@ -2,9 +2,11 @@ package ss
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"math/rand/v2"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -827,6 +829,21 @@ func DialWsConn(address, host string, cfg *cfg) (Conn, error) {
 		ReadBufferSize:  10240,
 		WriteBufferSize: 10240,
 		Subprotocols:    []string{"0.0.1"},
+	}
+
+	// Route the underlying TCP dial through ipselect so dual-stack proxy
+	// addresses get raced/scored too.
+	mode := normalizeIPSelectMode(cfg.IPSelect)
+	if mode != ipSelectOff {
+		policy := newIPSelPolicy(cfg)
+		useScore := mode == ipSelectSmart
+		var cache *ipScoreCache
+		if useScore {
+			cache = cfg.getIPSelectCache()
+		}
+		d.NetDialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+			return dialIPSelect(ctx, network, addr, policy, cache, useScore)
+		}
 	}
 
 	reqHeader := make(http.Header)

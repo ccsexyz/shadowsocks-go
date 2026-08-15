@@ -489,66 +489,70 @@ func handleGetConfigRaw(w http.ResponseWriter, r *http.Request) {
 	c := cfgs[idx]
 	// build a masked version for safe display
 	type safeConfig struct {
-		Nickname     string   `json:"nickname"`
-		Type         string   `json:"type"`
-		LocalAddr    string   `json:"localaddr"`
-		LocalAddrs   []string `json:"localaddrs,omitempty"`
-		RemoteAddr   string   `json:"remoteaddr"`
-		Method       string   `json:"method"`
-		Password     string   `json:"password"`
-		UDPRelay     bool     `json:"udprelay"`
-		Verbose      bool     `json:"verbose"`
-		Debug        bool     `json:"debug"`
-		Safe         bool     `json:"safe"`
-		Timeout      int      `json:"timeout"`
-		Obfs         bool     `json:"obfs"`
-		ObfsMethod   string   `json:"obfsmethod,omitempty"`
-		AutoProxy    bool     `json:"autoproxy"`
-		LogHTTP      bool     `json:"loghttp"`
-		SSProxy      bool     `json:"ssproxy"`
-		AllowHTTP    bool     `json:"allow_http"`
-		SecureOrigin bool     `json:"secure_origin"`
-		MITM         bool     `json:"mitm"`
-		Direct       bool     `json:"direct"`
-		PreferIPv4   bool     `json:"prefer_ipv4"`
-		NoIPv4       bool     `json:"no_ipv4"`
-		NoIPv6       bool     `json:"no_ipv6"`
-		LocalResolve bool     `json:"local_resolve"`
-		Limit        int      `json:"limit"`
-		LimitPerConn int      `json:"limitperconn"`
-		AdminAddr    string   `json:"adminaddr,omitempty"`
-		BackendCount int      `json:"backendCount"`
+		Nickname        string   `json:"nickname"`
+		Type            string   `json:"type"`
+		LocalAddr       string   `json:"localaddr"`
+		LocalAddrs      []string `json:"localaddrs,omitempty"`
+		RemoteAddr      string   `json:"remoteaddr"`
+		Method          string   `json:"method"`
+		Password        string   `json:"password"`
+		UDPRelay        bool     `json:"udprelay"`
+		Verbose         bool     `json:"verbose"`
+		Debug           bool     `json:"debug"`
+		Safe            bool     `json:"safe"`
+		Timeout         int      `json:"timeout"`
+		Obfs            bool     `json:"obfs"`
+		ObfsMethod      string   `json:"obfsmethod,omitempty"`
+		AutoProxy       bool     `json:"autoproxy"`
+		LogHTTP         bool     `json:"loghttp"`
+		SSProxy         bool     `json:"ssproxy"`
+		AllowHTTP       bool     `json:"allow_http"`
+		SecureOrigin    bool     `json:"secure_origin"`
+		MITM            bool     `json:"mitm"`
+		Direct          bool     `json:"direct"`
+		PreferIPv4      bool     `json:"prefer_ipv4"`
+		NoIPv4          bool     `json:"no_ipv4"`
+		NoIPv6          bool     `json:"no_ipv6"`
+		LocalResolve    bool     `json:"local_resolve"`
+		IPSelect        string   `json:"ipselect"`
+		IPSelectDelayMs int      `json:"ipselect_delay_ms"`
+		Limit           int      `json:"limit"`
+		LimitPerConn    int      `json:"limitperconn"`
+		AdminAddr       string   `json:"adminaddr,omitempty"`
+		BackendCount    int      `json:"backendCount"`
 	}
 	sc := safeConfig{
-		Nickname:     c.Nickname,
-		Type:         c.Type,
-		LocalAddr:    c.Localaddr,
-		LocalAddrs:   c.Localaddrs,
-		RemoteAddr:   c.Remoteaddr,
-		Method:       c.Method,
-		Password:     maskPassword(c.Password),
-		UDPRelay:     c.UDPRelay,
-		Verbose:      c.Verbose,
-		Debug:        c.Debug,
-		Safe:         c.Safe,
-		Timeout:      c.Timeout,
-		Obfs:         c.Obfs,
-		ObfsMethod:   c.ObfsMethod,
-		AutoProxy:    c.AutoProxy,
-		LogHTTP:      c.LogHTTP,
-		SSProxy:      c.SSProxy,
-		AllowHTTP:    c.AllowHTTP,
-		SecureOrigin: c.SecureOrigin,
-		MITM:         c.MITM,
-		Direct:       c.Direct,
-		PreferIPv4:   c.PreferIPv4,
-		NoIPv4:       c.NoIPv4,
-		NoIPv6:       c.NoIPv6,
-		LocalResolve: c.LocalResolve,
-		Limit:        c.Limit,
-		LimitPerConn: c.LimitPerConn,
-		AdminAddr:    c.AdminAddr,
-		BackendCount: len(c.Backends),
+		Nickname:        c.Nickname,
+		Type:            c.Type,
+		LocalAddr:       c.Localaddr,
+		LocalAddrs:      c.Localaddrs,
+		RemoteAddr:      c.Remoteaddr,
+		Method:          c.Method,
+		Password:        maskPassword(c.Password),
+		UDPRelay:        c.UDPRelay,
+		Verbose:         c.Verbose,
+		Debug:           c.Debug,
+		Safe:            c.Safe,
+		Timeout:         c.Timeout,
+		Obfs:            c.Obfs,
+		ObfsMethod:      c.ObfsMethod,
+		AutoProxy:       c.AutoProxy,
+		LogHTTP:         c.LogHTTP,
+		SSProxy:         c.SSProxy,
+		AllowHTTP:       c.AllowHTTP,
+		SecureOrigin:    c.SecureOrigin,
+		MITM:            c.MITM,
+		Direct:          c.Direct,
+		PreferIPv4:      c.PreferIPv4,
+		NoIPv4:          c.NoIPv4,
+		NoIPv6:          c.NoIPv6,
+		LocalResolve:    c.LocalResolve,
+		IPSelect:        c.IPSelect,
+		IPSelectDelayMs: c.IPSelectDelayMs,
+		Limit:           c.Limit,
+		LimitPerConn:    c.LimitPerConn,
+		AdminAddr:       c.AdminAddr,
+		BackendCount:    len(c.Backends),
 	}
 	writeJSON(w, sc)
 }
@@ -956,6 +960,34 @@ func handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 				c.LocalResolve = v
 				ok = true
 			}
+		case "ipselect":
+			if v, e := toString(val); e == nil {
+				switch v {
+				case ipSelectSmart, ipSelectRace, ipSelectOff:
+					// Deliberately overrides per-backend values, matching the
+					// existing timeout settings behavior.
+					c.IPSelect = v
+					for _, b := range c.Backends {
+						b.IPSelect = v
+					}
+					ok = true
+				}
+			}
+		case "ipselect_delay_ms":
+			if v, e := toInt(val); e == nil && v >= 0 {
+				// 0 means "reset to default"; store the normalized value so
+				// GET /config reflects what dialIPSelect actually uses.
+				if v == 0 {
+					v = defaultIPSelectDelayMs
+				} else if v > maxIPSelectDelayMs {
+					v = maxIPSelectDelayMs
+				}
+				c.IPSelectDelayMs = v
+				for _, b := range c.Backends {
+					b.IPSelectDelayMs = v
+				}
+				ok = true
+			}
 		case "udprelay":
 			if v, e := toBool(val); e == nil {
 				c.UDPRelay = v
@@ -1056,7 +1088,8 @@ func handleUpdateBackend(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "index out of range", http.StatusNotFound)
 		return
 	}
-	b := findBackend(cfgs[idx], nickname)
+	parent := cfgs[idx]
+	b := findBackend(parent, nickname)
 	if b == nil {
 		http.Error(w, "backend not found", http.StatusNotFound)
 		return
@@ -1089,6 +1122,29 @@ func handleUpdateBackend(w http.ResponseWriter, r *http.Request) {
 				b.Password = v
 				b.Ivlen = 0
 				CheckBasicConfig(b)
+				ok = true
+			}
+		case "ipselect":
+			if v, e := toString(val); e == nil {
+				switch v {
+				case ipSelectSmart, ipSelectRace, ipSelectOff:
+					b.IPSelect = v
+					ok = true
+				}
+			}
+		case "ipselect_delay_ms":
+			if v, e := toInt(val); e == nil && v >= 0 {
+				// Backend-level 0 means "inherit the parent value", matching
+				// CheckConfig backend inheritance.
+				if v == 0 {
+					v = parent.IPSelectDelayMs
+					if v <= 0 {
+						v = defaultIPSelectDelayMs
+					}
+				} else if v > maxIPSelectDelayMs {
+					v = maxIPSelectDelayMs
+				}
+				b.IPSelectDelayMs = v
 				ok = true
 			}
 		}
@@ -1173,6 +1229,8 @@ func handleAddBackend(w http.ResponseWriter, r *http.Request) {
 	b.LogHTTP = c.LogHTTP
 	b.Timeout = c.Timeout
 	b.PreferIPv4 = c.PreferIPv4
+	b.IPSelect = c.IPSelect
+	b.IPSelectDelayMs = c.IPSelectDelayMs
 	b.Obfs = c.Obfs
 	b.ObfsHost = append([]string{}, c.ObfsHost...)
 	b.setAutoProxyCtx(c.getAutoProxyCtx())

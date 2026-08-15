@@ -34,17 +34,28 @@ type ObfsConfig struct {
 
 // NetworkConfig groups network addressing and routing configuration.
 type NetworkConfig struct {
-	Type           string   `json:"type"`
-	Localaddr      string   `json:"localaddr"`
-	Localaddrs     []string `json:"localaddrs"`
-	Remoteaddr     string   `json:"remoteaddr"`
-	Timeout        int      `json:"timeout"`
-	PreferIPv4     bool     `json:"prefer_ipv4"`
-	NoIPv4         bool     `json:"no_ipv4"`
-	NoIPv6         bool     `json:"no_ipv6"`
-	LocalResolve   bool     `json:"local_resolve"`
-	RtunnelService string   `json:"rtunnelservice"`
-	Forward        string   `json:"forward,omitempty"`
+	Type       string   `json:"type"`
+	Localaddr  string   `json:"localaddr"`
+	Localaddrs []string `json:"localaddrs"`
+	Remoteaddr string   `json:"remoteaddr"`
+	Timeout    int      `json:"timeout"`
+	// PreferIPv4 means different things by path:
+	//   - DialTCP/ipselect: IPv4 candidates start first; IPv6 is still raced after the stagger.
+	//   - LocalResolve pickTargetIP: dual-stack domains resolve to IPv4 only.
+	PreferIPv4 bool `json:"prefer_ipv4"`
+	NoIPv4     bool `json:"no_ipv4"`
+	NoIPv6     bool `json:"no_ipv6"`
+	// LocalResolve selects the target IP client-side.
+	LocalResolve bool `json:"local_resolve"`
+	// IPSelect is one of smart, race or off. Empty and invalid values fall
+	// back to off in CheckBasicConfig.
+	IPSelect string `json:"ipselect,omitempty"`
+	// IPSelectDelayMs is the stagger between raced candidates. 0 or negative
+	// means "use defaultIPSelectDelayMs"; values above maxIPSelectDelayMs are
+	// clamped.
+	IPSelectDelayMs int    `json:"ipselect_delay_ms,omitempty"`
+	RtunnelService  string `json:"rtunnelservice"`
+	Forward         string `json:"forward,omitempty"`
 }
 
 // HttpConfig groups HTTP-related configuration.
@@ -74,25 +85,27 @@ type ProxyConfig struct {
 
 // runtime holds all live state for a Config. It is never JSON-serialized.
 type runtime struct {
-	limiters      []*Limiter
-	Vlogger       *log.Logger
-	Dlogger       *log.Logger
-	Logger        *log.Logger
-	Any           any
-	Die           chan bool
-	closers       []cb
-	tcpFilterLock sync.Mutex
-	tcpFilterOnce sync.Once
-	tcpFilter     bytesFilter
-	udpFilterOnce sync.Once
-	udpFilter     bytesFilter
-	tcpIvChecker  ivChecker
-	autoProxyCtx  *autoProxy
-	chnListCtx    *chnRouteList
-	crctbl        *crc32.Table
-	disable       bool
-	stat          *statServer
-	dialHealth    *dialHealth
+	limiters       []*Limiter
+	Vlogger        *log.Logger
+	Dlogger        *log.Logger
+	Logger         *log.Logger
+	Any            any
+	Die            chan bool
+	closers        []cb
+	tcpFilterLock  sync.Mutex
+	tcpFilterOnce  sync.Once
+	tcpFilter      bytesFilter
+	udpFilterOnce  sync.Once
+	udpFilter      bytesFilter
+	tcpIvChecker   ivChecker
+	autoProxyCtx   *autoProxy
+	chnListCtx     *chnRouteList
+	crctbl         *crc32.Table
+	disable        bool
+	stat           *statServer
+	dialHealth     *dialHealth
+	ipSelCache     *ipScoreCache
+	ipSelCacheOnce sync.Once
 }
 
 type dialHealth struct {
@@ -376,6 +389,16 @@ func (c *Config) initDialHealth() *dialHealth {
 	return rt.dialHealth
 }
 
+func (c *Config) getIPSelectCache() *ipScoreCache {
+	rt := c.initRuntime()
+	rt.ipSelCacheOnce.Do(func() {
+		if rt.ipSelCache == nil {
+			rt.ipSelCache = newIPScoreCache()
+		}
+	})
+	return rt.ipSelCache
+}
+
 func (c *Config) GetTargetTracker() *TargetTracker {
 	if s := c.getStat(); s != nil {
 		return s.targetTracker
@@ -493,6 +516,23 @@ func CheckBasicConfig(c *Config) {
 	if c.FilterCapacity == 0 {
 		c.FilterCapacity = defaultFilterCapacity
 	}
+	if normalized := normalizeIPSelectMode(c.IPSelect); normalized != c.IPSelect {
+		if c.IPSelect != "" {
+			rt.Logger.Printf("invalid ipselect %q, fallback to %q", c.IPSelect, normalized)
+		}
+		c.IPSelect = normalized
+	}
+	// 0 and negative values mean "use the default stagger"; explicit values
+	// are normalized here so admin/config readers see what actually runs.
+	if c.IPSelectDelayMs <= 0 {
+		c.IPSelectDelayMs = defaultIPSelectDelayMs
+	} else if c.IPSelectDelayMs > maxIPSelectDelayMs {
+		rt.Logger.Printf("ipselect_delay_ms %d too large, clamped to %d", c.IPSelectDelayMs, maxIPSelectDelayMs)
+		c.IPSelectDelayMs = maxIPSelectDelayMs
+	}
+	if c.IPSelect == ipSelectSmart {
+		c.getIPSelectCache() // initialize before concurrent dials start
+	}
 	rt.crctbl = crc32.MakeTable(crc32.ChecksumIEEE(utils.StringToSlice(c.Password)))
 }
 
@@ -568,6 +608,12 @@ func CheckConfig(c *Config) {
 		}
 		if c.PreferIPv4 {
 			v.PreferIPv4 = true
+		}
+		if v.IPSelect == "" {
+			v.IPSelect = c.IPSelect
+		}
+		if v.IPSelectDelayMs <= 0 {
+			v.IPSelectDelayMs = c.IPSelectDelayMs
 		}
 		if parentRt.autoProxyCtx != nil {
 			v.initRuntime().autoProxyCtx = parentRt.autoProxyCtx

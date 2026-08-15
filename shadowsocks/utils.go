@@ -462,6 +462,33 @@ func DialTCP(address string, cfg *cfg) (*BaseConn, error) {
 		return newBaseConn(conn, cfg), nil
 	}
 
+	mode := normalizeIPSelectMode(cfg.IPSelect)
+
+	var (
+		netconn net.Conn
+		err     error
+	)
+	if mode == ipSelectOff {
+		netconn, err = dialTCPLegacy(address, cfg)
+	} else {
+		policy := newIPSelPolicy(cfg)
+		useScore := mode == ipSelectSmart
+		var cache *ipScoreCache
+		if useScore {
+			cache = cfg.getIPSelectCache()
+		}
+		netconn, err = dialIPSelect(context.Background(), "tcp", address, policy, cache, useScore)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return newBaseConn(netconn, cfg), nil
+}
+
+// dialTCPLegacy preserves the pre-ipselect dial behavior for
+// ipselect == "off".
+func dialTCPLegacy(address string, cfg *cfg) (net.Conn, error) {
 	var protocol string
 	dialCtx := context.Background()
 
@@ -484,11 +511,7 @@ func DialTCP(address string, cfg *cfg) (*BaseConn, error) {
 	if err != nil && protocol == "tcp4" && !cfg.NoIPv6 && cfg.PreferIPv4 && isAddrDualStack(address) {
 		netconn, err = d.DialContext(context.Background(), "tcp", address)
 	}
-	if err != nil {
-		return nil, err
-	}
-
-	return newBaseConn(netconn, cfg), nil
+	return netconn, err
 }
 
 func DialTCPConn(address string, cfg *cfg) (Conn, error) {
