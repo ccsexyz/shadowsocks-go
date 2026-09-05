@@ -414,8 +414,6 @@ body.dark .error-banner {
 /* Badge color mapping */
 .badge-local { color: var(--success); background: var(--success-container); }
 .badge-server { color: var(--primary); background: var(--primary-container); }
-.badge-redir { color: #b06000; background: #fef7e0; }
-body.dark .badge-redir { color: #fdd663; background: #3d2e0a; }
 .badge-multiserver { color: #9334e6; background: #f3e8fd; }
 body.dark .badge-multiserver { color: #c58af9; background: #2d1b4e; }
 .badge-ssproxy { color: #e8710a; background: #fef0e6; }
@@ -1501,6 +1499,59 @@ body.dark .bw-bar-fill.w { background: var(--primary); }
 
 <script>
 /* =========================================================
+   Admin token
+   When the server runs with `admintoken` set, every /api/* call must carry
+   it. Fetches are wrapped to attach X-Admin-Token from sessionStorage, and
+   EventSource (which cannot send headers) appends ?token= — the server
+   accepts both. On the first 401 the user is prompted once; a reload
+   retries with the stored token. Set ahead of time with:
+   sessionStorage.setItem('ss-admin-token', '<token>')
+   ========================================================= */
+(function() {
+  function getToken() { return sessionStorage.getItem('ss-admin-token') || ''; }
+
+  const origFetch = window.fetch ? window.fetch.bind(window) : null;
+  if (origFetch) {
+    window.fetch = function(input, init) {
+      const tok = getToken();
+      if (!tok) return origFetch(input, init);
+      init = Object.assign({}, init);
+      const headers = new Headers(init.headers || (input && input.headers) || {});
+      if (!headers.has('X-Admin-Token')) headers.set('X-Admin-Token', tok);
+      init.headers = headers;
+      return origFetch(input, init).then(function(resp) {
+        if (resp.status === 401) promptForToken();
+        return resp;
+      });
+    };
+  }
+
+  const OrigEventSource = window.EventSource;
+  if (OrigEventSource) {
+    window.EventSource = function(url, cfg) {
+      const tok = getToken();
+      if (tok) url += (url.indexOf('?') === -1 ? '?' : '&') + 'token=' + encodeURIComponent(tok);
+      return new OrigEventSource(url, cfg);
+    };
+    window.EventSource.prototype = OrigEventSource.prototype;
+  }
+
+  let prompting = false;
+  let lastPromptAt = 0;
+  function promptForToken() {
+    // Cooldown: a cancelled prompt used to re-pop on every later 401.
+    if (prompting || Date.now() - lastPromptAt < 30000) return;
+    prompting = true;
+    const t = window.prompt('This admin API requires the admintoken.\nEnter token:');
+    prompting = false;
+    lastPromptAt = Date.now();
+    if (t !== null && t.trim() !== '') {
+      sessionStorage.setItem('ss-admin-token', t.trim());
+    }
+  }
+})();
+
+/* =========================================================
    Theme
    ========================================================= */
 (function() {
@@ -1553,7 +1604,7 @@ function fmtDuration(s) {
 }
 
 function badgeClass(type) {
-  const map = { local: 'local', server: 'server', redir: 'redir', multiserver: 'multiserver',
+  const map = { local: 'local', server: 'server', multiserver: 'multiserver',
     ssproxy: 'ssproxy', socksproxy: 'socksproxy', tcptun: 'tcptun', udptun: 'udptun', wstunnel: 'wstunnel', switch: 'switch' };
   return 'badge badge-' + (map[type] || 'server');
 }
@@ -1572,7 +1623,7 @@ function shouldUpdateToggle(cardEntry, toggleName) {
 }
 
 function apiToggle(url, body, cardEntry, toggleName) {
-  fetch(url, { method: 'PUT', body: JSON.stringify(body) })
+  fetch(url, { method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) })
     .catch(e => showError(e.message));
   if (cardEntry) cardEntry.toggles[toggleName] = now();
 }
@@ -2280,7 +2331,17 @@ function sortArrow(col) {
   const cls = connSortAsc ? 'asc' : 'desc';
   return '<span class="sort-arrow ' + cls + '">' + (connSortAsc ? '▲' : '▼') + '</span>';
 }
-function escAttr(v) { return v.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function escAttr(v) {
+  // Used only inside onclick="fn('<value>')" builders: escape the JS string
+  // literal layer (backslash, quote) and the HTML attribute layer (& " < >).
+  return String(v)
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'")
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
 
 // Cache of last-fetched connections for client-side filtering without re-fetch
 var cachedConns = null;
@@ -2442,14 +2503,14 @@ function settingNumber(index, label, val, key) {
 function applyBoolSetting(index, key, val) {
   const body = {};
   body[key] = val;
-  fetch('/api/configs/' + index + '/settings', { method: 'PUT', body: JSON.stringify(body) })
+  fetch('/api/configs/' + index + '/settings', { method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) })
     .catch(e => showError(e.message));
 }
 
 function applyNumSetting(index, key, val) {
   const body = {};
   body[key] = parseInt(val) || 0;
-  fetch('/api/configs/' + index + '/settings', { method: 'PUT', body: JSON.stringify(body) })
+  fetch('/api/configs/' + index + '/settings', { method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) })
     .catch(e => showError(e.message));
 }
 
@@ -2492,7 +2553,7 @@ function updateBackend(index, nickname, form) {
   if (pass) body.password = pass;
   if (!Object.keys(body).length) return;
   fetch('/api/configs/' + index + '/backends/' + encodeURIComponent(nickname), {
-    method: 'PUT', body: JSON.stringify(body)
+    method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
   }).then(r => r.json()).then(d => {
     if (d.status === 'ok') {
       form.parentElement.remove();
@@ -2510,6 +2571,7 @@ function addBackend(index, btn) {
   if (!nick || !addr) return;
   fetch('/api/configs/' + index + '/backends', {
     method: 'POST',
+    headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({ nickname: nick, remoteaddr: addr, method: meth, password: pass })
   }).then(r => r.json()).then(d => {
     if (d.status === 'ok') {
@@ -2609,9 +2671,8 @@ function esc(s) {
   return d.innerHTML;
 }
 
-function escAttr(s) {
-  return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
+// escAttr is defined once, in the token bootstrap block above; every
+// onclick="fn('...')" builder must use it for interpolated values.
 
 function dispName(cfg) {
   const prefix = cfg.type + '-';

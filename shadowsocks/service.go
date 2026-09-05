@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"net"
 	"strconv"
 	"strings"
 	"sync"
@@ -25,8 +26,57 @@ func bultinServiceHandler(conn Conn, lis *listener) AcceptResult {
 	if !ok {
 		return AcceptResult{AcceptContinue, conn}
 	}
+	// The built-in admin service is reachable by any proxy client by simply
+	// connecting to admin:6666 through the listener; restrict it to local
+	// sources (in-process connections have no TCP/UDP remote address).
+	if dst == adminaddr && !isLocalSource(conn) {
+		lis.c.Log("reject remote admin service access from", conn.RemoteAddr())
+		// The listener's Accept loop only closes connections on AcceptReject;
+		// AcceptDrop hands ownership to the handler, and this rejection path
+		// returns no handler — so close here or the decrypted connection
+		// (FD + buffers) leaks per attempt.
+		conn.Close()
+		return AcceptResult{AcceptDrop, nil}
+	}
 	handler := v.(AcceptHandler)
 	return handler(conn, lis)
+}
+
+func isLocalSource(conn Conn) bool {
+	ra := conn.RemoteAddr()
+	if ra == nil {
+		return true
+	}
+	switch a := ra.(type) {
+	case *net.TCPAddr:
+		return a.IP.IsLoopback()
+	case *net.UDPAddr:
+		return a.IP.IsLoopback()
+	default:
+		return true
+	}
+}
+
+// The HTTP admin API mutates these live Config fields under adminWriteMu;
+// the virtual admin service must hold the same lock so its writes don't
+// race the dial/accept paths that read them (same convention as
+// Config.dialPolicy in config.go).
+func setDisabledWithLock(c *Config, v bool) {
+	adminWriteMu.Lock()
+	c.setDisabled(v)
+	adminWriteMu.Unlock()
+}
+
+func setAutoProxyWithLock(c *Config, v bool) {
+	adminWriteMu.Lock()
+	c.AutoProxy = v
+	adminWriteMu.Unlock()
+}
+
+func setLogHTTPWithLock(c *Config, v bool) {
+	adminWriteMu.Lock()
+	c.LogHTTP = v
+	adminWriteMu.Unlock()
 }
 
 // StoreServiceHandler stores the handler to services map with key addr
@@ -65,9 +115,9 @@ func disableBackend(lis *listener, nickname string) (ok bool) {
 	if lis == nil || lis.c == nil || len(nickname) == 0 {
 		return
 	}
-	for _, v := range lis.c.Backends {
+	for _, v := range lis.c.SnapshotBackends() {
 		if v.Nickname == nickname {
-			v.setDisabled(true)
+			setDisabledWithLock(v, true)
 			ok = true
 			return
 		}
@@ -79,9 +129,9 @@ func enableBackend(lis *listener, nickname string) (ok bool) {
 	if lis == nil || lis.c == nil || len(nickname) == 0 {
 		return
 	}
-	for _, v := range lis.c.Backends {
+	for _, v := range lis.c.SnapshotBackends() {
 		if v.Nickname == nickname {
-			v.setDisabled(false)
+			setDisabledWithLock(v, false)
 			ok = true
 			return
 		}
@@ -180,9 +230,9 @@ func adminHandler(conn Conn, lis *listener) (result AcceptResult) {
 	if len(strs) == 2 {
 		cmd := strs[1]
 		if cmd == cmdEnable {
-			lis.c.setDisabled(false)
+			setDisabledWithLock(lis.c, false)
 		} else if cmd == cmdDisable {
-			lis.c.setDisabled(true)
+			setDisabledWithLock(lis.c, true)
 		} else if cmd == cmdStatus {
 			sendStatusPage(conn, lis.c.getStat())
 			return
@@ -207,20 +257,20 @@ func adminHandler(conn Conn, lis *listener) (result AcceptResult) {
 	case "autoproxy":
 		if nickname == cmdDisable {
 			ok = true
-			lis.c.AutoProxy = false
+			setAutoProxyWithLock(lis.c, false)
 		} else if nickname == cmdEnable {
 			ok = true
-			lis.c.AutoProxy = true
+			setAutoProxyWithLock(lis.c, true)
 		} else {
 			err = errInvalidCommand
 		}
 	case "loghttp":
 		if nickname == cmdDisable {
 			ok = true
-			lis.c.LogHTTP = false
+			setLogHTTPWithLock(lis.c, false)
 		} else if nickname == cmdEnable {
 			ok = true
-			lis.c.LogHTTP = true
+			setLogHTTPWithLock(lis.c, true)
 		} else {
 			err = errInvalidCommand
 		}

@@ -324,6 +324,13 @@ func IsAEAD2022(method string) bool {
 	}
 }
 
+// HasMethod reports whether method is a known cipher method name.
+// "socks5" is a client-only pseudo method handled outside this package.
+func HasMethod(method string) bool {
+	_, ok := cipherMethod[method]
+	return ok
+}
+
 func GetIvLen(method string) int {
 	m, ok := cipherMethod[method]
 	if ok {
@@ -339,16 +346,12 @@ func NewEncrypter(method, password string) (enc CipherStream, err error) {
 	}
 	m, ok := cipherMethod[method]
 	if !ok {
-		m = cipherMethod[DefaultMethod]
+		err = errInvalidMethod
+		return
 	}
 	if m.is2022 {
-		psk, derr := DecodePSK(password, m.keylen)
-		if derr != nil {
-			err = derr
-			return
-		}
-		salt := GetRandomBytes(m.keylen)
-		enc, err = m.newEncrypter(psk, salt)
+		// 2022 methods do not support the CipherStream API; use TcpCipher2022.
+		err = errInvalidMethod
 		return
 	}
 	iv := GetRandomBytes(m.ivlen)
@@ -367,15 +370,12 @@ func NewDecrypter(method, password string) (dec CipherStream, err error) {
 	}
 	m, ok := cipherMethod[method]
 	if !ok {
-		m = cipherMethod[DefaultMethod]
+		err = errInvalidMethod
+		return
 	}
 	if m.is2022 {
-		psk, derr := DecodePSK(password, m.keylen)
-		if derr != nil {
-			err = derr
-			return
-		}
-		dec, err = m.newDecrypter(psk, m.ivlen)
+		// 2022 methods do not support the CipherStream API; use TcpCipher2022.
+		err = errInvalidMethod
 		return
 	}
 	dec, err = m.newDecrypter(kdf(password, m.keylen), m.ivlen)

@@ -65,7 +65,9 @@ func TestParseAddrWithMultipleBackendsForUDP_2022(t *testing.T) {
 
 	header := []byte{1, 127, 0, 0, 1, 0, 80}
 	payload := []byte("test-payload-2022")
-	plaintext := append(header, payload...)
+	// A 2022 tunnel carries SIP022 payloads exclusively: wrap the bare
+	// ATYP+payload before encrypting.
+	plaintext := crypto.BuildSIP022Request(append(header, payload...))
 
 	enc, iv, err := cb.Encrypt(nil, plaintext)
 	if err != nil {
@@ -138,8 +140,10 @@ func TestParseAddrWithMultipleBackendsForUDP_2022IVIsEmpty(t *testing.T) {
 		t.Fatal("NewCipherBlock:", err)
 	}
 
+	// The 2022 payload must be SIP022-wrapped (format follows the cipher
+	// family); the classic packet below stays bare.
 	plaintext := []byte{1, 127, 0, 0, 1, 0, 80, 'x'}
-	enc, _, err := cb.Encrypt(nil, plaintext)
+	enc, _, err := cb.Encrypt(nil, crypto.BuildSIP022Request(plaintext))
 	if err != nil {
 		t.Fatal("Encrypt:", err)
 	}
@@ -178,10 +182,11 @@ func TestParseAddrWithMultipleBackendsForUDP_Mixed2022AndNon2022(t *testing.T) {
 
 	psk32 := "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 
-	// Create a 2022-encrypted packet
+	// Create a 2022-encrypted packet (SIP022-wrapped plaintext: format
+	// follows the cipher family)
 	cb2022, _ := crypto.NewCipherBlock("2022-blake3-aes-256-gcm", psk32)
 	plaintext := []byte{3, 7, 'e', 'x', 'a', 'm', 'p', 'l', 'e', '.', 'c', 'o', 'm', 0, 0, 80, 'd', 'a', 't', 'a'}
-	enc2022, _, _ := cb2022.Encrypt(nil, plaintext)
+	enc2022, _, _ := cb2022.Encrypt(nil, crypto.BuildSIP022Request(plaintext))
 
 	backends := []*Config{
 		{CryptoConfig: CryptoConfig{Method: "aes-256-gcm", Password: "non2022-password"}},      // wrong for this packet

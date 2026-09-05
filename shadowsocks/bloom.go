@@ -22,6 +22,10 @@ func (b *bloomFilter) Close() error {
 	return nil
 }
 
+func (b *bloomFilter) Reset() {
+	b.f.ClearAll()
+}
+
 func (b *bloomFilter) TestAndAdd(v []byte) bool {
 	if b == nil || b.f == nil {
 		return false

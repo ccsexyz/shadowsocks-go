@@ -1,12 +1,14 @@
 package ss
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 )
 
 func TestConfig_RuntimeInit(t *testing.T) {
 	c := &Config{}
-	if c.rt != nil {
+	if c.rt.Load() != nil {
 		t.Error("runtime should be nil before init")
 	}
 
@@ -193,5 +195,67 @@ func TestConfig_DieChannel(t *testing.T) {
 	_, ok := <-die
 	if ok {
 		t.Error("Die channel should be closed after Close")
+	}
+}
+
+// TestReadConfigRejectsEmptyOrNullConfigs pins the nil-entry filter in
+// ReadConfig: "[null]" unmarshals into a slice with a nil entry that used to
+// panic in CheckConfig, and an empty file used to yield zero servers and
+// start silently.
+func TestReadConfigRejectsEmptyOrNullConfigs(t *testing.T) {
+	dir := t.TempDir()
+	for _, content := range []string{"[null]", "null", "[]", ""} {
+		p := filepath.Join(dir, "cfg.json")
+		if err := os.WriteFile(p, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ReadConfig(p); err == nil {
+			t.Errorf("ReadConfig(%q) should return an error, got nil", content)
+		}
+	}
+}
+
+// TestCheckBasicConfigOwnLimiterPreservesParent pins the limiter-ownership
+// rule: a backend created with Limit==0 inherits the parent limiters; a
+// later admin edit that sets Limit must prepend the config's own limiter
+// instead of overwriting slot 0 (which held the inherited parent limiter),
+// and repeated CheckBasicConfig calls must keep replacing only the own slot.
+func TestCheckBasicConfigOwnLimiterPreservesParent(t *testing.T) {
+	c := &Config{}
+	CheckBasicConfig(c)
+	if len(c.getLimiters()) != 0 {
+		t.Fatalf("Limit==0 must not create a limiter, got %d", len(c.getLimiters()))
+	}
+
+	// Simulate handleAddBackend inheriting the parent's limiters.
+	parentLimiter := NewLimiter(5000)
+	c.initRuntime().limiters = append(c.initRuntime().limiters, parentLimiter)
+
+	c.Limit = 100
+	CheckBasicConfig(c)
+	ls := c.getLimiters()
+	if len(ls) != 2 {
+		t.Fatalf("limiter count = %d, want own + inherited", len(ls))
+	}
+	if ls[1] != parentLimiter {
+		t.Fatal("inherited parent limiter was clobbered by the own limiter")
+	}
+	if ls[0].GetLimit() != 100 {
+		t.Fatalf("own limiter limit = %d, want 100", ls[0].GetLimit())
+	}
+
+	// Re-running CheckBasicConfig (admin edits method/password) replaces the
+	// own limiter only.
+	c.Limit = 200
+	CheckBasicConfig(c)
+	ls = c.getLimiters()
+	if len(ls) != 2 {
+		t.Fatalf("limiter count = %d after re-check, want 2 (no stacking)", len(ls))
+	}
+	if ls[1] != parentLimiter {
+		t.Fatal("parent limiter lost on re-check")
+	}
+	if ls[0].GetLimit() != 200 {
+		t.Fatalf("own limiter limit = %d, want 200", ls[0].GetLimit())
 	}
 }

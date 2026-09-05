@@ -22,7 +22,6 @@ func TestConnLoggerWriteAndRotate(t *testing.T) {
 
 	// Register and close a connection. Unregister triggers the write.
 	rec := tracker.Register("192.168.1.1:12345", "10.0.0.1:443", "example.com")
-	rec.EndTime = timePtr(time.Now())
 	tracker.Unregister(rec)
 
 	// Verify the log file was created with today's date.
@@ -47,8 +46,16 @@ func TestConnLoggerWriteAndRotate(t *testing.T) {
 	if got.Host != "example.com" {
 		t.Errorf("Host = %q, want %q", got.Host, "example.com")
 	}
-	if got.EndTime == nil {
-		t.Error("EndTime should not be nil")
+	// endTime is produced by the custom MarshalJSON; verify it survives the
+	// round trip.
+	var aux struct {
+		EndTime *time.Time `json:"endTime"`
+	}
+	if err := json.Unmarshal(data[:len(data)-1], &aux); err != nil {
+		t.Fatalf("failed to unmarshal endTime: %v", err)
+	}
+	if aux.EndTime == nil {
+		t.Error("endTime should be present in logged JSON")
 	}
 }
 

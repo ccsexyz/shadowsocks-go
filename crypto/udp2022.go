@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"io"
 	"math/bits"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -20,6 +21,10 @@ const (
 	udp2022SessionTimeout = 60 * time.Second
 	udp2022WindowSize     = 8192 // bits (matches shadowsocks-rust)
 )
+
+// Cap on the number of live receive sessions, matching the capacity of
+// shadowsocks-rust's CIPHER_CACHE. A var so tests can shrink it.
+var udp2022MaxSessions = 102400
 
 // --- sliding window (ring buffer) ---
 
@@ -75,7 +80,6 @@ func (w *slidingWindow) check(id uint64) bool {
 
 type udpSession struct {
 	sessionKey []byte
-	sendPID    atomic.Uint64  // next packet ID for outgoing packets
 	recvWindow *slidingWindow // sliding window for incoming packets
 	lastSeen   atomic.Int64   // UnixNano of last activity
 }
@@ -83,6 +87,8 @@ type udpSession struct {
 // --- global session manager ---
 
 var udp2022Sessions sync.Map // uint64 (sessionID) → *udpSession
+var udp2022SessionCount atomic.Int64
+var udp2022Trimming atomic.Bool
 
 func udp2022GetSession(id uint64) *udpSession {
 	v, ok := udp2022Sessions.Load(id)
@@ -104,7 +110,55 @@ func udp2022CreateSession(id uint64, sessionKey []byte) *udpSession {
 	if loaded {
 		return actual.(*udpSession)
 	}
+	// Bound the table at insert time, not only at the 30s janitor: entries
+	// are fed by unauthenticated session IDs (AES separate headers are ECB,
+	// not authenticated), so between janitor runs a flood of garbage headers
+	// could otherwise grow the table without limit.
+	if udp2022SessionCount.Add(1) > int64(udp2022MaxSessions) {
+		udp2022TrimSessions()
+	}
 	return s
+}
+
+// udp2022DeleteSession removes a session and keeps the size counter honest.
+func udp2022DeleteSession(key any) {
+	if _, ok := udp2022Sessions.LoadAndDelete(key); ok {
+		udp2022SessionCount.Add(-1)
+	}
+}
+
+// udp2022TrimSessions evicts the least recently active sessions down to 90%
+// of the cap. A flood of new sessions pays at most one O(n log n) pass per
+// ~10% of headroom: concurrent trim attempts are collapsed via CAS.
+//
+// Security note: an evicted session that later receives traffic is recreated
+// with an empty replay window, so packets replayed within the ±30s timestamp
+// window become acceptable once more. This is the standard tradeoff of a
+// bounded session cache (shadowsocks-rust's CIPHER_CACHE behaves the same);
+// active sessions keep refreshing lastSeen on every packet, so eviction
+// under pressure targets idle ones first.
+func udp2022TrimSessions() {
+	if !udp2022Trimming.CompareAndSwap(false, true) {
+		return
+	}
+	defer udp2022Trimming.Store(false)
+	limit := udp2022MaxSessions - udp2022MaxSessions/10
+	type sessionEntry struct {
+		key      any
+		lastSeen int64
+	}
+	entries := make([]sessionEntry, 0, 1024)
+	udp2022Sessions.Range(func(key, value any) bool {
+		entries = append(entries, sessionEntry{key, value.(*udpSession).lastSeen.Load()})
+		return true
+	})
+	if len(entries) <= limit {
+		return
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].lastSeen < entries[j].lastSeen })
+	for _, e := range entries[:len(entries)-limit] {
+		udp2022DeleteSession(e.key)
+	}
 }
 
 func udp2022CleanupSessions() {
@@ -112,10 +166,13 @@ func udp2022CleanupSessions() {
 	udp2022Sessions.Range(func(key, value any) bool {
 		s := value.(*udpSession)
 		if now.Sub(time.Unix(0, s.lastSeen.Load())) > udp2022SessionTimeout {
-			udp2022Sessions.Delete(key)
+			udp2022DeleteSession(key)
 		}
 		return true
 	})
+	if udp2022SessionCount.Load() > int64(udp2022MaxSessions) {
+		udp2022TrimSessions()
+	}
 }
 
 func init() {
@@ -130,25 +187,62 @@ func init() {
 func randomSessionID() uint64 {
 	var b [8]byte
 	if _, err := crand.Read(b[:]); err != nil {
-		// Fallback to timestamp if crypto/rand fails (should never happen)
-		return randomSessionID()
+		// crypto/rand does not fail on supported platforms; fall back to the
+		// clock instead of recursing.
+		return uint64(time.Now().UnixNano())
 	}
 	return binary.BigEndian.Uint64(b[:])
 }
 
-// --- per-PSK session persistence ---
-// CipherBlock instances are created per-packet; outgoing session IDs
-// must persist outside the CipherBlock. Client and server use separate
-// maps so they don't share session IDs (per SIP022 §5.2).
+// --- per-PSK send state ---
+// CipherBlock instances are created per-packet, so the outgoing session ID
+// and the packet ID counter must persist outside them. The packet ID stays
+// monotonic even when the peer-side session entry (udp2022Sessions) expires
+// and is recreated: a reset would make the peer's replay window reject every
+// subsequent packet. Client and server use separate maps so they don't share
+// session IDs (per SIP022 §5.2).
 
-var clientOutSIDs sync.Map // string(psk) → uint64
-var serverOutSIDs sync.Map // string(psk) → uint64
+type udpSendState struct {
+	sid        uint64
+	pid        atomic.Uint64
+	keyOnce    sync.Once
+	sessionKey []byte // AES methods only: kdf2022(psk, sid), computed once
+}
 
-func outSIDsFor(role byte) *sync.Map {
-	if role == 0 {
-		return &clientOutSIDs
+func (st *udpSendState) sessionKeyFor(psk []byte) []byte {
+	st.keyOnce.Do(func() {
+		st.sessionKey = kdf2022(psk, uint64ToBytes(st.sid), len(psk))
+	})
+	return st.sessionKey
+}
+
+var clientSendStates = map[string]*udpSendState{} // string(psk) → *udpSendState
+var serverSendStates = map[string]*udpSendState{} // string(psk) → *udpSendState
+var sendStatesMu sync.RWMutex
+
+// sendStateFor returns the per-PSK send state, creating it on first use.
+// A plain RWMutex-guarded map (instead of sync.Map) keeps the per-packet
+// hit path allocation-free: the map index optimizes string(psk) away, while
+// sync.Map's any-typed key/value would box both on every packet.
+func sendStateFor(role byte, psk []byte) *udpSendState {
+	m := &clientSendStates
+	if role != 0 {
+		m = &serverSendStates
 	}
-	return &serverOutSIDs
+	sendStatesMu.RLock()
+	st, ok := (*m)[string(psk)]
+	sendStatesMu.RUnlock()
+	if ok {
+		return st
+	}
+	sendStatesMu.Lock()
+	defer sendStatesMu.Unlock()
+	if st, ok := (*m)[string(psk)]; ok {
+		return st
+	}
+	st = &udpSendState{sid: randomSessionID()}
+	(*m)[string(psk)] = st
+	return st
 }
 
 // --- cipher block implementations ---
@@ -190,13 +284,6 @@ func (a *udp2022AESCipherBlock) Decrypt(dst, src []byte) (plaintext []byte, iv [
 		s = udp2022CreateSession(sessionID, sessionKey)
 	}
 
-	// replay check on incoming packet
-	if !s.recvWindow.check(packetID) {
-		// Replay: silently drop (ErrShortBuffer triggers retry in readImpl)
-		err = io.ErrShortBuffer
-		return
-	}
-
 	// decrypt body
 	aead := a.getAEAD(s.sessionKey)
 	if aead == nil {
@@ -206,21 +293,24 @@ func (a *udp2022AESCipherBlock) Decrypt(dst, src []byte) (plaintext []byte, iv [
 	nonce := make([]byte, aead.NonceSize())
 	copy(nonce, sepHdr[4:16]) // 12 bytes: sessionID[4:8] + packetID[0:8]
 	plaintext, err = aead.Open(dst[:0], nonce, body, nil)
+	if err != nil {
+		return
+	}
+	// SIP022: the replay window must not advance before the packet has been
+	// authenticated and its main header validated.
+	if !validateUDP2022Packet(plaintext) || !s.recvWindow.check(packetID) {
+		plaintext = nil
+		err = io.ErrShortBuffer
+		return
+	}
 	return
 }
 
 func (a *udp2022AESCipherBlock) Encrypt(dst, src []byte) (ciphertext []byte, iv []byte, err error) {
-	pskKey := string(a.psk)
-	sidAny, _ := outSIDsFor(a.role).LoadOrStore(pskKey, randomSessionID())
-	sid := sidAny.(uint64)
-
-	// Lookup or create session; use sendPID for outgoing packet numbering
-	s := udp2022GetSession(sid)
-	if s == nil {
-		sessionKey := kdf2022(a.psk, uint64ToBytes(sid), len(a.psk))
-		s = udp2022CreateSession(sid, sessionKey)
-	}
-	packetID := s.sendPID.Add(1) - 1
+	st := sendStateFor(a.role, a.psk)
+	sid := st.sid
+	packetID := st.pid.Add(1) - 1
+	sessionKey := st.sessionKeyFor(a.psk)
 
 	// construct separate header
 	var sepHdr [16]byte
@@ -228,7 +318,7 @@ func (a *udp2022AESCipherBlock) Encrypt(dst, src []byte) (ciphertext []byte, iv 
 	binary.BigEndian.PutUint64(sepHdr[8:16], packetID)
 
 	// encrypt body
-	aead := a.getAEAD(s.sessionKey)
+	aead := a.getAEAD(sessionKey)
 	if aead == nil {
 		err = io.ErrShortBuffer
 		return
@@ -298,10 +388,11 @@ func (c *udp2022ChaChaCipherBlock) Decrypt(dst, src []byte) (plaintext []byte, i
 		return
 	}
 
-	// Decrypted format: sessionID(8) + packetID(8) + mainHeader + payload
-	// Extract and verify session/packet, then strip the 16-byte prefix
-	if len(full) < 17 {
-		plaintext = full
+	// Decrypted format: sessionID(8) + packetID(8) + SIP022 packet
+	if len(full) < 16 {
+		// Too short to carry the session/packet ID prefix: drop it instead
+		// of bypassing the replay filter.
+		err = io.ErrShortBuffer
 		return
 	}
 	sessionID := binary.BigEndian.Uint64(full[0:8])
@@ -312,7 +403,9 @@ func (c *udp2022ChaChaCipherBlock) Decrypt(dst, src []byte) (plaintext []byte, i
 		s = udp2022CreateSession(sessionID, nil)
 	}
 
-	if !s.recvWindow.check(packetID) {
+	// SIP022: the replay window must not advance before the packet has been
+	// authenticated and its main header validated.
+	if !validateUDP2022Packet(full[16:]) || !s.recvWindow.check(packetID) {
 		err = io.ErrShortBuffer
 		return
 	}
@@ -322,15 +415,9 @@ func (c *udp2022ChaChaCipherBlock) Decrypt(dst, src []byte) (plaintext []byte, i
 }
 
 func (c *udp2022ChaChaCipherBlock) Encrypt(dst, src []byte) (ciphertext []byte, iv []byte, err error) {
-	pskKey := string(c.psk)
-	sidAny, _ := outSIDsFor(c.role).LoadOrStore(pskKey, randomSessionID())
-	sid := sidAny.(uint64)
-
-	s := udp2022GetSession(sid)
-	if s == nil {
-		s = udp2022CreateSession(sid, nil)
-	}
-	packetID := s.sendPID.Add(1) - 1
+	st := sendStateFor(c.role, c.psk)
+	sid := st.sid
+	packetID := st.pid.Add(1) - 1
 
 	// Prepend session ID + packet ID to plaintext before encrypting
 	hdr := make([]byte, 16+len(src))

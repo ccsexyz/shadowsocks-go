@@ -17,6 +17,12 @@ func (f *mapFilter) Close() error {
 	return nil
 }
 
+func (f *mapFilter) Reset() {
+	f.mu.Lock()
+	f.m = make(map[uint64]struct{}, len(f.m))
+	f.mu.Unlock()
+}
+
 func (f *mapFilter) TestAndAdd(v []byte) bool {
 	if len(v) == 0 {
 		return false

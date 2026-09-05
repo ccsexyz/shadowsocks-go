@@ -1,6 +1,7 @@
 package ss
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -124,12 +125,13 @@ func newServerCryptoConn2022(conn Conn, method string, psk, svSalt, cliSalt []by
 	}
 }
 
-func newClientCryptoConn2022(conn Conn, method string, psk []byte, writeCipher *crypto.TcpCipher2022) *cryptoConn2022 {
+func newClientCryptoConn2022(conn Conn, method string, psk, cliSalt []byte, writeCipher *crypto.TcpCipher2022) *cryptoConn2022 {
 	overhead := writeCipher.Overhead()
 	return &cryptoConn2022{
 		Conn:        conn,
 		method:      method,
 		psk:         psk,
+		cliSalt:     cliSalt,
 		writeCipher: writeCipher,
 		wlbuf:       make([]byte, 2+overhead),
 		wdbuf:       make([]byte, 65535+overhead),
@@ -162,20 +164,26 @@ func (c *cryptoConn2022) readFrame(buf []byte, pool *utils.BufPool) ([][]byte, e
 	r := AsReader(c.Conn, pool)
 	overhead := c.readCipher.Overhead()
 
-	// Read and decrypt length tag
+	// Read and decrypt length tag. Zero-length frames are skipped:
+	// shadowsocks-rust treats empty chunks as no-ops, and each skip
+	// consumes real wire bytes (2 + tag), so this cannot spin without
+	// peer input.
 	lbLen := 2 + overhead
 	var lbArr [22]byte
 	lb := lbArr[:lbLen]
-	if _, err := io.ReadFull(r, lb); err != nil {
-		return nil, err
-	}
-	lb, ok := c.readCipher.DecryptPacket(lb)
-	if !ok {
-		return nil, fmt.Errorf("decrypt length failed")
-	}
-	length := int(uint16(lb[0])<<8 | uint16(lb[1]))
-	if length == 0 {
-		return nil, fmt.Errorf("zero-length 2022 frame")
+	var length int
+	for {
+		if _, err := io.ReadFull(r, lb); err != nil {
+			return nil, err
+		}
+		out, ok := c.readCipher.DecryptPacket(lb)
+		if !ok {
+			return nil, fmt.Errorf("decrypt length failed")
+		}
+		length = int(uint16(out[0])<<8 | uint16(out[1]))
+		if length > 0 {
+			break
+		}
 	}
 
 	dataLen := length + overhead
@@ -224,8 +232,12 @@ func (c *cryptoConn2022) writeFrame(plaintext []byte) error {
 		}
 		// If payload fits in a single handshake frame, bundle it.
 		// Otherwise send empty handshake then fall through to chunked write.
+		// The bundled length must respect the same 0x3FFF cap as the chunked
+		// path below: a length field above it is treated as a protocol
+		// violation by strict peers like shadowsocks-rust even though a
+		// uint16 can express 0xFFFF.
 		hdrPayloadLen := totalLen
-		if hdrPayloadLen > 0xFFFF {
+		if hdrPayloadLen > 0x3FFF {
 			hdrPayloadLen = 0
 		}
 		svHdr := make([]byte, 1+8+len(c.cliSalt)+2)
@@ -260,8 +272,12 @@ func (c *cryptoConn2022) writeFrame(plaintext []byte) error {
 	overhead := c.writeCipher.Overhead()
 	for off := 0; off < totalLen; {
 		chunkLen := totalLen - off
-		if chunkLen > 0xFFFF {
-			chunkLen = 0xFFFF
+		// Cap at 0x3FFF: the AEAD length field reserves the two high bits
+		// (the classic path rejects anything above), and strict peers like
+		// shadowsocks-rust treat larger 2022 TCP chunks as protocol
+		// violations even though a uint16 can express 0xFFFF.
+		if chunkLen > 0x3FFF {
+			chunkLen = 0x3FFF
 		}
 		lbLen := 2 + overhead
 		if cap(c.wlbuf) < lbLen {
@@ -310,6 +326,23 @@ func (c *cryptoConn2022) clientHandshake(pool *utils.BufPool) error {
 	}
 	if svBuf[0] != aead2022ServerType {
 		return fmt.Errorf("unexpected server stream type: %d", svBuf[0])
+	}
+	// SIP022: the response carries the server time and echoes the request
+	// salt; both must be validated before trusting the stream.
+	ts := binary.BigEndian.Uint64(svBuf[1:9])
+	now := uint64(time.Now().Unix())
+	diff := now - ts
+	if ts > now {
+		diff = ts - now
+	}
+	if diff > aead2022TimestampDiff {
+		return fmt.Errorf("server response timestamp out of range: %d", ts)
+	}
+	if c.cliSalt != nil {
+		echoedSalt := svBuf[1+8 : 1+8+len(c.cliSalt)]
+		if !bytes.Equal(echoedSalt, c.cliSalt) {
+			return fmt.Errorf("server response salt mismatch")
+		}
 	}
 
 	dataLen := int(uint16(svBuf[1+8+len(c.psk)])<<8 | uint16(svBuf[1+8+len(c.psk)+1]))

@@ -692,7 +692,8 @@ func TestMultiServerUDP_2022AndNon2022Backends(t *testing.T) {
 
 	go RunUDPServer(lis, multisrv, getCreateFuncOfUDPRemoteServer)
 
-	// Test 1: Send via 2022 backend
+	// Test 1: Send via 2022 backend. The client payload must be
+	// SIP022-wrapped: a 2022 tunnel carries that format exclusively.
 	t.Run("2022", func(t *testing.T) {
 		cli := &ss.Config{}
 		cli.Method = "2022-blake3-aes-256-gcm"
@@ -708,8 +709,7 @@ func TestMultiServerUDP_2022AndNon2022Backends(t *testing.T) {
 
 		header := []byte{1, 127, 0, 0, 1, byte(echoPort >> 8), byte(echoPort)}
 		payload := []byte("multisrv-2022-data")
-		packet := append(header, payload...)
-		conn.Write(packet)
+		conn.Write(crypto.BuildSIP022Request(append(header, payload...)))
 
 		resp := make([]byte, 4096)
 		conn.SetReadDeadline(time.Now().Add(5 * time.Second))
@@ -717,8 +717,11 @@ func TestMultiServerUDP_2022AndNon2022Backends(t *testing.T) {
 		if err != nil {
 			t.Fatal("2022 read:", err)
 		}
-		got := string(resp[7:n])
-		if got != string(payload) {
+		_, _, _, got, err := crypto.ParseSIP022(resp[:n])
+		if err != nil {
+			t.Fatalf("2022 response not SIP022: %v", err)
+		}
+		if string(got) != string(payload) {
 			t.Errorf("2022: expected %q, got %q", payload, got)
 		} else {
 			t.Logf("2022: roundtrip OK")
@@ -777,7 +780,7 @@ func TestMultiServerUDP_2022AndNon2022Backends(t *testing.T) {
 
 		for i := 0; i < 3; i++ {
 			payload := []byte(fmt.Sprintf("multi-pkt-%d", i))
-			conn.Write(append(header, payload...))
+			conn.Write(crypto.BuildSIP022Request(append(header, payload...)))
 
 			resp := make([]byte, 4096)
 			conn.SetReadDeadline(time.Now().Add(5 * time.Second))
@@ -785,8 +788,11 @@ func TestMultiServerUDP_2022AndNon2022Backends(t *testing.T) {
 			if err != nil {
 				t.Fatalf("pkt %d: %v", i, err)
 			}
-			got := string(resp[7:n])
-			if got != string(payload) {
+			_, _, _, got, err := crypto.ParseSIP022(resp[:n])
+			if err != nil {
+				t.Fatalf("pkt %d: response not SIP022: %v", i, err)
+			}
+			if string(got) != string(payload) {
 				t.Errorf("pkt %d: expected %q, got %q", i, payload, got)
 			}
 		}

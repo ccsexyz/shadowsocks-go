@@ -70,7 +70,7 @@ func TestCheckBasicConfigNormalizesIPSelect(t *testing.T) {
 	if c.IPSelectDelayMs != defaultIPSelectDelayMs {
 		t.Fatalf("non-positive delay should use default, got %d", c.IPSelectDelayMs)
 	}
-	if c.rt != nil && c.rt.ipSelCache != nil {
+	if rt := c.rt.Load(); rt != nil && rt.ipSelCache != nil {
 		t.Fatal("off mode should not initialize the score cache during CheckBasicConfig")
 	}
 
@@ -435,19 +435,24 @@ func TestPickTargetIPFamilyPolicy(t *testing.T) {
 		t.Fatal("expected a pick")
 	}
 
+	// Direct field writes bypass the admin API, so each one must republish
+	// the dial-policy snapshot the way the admin handlers do.
 	c.NoIPv6 = true
+	c.publishDialPolicy()
 	if got := pickTargetIP(c, ips); got == nil || got.To4() == nil {
 		t.Errorf("NoIPv6 should yield v4, got %v", got)
 	}
 
 	c.NoIPv6 = false
 	c.NoIPv4 = true
+	c.publishDialPolicy()
 	if got := pickTargetIP(c, ips); got == nil || got.To4() != nil {
 		t.Errorf("NoIPv4 should yield v6, got %v", got)
 	}
 
 	c.NoIPv4 = false
 	c.PreferIPv4 = true
+	c.publishDialPolicy()
 	if got := pickTargetIP(c, ips); got == nil || got.To4() == nil {
 		t.Errorf("PreferIPv4 with both families should yield v4, got %v", got)
 	}

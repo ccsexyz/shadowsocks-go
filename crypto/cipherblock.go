@@ -4,6 +4,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"encoding/base64"
+	"fmt"
 	"io"
 
 	"golang.org/x/crypto/chacha20poly1305"
@@ -88,12 +89,13 @@ func NewPlainCipherBlock([]byte, int) (CipherBlock, error) {
 
 func NewCipherBlock(method, password string) (cb CipherBlock, err error) {
 	if password == "" && method != "plain" {
-		err = io.EOF
+		err = fmt.Errorf("password cannot be empty")
 		return
 	}
 	m, ok := cipherMethod[method]
 	if !ok {
-		m = cipherMethod[DefaultMethod]
+		err = errInvalidMethod
+		return
 	}
 	if m.is2022 {
 		psk, derr := DecodePSK(password, m.keylen)

@@ -28,6 +28,7 @@ func main() {
 	flag.StringVar(&target, "t", "", "target address(for tcptun and udptun)")
 	flag.StringVar(&configfile, "c", "", "the configuration file path")
 	flag.StringVar(&c.AdminAddr, "admin", "", "admin webui listen address (e.g. 127.0.0.1:8090)")
+	flag.StringVar(&c.AdminToken, "admintoken", "", "admin webui auth token (strongly recommended when admin is not on loopback)")
 	flag.StringVar(&c.CryptoConfig.Method, "m", "aes-128-gcm", "crypt method")
 	flag.StringVar(&c.CryptoConfig.Password, "p", "you need a password", "password")
 	flag.BoolVar(&c.CryptoConfig.Nonop, "nonop", false, "enable this to be compatiable with official ss servers(client only)")
@@ -74,7 +75,7 @@ func main() {
 		}
 		ss.CheckConfig(&c)
 		if c.AdminAddr != "" {
-			ss.StartAdminServer(c.AdminAddr)
+			ss.StartAdminServer(c.AdminAddr, c.AdminToken)
 		}
 		ss.SetAdminConfigs([]*ss.Config{&c})
 		runServer(&c)
@@ -93,8 +94,16 @@ func main() {
 			}
 		}
 	}
+	if c.AdminToken == "" {
+		for _, cfg := range configs {
+			if cfg.AdminToken != "" {
+				c.AdminToken = cfg.AdminToken
+				break
+			}
+		}
+	}
 	if c.AdminAddr != "" {
-		ss.StartAdminServer(c.AdminAddr)
+		ss.StartAdminServer(c.AdminAddr, c.AdminToken)
 	}
 	ss.SetAdminConfigs(configs)
 	var wg sync.WaitGroup
@@ -119,13 +128,6 @@ func runServer(c *ss.Config) {
 			go server.RunUDPLocalServer(c)
 		}
 		server.RunTCPLocalServer(c)
-	case "redir":
-		c.Log("run redir at", c.Localaddr)
-		if c.UDPRelay {
-			c.Log("run udp redir server at", c.Localaddr)
-			go server.RunUDPRedirServer(c)
-		}
-		server.RunTCPRedirServer(c)
 	case "server":
 		c.Log("run server at", c.Localaddr, "with method", c.Method)
 		if c.UDPRelay {
@@ -191,10 +193,11 @@ func runServer(c *ss.Config) {
 		c.Log("run rtunnel server at", c.Localaddr)
 		server.RunRtunnelServer(c)
 	case "switch":
-		if c.ActiveBackend == "" && len(c.Backends) > 0 {
-			c.ActiveBackend = c.Backends[0].Nickname
+		backends := c.SnapshotBackends()
+		if c.GetActiveBackend() == "" && len(backends) > 0 {
+			c.SetActiveBackend(backends[0].Nickname)
 		}
-		c.Log("run switch server at", c.Localaddr, "active:", c.ActiveBackend)
+		c.Log("run switch server at", c.Localaddr, "active:", c.GetActiveBackend())
 		server.RunSwitchServer(c)
 	}
 }

@@ -35,9 +35,11 @@ const (
 	cmdUDP                 = domain.CmdUDP
 	cmdSocks4OK            = domain.CmdSocks4OK
 	typeIPv4               = domain.TypeIPv4
+	typeIPv6               = domain.TypeIPv6
 	typeTs                 = domain.TypeTs  // timestamp
 	typeNop                = domain.TypeNop // [nop 1 byte] [noplen 1 byte (< 128)] [zero data, noplen byte]
 	lenIPv4                = domain.LenIPv4
+	lenIPv6                = domain.LenIPv6
 	lenTs                  = domain.LenTs
 	defaultObfsHost        = domain.DefaultObfsHost
 	defaultFilterCapacity  = domain.DefaultFilterCapacity
@@ -98,9 +100,11 @@ type parseContext struct {
 func ParseAddrWithMultipleBackendsForUDP(b []byte, configs []*Config) (*parseContext, error) {
 	ctxs := make([]*parseContext, 0, len(configs))
 
-	b2 := make([]byte, len(b))
-
+	// A fresh buffer per backend: a shared one let a later backend's decrypt
+	// overwrite ctxs[0]'s already-parsed plaintext (duplicate-password
+	// backends decrypt with both).
 	for _, cfg := range configs {
+		b2 := make([]byte, len(b))
 		cb, err := crypto.NewCipherBlock(cfg.Method, cfg.Password)
 		if err != nil {
 			continue
@@ -114,9 +118,15 @@ func ParseAddrWithMultipleBackendsForUDP(b []byte, configs []*Config) (*parseCon
 		var addr *SockAddr
 		var data []byte
 
-		// Try SIP022 format first, then fall back to legacy ATYP format
-		sipHdr, _, _, payload, perr := crypto.ParseSIP022(p)
-		if perr == nil {
+		// The payload format follows the cipher family: 2022 ciphers carry
+		// SIP022 (validated strictly by the crypto layer), classic ciphers
+		// carry bare ATYP. Parsing the other shape here cannot succeed for
+		// a genuine packet and only invites format-guessing misreads.
+		if crypto.IsAEAD2022(cfg.Method) {
+			sipHdr, _, _, payload, perr := crypto.ParseSIP022(p)
+			if perr != nil {
+				continue
+			}
 			addr = &SockAddr{Hdr: DupBuffer(sipHdr)}
 			data = payload
 		} else {
@@ -178,7 +188,9 @@ func ParseAddrWithMultipleBackends(b []byte, configs []*Config) (*parseContext, 
 
 		addr, data, err := ParseAddr(buf)
 		if err != nil {
-			errs = append(errs, fmt.Sprintf("backend[%d] %s: ParseAddr: %v (decrypted=%d bytes: %x)", i, cfg.Method, err, len(buf), safeHeadHex(buf, 64)))
+			// Never log decrypted payload bytes; on a matching password this
+			// would be the user's plaintext traffic.
+			errs = append(errs, fmt.Sprintf("backend[%d] %s: ParseAddr: %v (decrypted=%d bytes)", i, cfg.Method, err, len(buf)))
 			continue
 		}
 
@@ -215,8 +227,10 @@ func Pipe(c1, c2 Conn, c *Config) {
 	c2die := make(chan bool)
 	var alive atomic.Bool
 	var timeout int
-	if c != nil && c.Timeout > 0 {
-		timeout = c.Timeout
+	if c != nil {
+		if p := c.dialPolicy(); p.timeout > 0 {
+			timeout = p.timeout
+		}
 	}
 	f := func(dst, src Conn, die chan bool) {
 		defer close(die)
@@ -237,10 +251,19 @@ func Pipe(c1, c2 Conn, c *Config) {
 			if cr, ok := r.(*connReader); ok {
 				cr.buf = nil
 			}
+			if err != nil && IsTimeoutError(err) && alive.Load() {
+				// Idle-timeout grace: activity in the other direction keeps
+				// the pipe alive. Only read timeouts are eligible — this
+				// branch used to swallow write timeouts too, silently
+				// dropping the bytes that failed to deliver.
+				alive.Store(false)
+				c.LogD("pipe read error:", err, "from", src.RemoteAddr(), "to", src.LocalAddr())
+				err = nil
+			}
 			if err != nil {
 				c.LogD("pipe read error:", err, "from", src.RemoteAddr(), "to", src.LocalAddr())
 			}
-			if n > 0 || err == nil {
+			if n > 0 {
 				totalRead += int64(n)
 				if timeout > 0 {
 					dst.SetWriteDeadline(time.Now().Add(time.Duration(timeout) * time.Second))
@@ -258,11 +281,6 @@ func Pipe(c1, c2 Conn, c *Config) {
 						err = fmt.Errorf("partial write: %d of %d bytes", wn, n)
 					}
 				}
-			}
-			if err != nil && IsTimeoutError(err) && alive.Load() {
-				alive.Store(false)
-				c.LogD("pipe read error:", err, "from", src.RemoteAddr(), "to", src.LocalAddr())
-				err = nil
 			}
 		}
 		if totalRead != totalWrote {
@@ -293,7 +311,13 @@ func (l *Limiter) Update(nbytes int) {
 	l.lock.Lock()
 	defer l.lock.Unlock()
 	l.totalBytes += int64(nbytes)
-	if l.limit == 0 {
+	// 0 (or a negative misconfiguration) means unlimited; a negative limit
+	// would drain tokens on every update and spin in the wait loop below
+	// forever, holding the lock and hanging every goroutine sharing this
+	// limiter. The lock is deliberately held across the pacing sleep: it
+	// keeps token accounting trivially correct and queues concurrent
+	// writers in order, all of which must wait for tokens anyway.
+	if l.limit <= 0 {
 		return
 	}
 	now := time.Now().UnixNano()
@@ -322,6 +346,9 @@ func (l *Limiter) GetLimit() int {
 }
 
 func (l *Limiter) SetLimit(limit int) {
+	if limit < 0 {
+		limit = 0
+	}
 	l.lock.Lock()
 	defer l.lock.Unlock()
 	l.limit = limit
@@ -462,7 +489,7 @@ func DialTCP(address string, cfg *cfg) (*BaseConn, error) {
 		return newBaseConn(conn, cfg), nil
 	}
 
-	mode := normalizeIPSelectMode(cfg.IPSelect)
+	mode := normalizeIPSelectMode(cfg.dialPolicy().ipSelect)
 
 	var (
 		netconn net.Conn
@@ -491,12 +518,13 @@ func DialTCP(address string, cfg *cfg) (*BaseConn, error) {
 func dialTCPLegacy(address string, cfg *cfg) (net.Conn, error) {
 	var protocol string
 	dialCtx := context.Background()
+	p := cfg.dialPolicy()
 
-	if cfg.NoIPv4 {
+	if p.noIPv4 {
 		protocol = "tcp6"
-	} else if cfg.NoIPv6 {
+	} else if p.noIPv6 {
 		protocol = "tcp4"
-	} else if cfg.PreferIPv4 && isAddrDualStack(address) {
+	} else if p.preferIPv4 && isAddrDualStack(address) {
 		protocol = "tcp4"
 		ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 		defer cancel()
@@ -508,7 +536,7 @@ func dialTCPLegacy(address string, cfg *cfg) (net.Conn, error) {
 	var d net.Dialer
 	netconn, err := d.DialContext(dialCtx, protocol, address)
 
-	if err != nil && protocol == "tcp4" && !cfg.NoIPv6 && cfg.PreferIPv4 && isAddrDualStack(address) {
+	if err != nil && protocol == "tcp4" && !p.noIPv6 && p.preferIPv4 && isAddrDualStack(address) {
 		netconn, err = d.DialContext(context.Background(), "tcp", address)
 	}
 	return netconn, err
@@ -691,5 +719,55 @@ func (route *chnRouteList) testIP(ip net.IP) bool {
 
 type bytesFilter interface {
 	Close() error
+	Reset()
 	TestAndAdd([]byte) bool
 }
+
+const filterRotateInterval = 10 * time.Minute
+
+// shardedFilter bounds replay-filter memory. The underlying filters only
+// grow (a plain map in the default build, a saturating bloom under the bloom
+// tag), so entries are split across two time-window shards: the current
+// shard is rebuilt on rotation and the previous one expires one interval
+// later. The mutex also makes the filter safe for concurrent use — the
+// bloom implementation is not goroutine-safe on its own.
+type shardedFilter struct {
+	mu      sync.Mutex
+	shards  [2]bytesFilter
+	cur     int
+	expires time.Time
+}
+
+func newShardedFilter(capacity int, fp float64) bytesFilter {
+	f := &shardedFilter{expires: time.Now().Add(filterRotateInterval)}
+	f.shards[0] = newBloomFilter(capacity, fp)
+	f.shards[1] = newBloomFilter(capacity, fp)
+	return f
+}
+
+func (f *shardedFilter) TestAndAdd(v []byte) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	now := time.Now()
+	if now.After(f.expires) {
+		f.cur = 1 - f.cur
+		f.shards[f.cur].Reset()
+		f.expires = now.Add(filterRotateInterval)
+	}
+	if f.shards[f.cur].TestAndAdd(v) {
+		return true
+	}
+	return f.shards[1-f.cur].TestAndAdd(v)
+}
+
+func (f *shardedFilter) Reset() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := range f.shards {
+		f.shards[i].Reset()
+	}
+	f.cur = 0
+	f.expires = time.Now().Add(filterRotateInterval)
+}
+
+func (f *shardedFilter) Close() error { return nil }

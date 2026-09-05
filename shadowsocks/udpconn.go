@@ -1,8 +1,6 @@
 package ss
 
 import (
-	"encoding/binary"
-	"fmt"
 	"io"
 	"log"
 	"net"
@@ -12,7 +10,6 @@ import (
 
 	"github.com/ccsexyz/shadowsocks-go/crypto"
 	"github.com/ccsexyz/shadowsocks-go/internal/utils"
-	"github.com/ccsexyz/shadowsocks-go/redir"
 )
 
 var udpWriteBufPool = sync.Pool{
@@ -132,11 +129,13 @@ func (c *UDPConn) readImpl(b []byte, readfrom func([]byte) (int, net.Addr, error
 
 		payloadStart, payloadLen, err := unpacker.UnpackInPlace(b, 0, n)
 		if err != nil {
-			if err == io.ErrShortBuffer {
-				continue
+			// Any unpack failure (bad tag, replay, malformed) is a per-packet
+			// condition: drop the datagram and keep the socket alive instead
+			// of tearing down the relay.
+			if err != io.ErrShortBuffer {
+				log.Printf("udp readImpl: drop packet method=%s len=%d err=%v", c.cfg.Method, n, err)
 			}
-			log.Printf("udp readImpl: decrypt error method=%s len=%d err=%v", c.cfg.Method, n, err)
-			return 0, addr, err
+			continue
 		}
 
 		if iu, ok := unpacker.(crypto.IVUnpacker); ok {
@@ -305,7 +304,7 @@ func (c *MultiUDPConn) ReadFrom(b []byte) (n int, addr net.Addr, err error) {
 		}
 		v, ok := c.sessions.Load(addr.String())
 		if !ok {
-			ctx, perr := ParseAddrWithMultipleBackendsForUDP(b2[:n], c.c.Backends)
+			ctx, perr := ParseAddrWithMultipleBackendsForUDP(b2[:n], c.c.SnapshotBackends())
 			if perr != nil {
 				log.Printf("udp multi ReadFrom: ParseAddrWithMultipleBackendsForUDP failed: %v", perr)
 				continue
@@ -329,9 +328,13 @@ func (c *MultiUDPConn) ReadFrom(b []byte) (n int, addr net.Addr, err error) {
 			}
 			payloadStart, payloadLen, uerr := s.unpacker.UnpackInPlace(b2, 0, n)
 			if uerr != nil {
-				log.Printf("udp multi ReadFrom: decrypt failed method=%s err=%v", s.cfg.Method, uerr)
-				err = uerr
-				return
+				// Replay, bad tag or malformed packet: drop it and keep
+				// reading. Escaping the error would end the shared UDP read
+				// loop in runUDPServer and take down every session.
+				if uerr != io.ErrShortBuffer {
+					log.Printf("udp multi ReadFrom: drop packet method=%s len=%d err=%v", s.cfg.Method, n, uerr)
+				}
+				continue
 			}
 			if iu, ok := s.unpacker.(crypto.IVUnpacker); ok {
 				if iv := iu.IV(); len(iv) > 0 {
@@ -384,47 +387,6 @@ func (c *MultiUDPConn) WriteTo(b []byte, addr net.Addr) (int, error) {
 
 func (c *MultiUDPConn) RemoveAddr(addr net.Addr) {
 	c.sessions.Delete(addr.String())
-}
-
-type UDPTProxyConn struct {
-	*net.UDPConn
-}
-
-func NewUDPTProxyConn(conn *net.UDPConn) (*UDPTProxyConn, error) {
-	c := &UDPTProxyConn{UDPConn: conn}
-	if err := redir.EnableUDPTProxy(conn); err != nil {
-		return nil, err
-	}
-	return c, nil
-}
-
-func (conn *UDPTProxyConn) ReadFrom(b []byte) (n int, addr net.Addr, err error) {
-	if len(b) < 6 {
-		err = fmt.Errorf("the buffer length should be greater than 6")
-		return
-	}
-
-	header := b[:6]
-	b = b[6:]
-	oob := make([]byte, 512)
-
-	n, oobn, _, addr, err := conn.UDPConn.ReadMsgUDP(b, oob)
-	if err != nil {
-		return
-	}
-	orig, err := redir.GetOrigDstFromOob(oob[:oobn])
-	if err != nil {
-		return
-	}
-	copy(header, []byte(orig.IP.To4()))
-	binary.BigEndian.PutUint16(header[4:6], uint16(orig.Port))
-	n += 6
-	return
-}
-
-func (conn *UDPTProxyConn) Read(b []byte) (n int, err error) {
-	n, _, err = conn.ReadFrom(b)
-	return
 }
 
 func listenUDP(c *Config) (net.PacketConn, error) {

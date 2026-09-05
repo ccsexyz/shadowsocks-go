@@ -28,10 +28,19 @@ func buildAead2022Header(cipher *crypto.TcpCipher2022, salt []byte, addr Addr, d
 	if len(data) > 0 {
 		paddingSize = 0
 	} else {
-		paddingSize = rand.IntN(901)
+		// SIP022: with no initial payload, padding MUST be non-zero —
+		// servers reject zero padding together with zero payload. Stay
+		// within [MinPaddingLength, MaxPaddingLength] = [0, 900].
+		paddingSize = 1 + rand.IntN(900)
 	}
 
 	addrLen := len(ah) + 2 + paddingSize + len(data)
+	// The length field is a bare uint16; refusing to build (instead of
+	// silently truncating) keeps a too-large bundle from desyncing the
+	// stream. Normal callers cap the bundled data well below this.
+	if addrLen > 0xFFFF {
+		return nil
+	}
 
 	hdr1 := make([]byte, 1+8+2)
 	hdr1[0] = aead2022ClientType
@@ -198,36 +207,24 @@ func ss2022AcceptHandler(conn Conn, lis *listener) AcceptResult {
 	return AcceptResult{AcceptContinue, ssConn}
 }
 
-func ss2022Dial(opt *DialOptions) (conn Conn, err error) {
+// ss2022DialWithConn builds the AEAD-2022 client handshake on top of an
+// already-dialed (and possibly obfs/limit-wrapped) connection. On error the
+// connection is NOT closed: ownership stays with the caller, whose dial path
+// closes it via its own deferred cleanup.
+func ss2022DialWithConn(conn Conn, opt *DialOptions) (Conn, error) {
 	c := opt.C
-
-	var tconn *BaseConn
-	if c.Obfs {
-		conn, err = DialObfs(c.Remoteaddr, c)
-	} else {
-		tconn, err = DialTCP(c.Remoteaddr, c)
-		if tconn != nil {
-			conn = tconn
-		}
-	}
-	if err != nil {
-		return nil, err
-	}
 
 	psk, derr := crypto.DecodePSK(c.Password, c.Ivlen)
 	if derr != nil {
-		conn.Close()
 		return nil, derr
 	}
 
 	host, port, sperr := utils.SplitHostAndPort(opt.Target)
 	if sperr != nil {
-		conn.Close()
 		return nil, sperr
 	}
 	addrBuf, err := GetHeader(host, port)
 	if err != nil {
-		conn.Close()
 		return nil, err
 	}
 	addr := &SockAddr{Hdr: addrBuf}
@@ -235,25 +232,39 @@ func ss2022Dial(opt *DialOptions) (conn Conn, err error) {
 	salt := utils.GetRandomBytes(c.Ivlen)
 	ciph, err := crypto.NewTcpCipher2022(c.Method, psk, salt)
 	if err != nil {
-		conn.Close()
 		return nil, err
 	}
 
-	header := buildAead2022Header(ciph, salt, addr, opt.Data)
+	// Cap the initial payload bundled into the request header: its length
+	// field is a bare uint16 and every 2022 frame is capped at 0x3FFF
+	// elsewhere (strict peers reject larger chunks). Overflowing data is
+	// written as regular chunked frames right after the handshake.
+	bundle := opt.Data
+	if len(bundle) > 0 {
+		maxBundle := 0x3FFF - len(addrBuf) - 2
+		if len(bundle) > maxBundle {
+			bundle = bundle[:maxBundle]
+		}
+	}
+
+	header := buildAead2022Header(ciph, salt, addr, bundle)
 	if header == nil {
-		conn.Close()
 		return nil, fmt.Errorf("build header failed")
 	}
 	c.Log("ss2022Dial: sending header len", len(header), "salt len", len(salt), "data len", len(opt.Data))
 	_, err = conn.Write(header)
 	if err != nil {
-		conn.Close()
 		return nil, err
 	}
 	c.Log("ss2022Dial: header sent")
-	opt.Data = nil
 
-	ssConn := newClientCryptoConn2022(conn, c.Method, psk, ciph)
+	ssConn := newClientCryptoConn2022(conn, c.Method, psk, salt, ciph)
+	if rest := opt.Data[len(bundle):]; len(rest) > 0 {
+		if err = ssConn.writeFrame(rest); err != nil {
+			return nil, err
+		}
+	}
+	opt.Data = nil
 	return ssConn, nil
 }
 

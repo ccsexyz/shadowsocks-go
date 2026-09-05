@@ -59,11 +59,12 @@ type ipSelPolicy struct {
 
 // newIPSelPolicy builds a policy from a Config.
 func newIPSelPolicy(c *cfg) ipSelPolicy {
-	timeout := time.Duration(c.Timeout) * time.Second
+	p := c.dialPolicy()
+	timeout := time.Duration(p.timeout) * time.Second
 	if timeout <= 0 {
 		timeout = time.Duration(defaultTimeout) * time.Second
 	}
-	delayMs := c.IPSelectDelayMs
+	delayMs := p.ipSelectDelay
 	if delayMs <= 0 {
 		delayMs = defaultIPSelectDelayMs
 	} else if delayMs > maxIPSelectDelayMs {
@@ -71,9 +72,9 @@ func newIPSelPolicy(c *cfg) ipSelPolicy {
 	}
 	delay := time.Duration(delayMs) * time.Millisecond
 	return ipSelPolicy{
-		NoIPv4:     c.NoIPv4,
-		NoIPv6:     c.NoIPv6,
-		PreferIPv4: c.PreferIPv4,
+		NoIPv4:     p.noIPv4,
+		NoIPv6:     p.noIPv6,
+		PreferIPv4: p.preferIPv4,
 		Timeout:    timeout,
 		Delay:      delay,
 	}

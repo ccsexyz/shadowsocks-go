@@ -1,6 +1,7 @@
 package server
 
 import (
+	"io"
 	"net"
 	"strings"
 	"sync"
@@ -11,6 +12,48 @@ import (
 	"github.com/xtaci/smux"
 )
 
+// Reconnect pacing for the rtunnel client. Failures escalate exponentially
+// to rtunnelMaxBackoff; a session that stayed up for rtunnelSessionResetAfter
+// (several server-side keepalive rounds) counts as healthy and resets the
+// pace, so a server restart reconnects promptly while a server that accepts
+// dials but rejects sessions is re-dialed at a widening interval instead of
+// every base step.
+const (
+	rtunnelBackoffBase       = 2 * time.Second
+	rtunnelMaxBackoff        = 30 * time.Second
+	rtunnelSessionResetAfter = 30 * time.Second
+)
+
+// bumpBackoff doubles d, clamped to rtunnelMaxBackoff.
+func bumpBackoff(d time.Duration) time.Duration {
+	d *= 2
+	if d > rtunnelMaxBackoff {
+		d = rtunnelMaxBackoff
+	}
+	return d
+}
+
+// nextReconnectBackoff folds a just-ended session's lifetime into the
+// reconnect backoff: healthy sessions reset to the base pace, rapid ones
+// escalate.
+func nextReconnectBackoff(served, cur time.Duration) time.Duration {
+	if served >= rtunnelSessionResetAfter {
+		return rtunnelBackoffBase
+	}
+	return bumpBackoff(cur)
+}
+
+// rtunnelBackoffSleep waits d or until the config dies; reports whether the
+// client should keep running.
+func rtunnelBackoffSleep(c *ss.Config, d time.Duration) bool {
+	select {
+	case <-c.DieChan():
+		return false
+	case <-time.After(d):
+		return true
+	}
+}
+
 func RunRtunnelClient(c *ss.Config) {
 	serverAddr := c.Backend.Remoteaddr
 	targetAddr := c.Remoteaddr
@@ -18,8 +61,7 @@ func RunRtunnelClient(c *ss.Config) {
 	smuxConfig := smux.DefaultConfig()
 	smuxConfig.KeepAliveInterval = time.Second
 
-	backoff := 2 * time.Second
-	const maxBackoff = 30 * time.Second
+	backoff := rtunnelBackoffBase
 
 	for {
 		select {
@@ -34,32 +76,21 @@ func RunRtunnelClient(c *ss.Config) {
 		})
 		if err != nil {
 			c.Log("rtunnel client: connect failed:", err, "- retry in", backoff)
-			select {
-			case <-c.DieChan():
+			if !rtunnelBackoffSleep(c, backoff) {
 				return
-			case <-time.After(backoff):
 			}
-			backoff *= 2
-			if backoff > maxBackoff {
-				backoff = maxBackoff
-			}
+			backoff = bumpBackoff(backoff)
 			continue
 		}
 
-		backoff = 2 * time.Second
-
-		session, err := smux.Client(ss.AsReadWriteCloser(rconn, nil), smuxConfig)
+		started := time.Now()
+		session, err := smux.Client(newIdleDeadlineRW(ss.AsReadWriteCloser(rconn, nil), rtunnelIdleTimeout), smuxConfig)
 		if err != nil {
 			rconn.Close()
-			select {
-			case <-c.DieChan():
+			if !rtunnelBackoffSleep(c, backoff) {
 				return
-			case <-time.After(backoff):
 			}
-			backoff *= 2
-			if backoff > maxBackoff {
-				backoff = maxBackoff
-			}
+			backoff = bumpBackoff(backoff)
 			continue
 		}
 
@@ -79,12 +110,23 @@ func RunRtunnelClient(c *ss.Config) {
 				ss.Pipe(ss.AsNetConn(s), localConn, c)
 			}(stream)
 		}
+		served := time.Since(started)
 		session.Close()
+		// Sleep before re-dialing even on the clean path: a server that
+		// accepts the dial and then rejects or tears down the session right
+		// away lands here with backoff still near its base, and without the
+		// pause the client would re-dial at full speed forever. The lifetime
+		// decides what comes next: healthy sessions reset the pace, rapid
+		// ones escalate it.
+		if !rtunnelBackoffSleep(c, backoff) {
+			return
+		}
+		backoff = nextReconnectBackoff(served, backoff)
 	}
 }
 
 func RunRtunnelServer(c *ss.Config) {
-	if len(c.Backends) == 0 {
+	if len(c.SnapshotBackends()) == 0 {
 		runRtunnelSingleServer(c)
 		return
 	}
@@ -105,7 +147,7 @@ func runRtunnelSingleServer(c *ss.Config) {
 }
 
 func runRtunnelMultiServer(c *ss.Config) {
-	for _, v := range c.Backends {
+	for _, v := range c.SnapshotBackends() {
 		hits := 0
 		v.InitRuntime().Any = &hits
 	}
@@ -147,7 +189,7 @@ func rtunnelServerHandler(ac *ss.AcceptedConn) {
 
 	smuxConfig := smux.DefaultConfig()
 	smuxConfig.KeepAliveInterval = 10 * time.Second
-	session, err := smux.Server(ss.AsReadWriteCloser(conn, nil), smuxConfig)
+	session, err := smux.Server(newIdleDeadlineRW(ss.AsReadWriteCloser(conn, nil), rtunnelIdleTimeout), smuxConfig)
 	if err != nil {
 		backendCfg.Log("rtunnel server: smux session init failed:", err)
 		return
@@ -208,6 +250,37 @@ func notifySessionClose(session *smux.Session, c *ss.Config, ln net.Listener) {
 			}
 		}
 	}
+}
+
+// rtunnelIdleTimeout bounds how long the smux receive loop may block without
+// any inbound frame. smux keepalive is write-based: a peer that completes the
+// SS handshake and then goes silent keeps "accepting" pings into its TCP send
+// buffer, so without a read deadline the session — and with it the backend's
+// rtunnel slot (busyMap) and the handler goroutine — is held forever, and
+// every later rtunnel connection to that backend is rejected until restart.
+// Both rtunnel ends run keepalive (client pings every 1s, server every 10s),
+// so any healthy peer produces inbound frames far more often than this.
+const rtunnelIdleTimeout = 60 * time.Second
+
+// idleDeadlineRW re-arms a read deadline before every Read so the smux
+// session dies when the peer stops producing frames. Reads are serialized
+// (smux has a single recvLoop goroutine), so no coordination is needed.
+type idleDeadlineRW struct {
+	io.ReadWriteCloser
+	idle time.Duration
+}
+
+func newIdleDeadlineRW(rwc io.ReadWriteCloser, idle time.Duration) *idleDeadlineRW {
+	return &idleDeadlineRW{ReadWriteCloser: rwc, idle: idle}
+}
+
+func (r *idleDeadlineRW) Read(p []byte) (int, error) {
+	if d, ok := r.ReadWriteCloser.(interface {
+		SetReadDeadline(time.Time) error
+	}); ok {
+		d.SetReadDeadline(time.Now().Add(r.idle))
+	}
+	return r.ReadWriteCloser.Read(p)
 }
 
 var rtunnelBusyInitMu sync.Mutex

@@ -108,6 +108,13 @@ func (m *ClientHelloMsg) Unmarshal(data []byte) bool {
 	if len(data) < 42 {
 		return false
 	}
+	// Only a handshake message of type client_hello is a ClientHello.
+	// Without this check any handshake body (e.g. a server hello, or
+	// attacker-chosen bytes fed to the MITM SNI sniffer) would be parsed
+	// into the struct below and could steer SNI-based routing.
+	if data[0] != typeClientHello {
+		return false
+	}
 	m.Raw = data
 	m.Vers = uint16(data[4])<<8 | uint16(data[5])
 	m.Random = data[6:38]

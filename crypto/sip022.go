@@ -23,12 +23,17 @@ import (
 // BuildSIP022Request wraps a SOCKS5-style UDP relay packet with a SIP022 request header.
 // Input:  [ATYP(1)][ADDR(var)][PORT(2)][PAYLOAD]
 // Output: [Type=0(1)][Timestamp(8)][PaddingLen(2)][Padding(N)][ATYP(1)][ADDR(var)][PORT(2)][PAYLOAD]
+// Returns nil when the input does not carry a valid address header: an
+// unwrapped datagram would be rejected by the receiving 2022 layer anyway,
+// so callers get an explicit "nothing to send" instead of a silent
+// pass-through that desyncs the declared payload format.
 func BuildSIP022Request(b []byte) []byte {
 	return buildSIP022(b, 0, 0)
 }
 
 // BuildSIP022Response wraps a SOCKS5-style UDP relay packet with a SIP022 response header.
-// Includes ClientSessionID for shadowsocks-rust interop.
+// Includes ClientSessionID for shadowsocks-rust interop. Returns nil for
+// input without a valid address header (see BuildSIP022Request).
 func BuildSIP022Response(b []byte, clientSID uint64) []byte {
 	return buildSIP022(b, 1, clientSID)
 }
@@ -37,11 +42,28 @@ func BuildSIP022Response(b []byte, clientSID uint64) []byte {
 // extra: 0 for request (no clientSID), 1 for response (includes clientSID as extra 8 bytes after TS).
 func buildSIP022(b []byte, sipType byte, clientSID uint64) []byte {
 	if len(b) < 4 {
-		return b
+		return nil
 	}
 	atyp := b[0]
 	if atyp != 1 && atyp != 3 && atyp != 4 {
-		return b // unsupported type, pass through
+		return nil // unsupported address type: nothing spec-compliant to send
+	}
+	// The address body must be complete (the same bounds parseSIP022Addr
+	// enforces on the receiving side): a truncated ATYP+ADDR+PORT would be
+	// wrapped into a packet the 2022 peer drops anyway.
+	switch atyp {
+	case 1:
+		if len(b) < 7 {
+			return nil
+		}
+	case 4:
+		if len(b) < 19 {
+			return nil
+		}
+	case 3:
+		if len(b) < 4+int(b[1]) {
+			return nil
+		}
 	}
 
 	ts := time.Now().Unix()
@@ -58,6 +80,9 @@ func buildSIP022(b []byte, sipType byte, clientSID uint64) []byte {
 		binary.BigEndian.PutUint64(out[9:17], clientSID)
 	}
 	binary.BigEndian.PutUint16(out[9+extra:11+extra], uint16(padLen))
+	// Random padding: all-zero padding is a fingerprint distinguishing this
+	// implementation from spec-compliant peers.
+	PutRandomBytes(out[11+extra : 11+extra+padLen])
 	copy(out[11+extra+padLen:], b)
 	return out
 }
@@ -72,8 +97,14 @@ func buildSIP022(b []byte, sipType byte, clientSID uint64) []byte {
 //	port    — target port
 //	payload — data after the address+port
 func ParseSIP022(b []byte) (hdr []byte, host string, port int, payload []byte, err error) {
-	if len(b) < 12 || (b[0] != 0 && b[0] != 1) {
-		err = fmt.Errorf("not a SIP022 header (len=%d type=%d)", len(b), b[0])
+	// b[0] must not be evaluated when b is empty: the error path itself used
+	// to index the empty slice and panic on zero-length decrypted payloads.
+	var typeByte byte
+	if len(b) > 0 {
+		typeByte = b[0]
+	}
+	if len(b) < 12 || (typeByte != 0 && typeByte != 1) {
+		err = fmt.Errorf("not a SIP022 header (len=%d type=%d)", len(b), typeByte)
 		return
 	}
 
@@ -211,6 +242,38 @@ func Sip022Payload(b []byte) []byte {
 		return nil
 	}
 	return rest[hdrLen:]
+}
+
+// validateUDP2022Packet validates a decrypted SIP022 UDP payload without
+// allocating. Per SIP022, the UDP replay window must not be updated before
+// the packet's main header has been validated. A 2022 tunnel carries exactly
+// one payload format: SIP022 (type 0 client / type 1 server, fresh ±30s
+// timestamp). Bare ATYP packets belong to the classic cipher layers and are
+// rejected here: their first byte (ATYP=1) aliases as SIP022 type 1, so
+// accepting them made every 2022 receiver guess the format — and some bare
+// IPv4 packets (e.g. DNS queries whose first QNAME label length is 1 or 4
+// bytes) parsed as structurally valid but timestamp-stale SIP022 and were
+// silently dropped. Senders that tunnel legacy payloads through a 2022 hop
+// must wrap them with BuildSIP022Request first.
+//
+// Both type 0 and type 1 are accepted regardless of session role: the AEAD
+// layer already authenticated the peer and the replay window is per session,
+// so the type byte carries no security weight here, and role-strict checking
+// would only add interop risk against lenient peers.
+func validateUDP2022Packet(b []byte) bool {
+	if len(b) < 12 || (b[0] != 0 && b[0] != 1) {
+		return false
+	}
+	if Sip022Payload(b) == nil {
+		return false
+	}
+	ts := int64(binary.BigEndian.Uint64(b[1:9]))
+	now := time.Now().Unix()
+	diff := now - ts
+	if diff < 0 {
+		diff = -diff
+	}
+	return diff <= 30
 }
 
 func (s *sipAddr) Host() string {

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"fmt"
 	"net"
 	"strings"
 	"sync"
@@ -15,8 +16,7 @@ func RunTCPServer(address string, c *ss.Config,
 	var addresses []string
 	func() {
 		addrsMap := make(map[string]bool)
-		c.Localaddrs = append(c.Localaddrs, c.Localaddr)
-		for _, addr := range c.Localaddrs {
+		for _, addr := range c.RegisterLocalAddr(c.Localaddr) {
 			if len(addr) > 0 {
 				addrsMap[addr] = true
 			}
@@ -55,8 +55,11 @@ func RunTCPServer(address string, c *ss.Config,
 						}
 						ac, ok := conn.(*ss.AcceptedConn)
 						if !ok {
+							// Defensive: a non-AcceptedConn must not take
+							// down the accept loop for every later conn.
+							c.Log("virtual listener: unexpected conn type", fmt.Sprintf("%T", conn))
 							conn.Close()
-							return
+							continue
 						}
 						go handler(ac)
 					}
@@ -69,8 +72,11 @@ func RunTCPServer(address string, c *ss.Config,
 				}
 				ac, ok := conn.(*ss.AcceptedConn)
 				if !ok {
+					// Defensive: a non-AcceptedConn must not take down the
+					// accept loop for every later conn.
+					c.Log("listener: unexpected conn type", fmt.Sprintf("%T", conn))
 					conn.Close()
-					return
+					continue
 				}
 				go handler(ac)
 			}

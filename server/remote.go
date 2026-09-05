@@ -21,7 +21,7 @@ func (a *netConnAdapter) Write(b []byte) (int, error) {
 }
 
 func RunMultiTCPRemoteServer(c *ss.Config) {
-	for _, v := range c.Backends {
+	for _, v := range c.SnapshotBackends() {
 		hits := 0
 		v.InitRuntime().Any = &hits
 	}
@@ -58,6 +58,9 @@ func tcpRemoteHandler(ac *ss.AcceptedConn) {
 	defer conn.Close()
 	C, err := ss.GetSsConn(conn)
 	if err != nil {
+		// Without the inner ss conn, CancelDeferClose below can't run and
+		// the FIN-linger stays active; log the cause instead of dropping it.
+		c.Log("get ss conn failed:", err)
 		C = nil
 	}
 	if cm, ok := conn.(ss.ConnMeta); ok {

@@ -55,16 +55,17 @@ func dialSocks5WithOptions(opt *DialOptions) (conn Conn, err error) {
 
 func checkAndModifyTarget(opt *DialOptions) (newOpt *DialOptions, err error) {
 	c := opt.C
+	p := c.dialPolicy()
 
-	if !c.LocalResolve {
+	if !p.localResolve {
 		return
 	}
 
 	isDomain, isV4, host, port := checkAddrType(opt.Target)
 	if !isDomain {
-		if isV4 && c.NoIPv4 {
+		if isV4 && p.noIPv4 {
 			err = fmt.Errorf("IPv4 is disabled")
-		} else if !isV4 && c.NoIPv6 {
+		} else if !isV4 && p.noIPv6 {
 			err = fmt.Errorf("IPv6 is disabled")
 		}
 		return
@@ -118,13 +119,14 @@ func pickTargetIP(c *Config, ips []net.IP) net.IP {
 
 	// Keep the historical PreferIPv4 semantics on this path: when the
 	// domain has both families, prefer means v4 only.
-	noIPv6 := c.NoIPv6
-	if c.PreferIPv4 && !c.NoIPv6 && len(v4) > 0 && len(v6) > 0 {
+	p := c.dialPolicy()
+	noIPv6 := p.noIPv6
+	if p.preferIPv4 && !p.noIPv6 && len(v4) > 0 && len(v6) > 0 {
 		noIPv6 = true
 	}
 
 	var cand []netip.Addr
-	if !c.NoIPv4 {
+	if !p.noIPv4 {
 		cand = append(cand, v4...)
 	}
 	if !noIPv6 {
@@ -157,12 +159,18 @@ func dialSSWithOptions(opt *DialOptions) (conn Conn, err error) {
 			conn = nil
 		}
 	}()
-	if len(c.Backends) != 0 {
+	backends := c.SnapshotBackends()
+	if len(backends) != 0 {
 		die := make(chan bool)
-		num := len(c.Backends)
+		num := len(backends)
 		errch := make(chan error, num)
-		conch := make(chan Conn, num)
-		for _, v := range c.Backends {
+		// Unbuffered: a handoff completes only when the receiver below takes
+		// this conn as the winner. A buffered channel needs a post-send
+		// re-check to reap strays, and that re-check races the receiver's
+		// close(die): if the winner is taken off the channel before its own
+		// sender re-checks, the sender closes a live connection.
+		conch := make(chan Conn)
+		for _, v := range backends {
 			if v.isDisabled() {
 				num--
 				continue
@@ -188,21 +196,31 @@ func dialSSWithOptions(opt *DialOptions) (conn Conn, err error) {
 				case <-die:
 					rconn.Close()
 				case conch <- rconn:
-				default:
-					rconn.Close()
 				}
 			}(&newOpts)
 		}
+		var lastErr error
 		for i := 0; i < num; i++ {
 			select {
 			case conn = <-conch:
 				close(die)
 				i = num
-			case <-errch:
+			case e := <-errch:
+				lastErr = e
 			}
 		}
 		if conn == nil {
-			err = errNoBackends
+			// Surface the actual dial failures (errNoBackends alone made
+			// multi-backend outages undiagnosable); fall back to the
+			// sentinel when every backend was disabled and nothing dialed.
+			if lastErr != nil {
+				err = fmt.Errorf("no available backends: %w", lastErr)
+			} else {
+				err = errNoBackends
+			}
+			// Every sender reported an error and returned, so nothing is
+			// left to release; close die defensively anyway.
+			close(die)
 		}
 		opt.Data = nil
 		return
@@ -245,7 +263,12 @@ func dialSSWithOptions(opt *DialOptions) (conn Conn, err error) {
 		}
 	}
 	if crypto.IsAEAD2022(c.Method) {
-		conn, err = ss2022Dial(opt)
+		ssConn, derr := ss2022DialWithConn(conn, opt)
+		if derr != nil {
+			err = derr
+			return // conn still holds the raw conn; the deferred cleanup closes it
+		}
+		conn = ssConn
 		return
 	}
 	dec, err := crypto.NewDecrypter(c.Method, c.Password)
@@ -280,7 +303,10 @@ func dialSSWithOptions(opt *DialOptions) (conn Conn, err error) {
 		}
 	}
 	if len(opt.Data) > 0 {
-		conn.Write(opt.Data)
+		if _, werr := conn.Write(opt.Data); werr != nil {
+			err = werr
+			return
+		}
 		opt.Data = nil
 	}
 	return
@@ -380,7 +406,14 @@ func DialSSWithOptions(opt *DialOptions) (conn Conn, err error) {
 
 	type dialer func(*DialOptions) (Conn, error)
 	work := func(d dialer, direct bool) {
-		rconn, err := d(opt)
+		// Each racer works on its own copy: dialSSWithOptions mutates opt
+		// (RawHeader, Data) in flight, and sharing one struct across the two
+		// goroutines plus the deferred write below races the pool-owned Data
+		// buffer across connections. Data stays nil here — the deferred write
+		// in DialSSWithOptions sends it once, to whichever side wins.
+		newOpt := *opt
+		newOpt.Data = nil
+		rconn, err := d(&newOpt)
 		if err != nil {
 			select {
 			case <-die:

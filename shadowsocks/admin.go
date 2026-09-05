@@ -2,12 +2,17 @@ package ss
 
 import (
 	"bytes"
+	"crypto/subtle"
 	"embed"
 	"encoding/json"
 	"fmt"
 	"io/fs"
 	"log"
+	"math"
+	"mime"
+	"net"
 	"net/http"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -26,6 +31,50 @@ var adminRegistry struct {
 	configs []*Config
 }
 
+// adminWriteMu serializes all admin handlers that mutate live Config fields.
+// Without it two concurrent settings updates could interleave their multi-key
+// apply loops. Readers of those fields (handleGetConfigRaw, buildConfigSummary)
+// pair with this mutex too, and the runtime dial-policy reader (see
+// Config.dialPolicy) keeps its snapshot rebuilds under it, so no reader can
+// observe a torn string or slice header.
+var adminWriteMu sync.Mutex
+
+// adminHostAllowed rejects requests whose Host header is a DNS name. With no
+// token configured, the admin API is guarded only by network reachability, so
+// a malicious web page can DNS-rebind its own domain to 127.0.0.1 and talk to
+// a loopback-bound admin as a same-origin request from the victim's browser.
+// Requiring an IP literal (or "localhost") breaks that attack while keeping
+// every literal-IP access working; token-authenticated setups skip the check
+// because the attacker cannot read or write without the token.
+func adminHostAllowed(hostHeader string) bool {
+	host := hostHeader
+	if h, _, err := net.SplitHostPort(hostHeader); err == nil {
+		host = h
+	}
+	if host == "" {
+		return false
+	}
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	return net.ParseIP(host) != nil
+}
+
+// requireJSONContentType rejects requests whose body was not declared as
+// JSON. A browser can send cross-site no-cors POSTs with text/plain bodies
+// (no preflight required), so JSON-decoding handlers must not trust an
+// undeclared body even when the admin API is loopback-only.
+func requireJSONContentType(w http.ResponseWriter, r *http.Request) bool {
+	ct := r.Header.Get("Content-Type")
+	if ct != "" {
+		if mt, _, err := mime.ParseMediaType(ct); err == nil && mt == "application/json" {
+			return true
+		}
+	}
+	http.Error(w, "content-type must be application/json", http.StatusUnsupportedMediaType)
+	return false
+}
+
 var adminStartTime = time.Now()
 
 // SSE hub for real-time event streaming.
@@ -41,10 +90,13 @@ func newSSEHub() *sseBroker {
 }
 
 func (h *sseBroker) subscribe() chan []byte {
-	ch := make(chan []byte, 64)
 	h.mu.Lock()
+	defer h.mu.Unlock()
+	if len(h.clients) >= maxSSEClients {
+		return nil
+	}
+	ch := make(chan []byte, 64)
 	h.clients[ch] = struct{}{}
-	h.mu.Unlock()
 	return ch
 }
 
@@ -80,13 +132,16 @@ var connEventHub = struct {
 }
 
 func connEventSubscribe(connID uint64) chan []byte {
-	ch := make(chan []byte, 64)
 	connEventHub.mu.Lock()
+	defer connEventHub.mu.Unlock()
+	if len(connEventHub.subs) >= maxSSEClients {
+		return nil
+	}
+	ch := make(chan []byte, 64)
 	if connEventHub.subs[connID] == nil {
 		connEventHub.subs[connID] = make(map[chan []byte]struct{})
 	}
 	connEventHub.subs[connID][ch] = struct{}{}
-	connEventHub.mu.Unlock()
 	return ch
 }
 
@@ -194,16 +249,17 @@ func sampleTraffic() {
 		trafficHistory.buf = newBuf
 	}
 	for i, c := range cfgs {
-		if c.getStat() != nil {
-			if c.getStat().configIndex < 0 {
-				c.getStat().configIndex = i
-			}
-			rr, wr, cr := c.getStat().Snap()
+		if s := c.getStat(); s != nil {
+			// Assign each stat server its registry index once, atomically:
+			// configIndex starts at -1 and the SSE publishers rely on the
+			// sentinel to suppress events before this assignment.
+			s.configIndex.CompareAndSwap(-1, int32(i))
+			rr, wr, cr := s.Snap()
 			trafficHistory.buf[base+i] = trafficSample{
 				readRate:  rr,
 				writRate:  wr,
 				connRate:  cr,
-				connCount: atomic.LoadInt32(&c.getStat().connections),
+				connCount: atomic.LoadInt32(&s.connections),
 			}
 		}
 	}
@@ -270,8 +326,10 @@ func sampleTraffic() {
 	}
 }
 
-// StartAdminServer starts the admin HTTP server on addr.
-func StartAdminServer(addr string) {
+// StartAdminServer starts the admin HTTP server on addr. When token is
+// non-empty, /api/ endpoints require it (Authorization: Bearer, X-Admin-Token
+// header, or ?token=). The static UI stays open so the login page can prompt.
+func StartAdminServer(addr string, token string) {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /api/configs", handleListConfigs)
@@ -317,18 +375,95 @@ func StartAdminServer(addr string) {
 		}
 	}()
 
+	// Refuse a tokenless admin on a non-loopback address: unlike the
+	// built-in admin:6666 service (which enforces isLocalSource), the webui
+	// can reconfigure the whole proxy. SS_ADMIN_ALLOW_REMOTE=1 opts out for
+	// deployments that deliberately want an open LAN admin.
+	if token == "" && !adminAddrIsLoopbackOnly(addr) && os.Getenv("SS_ADMIN_ALLOW_REMOTE") != "1" {
+		log.Fatalf("admin webui %q has no admintoken; refusing to expose it beyond loopback (set admintoken, bind to 127.0.0.1, or set SS_ADMIN_ALLOW_REMOTE=1 to override)", addr)
+	}
+
 	go func() {
 		log.Printf("admin webui listening on %s", addr)
+		if token == "" {
+			log.Printf("warning: admin webui has no admintoken; anyone who can reach %s can reconfigure the proxy", addr)
+		}
 		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
 			w.Header().Set("Pragma", "no-cache")
 			w.Header().Set("Expires", "0")
+			w.Header().Set("X-Content-Type-Options", "nosniff")
+			if !strings.HasPrefix(r.URL.Path, "/api/") {
+				w.Header().Set("X-Frame-Options", "DENY")
+			}
+			if token == "" && !adminHostAllowed(r.Host) {
+				// DNS-rebinding guard for the tokenless setup; see
+				// adminHostAllowed.
+				http.Error(w, "forbidden host", http.StatusForbidden)
+				return
+			}
+			if token != "" && strings.HasPrefix(r.URL.Path, "/api/") && !checkAdminToken(r, token) {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
 			mux.ServeHTTP(w, r)
 		})
-		if err := http.ListenAndServe(addr, handler); err != nil {
+		// Bound header reads and idle conns; no global WriteTimeout — SSE
+		// handlers stream indefinitely and set per-write deadlines instead.
+		srv := &http.Server{
+			Addr:              addr,
+			Handler:           handler,
+			ReadHeaderTimeout: 10 * time.Second,
+			IdleTimeout:       120 * time.Second,
+		}
+		if err := srv.ListenAndServe(); err != nil {
 			log.Printf("admin server error: %v", err)
 		}
 	}()
+}
+
+// adminAddrIsLoopbackOnly reports whether the listen address restricts the
+// admin surface to the local machine.
+func adminAddrIsLoopbackOnly(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
+	}
+	if host == "" || host == "*" || host == "0.0.0.0" || host == "::" {
+		return false
+	}
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
+}
+
+// checkAdminToken validates the admin token in constant time.
+//
+// The ?token= query parameter exists only because EventSource cannot send
+// headers (the SSE dashboard needs it). Unlike the header forms it puts the
+// token in the URL, where proxies and access logs may retain it — prefer the
+// header forms for everything else.
+func checkAdminToken(r *http.Request, token string) bool {
+	candidates := make([]string, 0, 3)
+	if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
+		candidates = append(candidates, strings.TrimPrefix(auth, "Bearer "))
+	}
+	if h := r.Header.Get("X-Admin-Token"); h != "" {
+		candidates = append(candidates, h)
+	}
+	if q := r.URL.Query().Get("token"); q != "" {
+		candidates = append(candidates, q)
+	}
+	for _, c := range candidates {
+		if subtle.ConstantTimeCompare([]byte(c), []byte(token)) == 1 {
+			return true
+		}
+	}
+	return false
 }
 
 type configSummary struct {
@@ -380,6 +515,15 @@ type aggregateStats struct {
 }
 
 func buildConfigSummary(i int, c *Config, numConfigs int) configSummary {
+	// Resolve ActiveBackend before taking the lock: the lazy snapshot
+	// publish inside GetActiveBackend also needs adminWriteMu.
+	active := c.GetActiveBackend()
+
+	// Serialize with the admin writers so no field read below can race a
+	// settings or backend update.
+	adminWriteMu.Lock()
+	defer adminWriteMu.Unlock()
+
 	s := configSummary{
 		Index:         i,
 		Nickname:      c.Nickname,
@@ -390,7 +534,7 @@ func buildConfigSummary(i int, c *Config, numConfigs int) configSummary {
 		AutoProxy:     c.AutoProxy,
 		LogHTTP:       c.LogHTTP,
 		Method:        c.Method,
-		ActiveBackend: c.ActiveBackend,
+		ActiveBackend: active,
 	}
 	if c.getStat() != nil {
 		s.Connections = atomic.LoadInt32(&c.getStat().connections)
@@ -418,7 +562,7 @@ func buildConfigSummary(i int, c *Config, numConfigs int) configSummary {
 	if c.getStat() != nil {
 		s.MethodStats = c.getStat().getMethodStats()
 	}
-	for _, b := range c.Backends {
+	for _, b := range c.SnapshotBackends() {
 		bs := backendSummary{
 			Nickname:   b.Nickname,
 			RemoteAddr: b.Remoteaddr,
@@ -521,6 +665,10 @@ func handleGetConfigRaw(w http.ResponseWriter, r *http.Request) {
 		AdminAddr       string   `json:"adminaddr,omitempty"`
 		BackendCount    int      `json:"backendCount"`
 	}
+	// Build the value copy under the same lock the admin writers use, so a
+	// concurrent settings/backend update cannot tear a string or slice
+	// header while it is being read.
+	adminWriteMu.Lock()
 	sc := safeConfig{
 		Nickname:        c.Nickname,
 		Type:            c.Type,
@@ -552,8 +700,9 @@ func handleGetConfigRaw(w http.ResponseWriter, r *http.Request) {
 		Limit:           c.Limit,
 		LimitPerConn:    c.LimitPerConn,
 		AdminAddr:       c.AdminAddr,
-		BackendCount:    len(c.Backends),
+		BackendCount:    len(c.SnapshotBackends()),
 	}
+	adminWriteMu.Unlock()
 	writeJSON(w, sc)
 }
 
@@ -576,12 +725,17 @@ func handleToggleConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "index out of range", http.StatusNotFound)
 		return
 	}
+	if !requireJSONContentType(w, r) {
+		return
+	}
 	var body struct{ Disabled bool }
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid body", http.StatusBadRequest)
 		return
 	}
+	adminWriteMu.Lock()
 	cfgs[idx].setDisabled(body.Disabled)
+	adminWriteMu.Unlock()
 	ssePublishIndex("config_status_changed", idx, map[string]any{
 		"configIndex": idx,
 		"disabled":    body.Disabled,
@@ -601,12 +755,17 @@ func handleToggleAutoProxy(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "index out of range", http.StatusNotFound)
 		return
 	}
+	if !requireJSONContentType(w, r) {
+		return
+	}
 	var body struct{ Enabled bool }
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid body", http.StatusBadRequest)
 		return
 	}
+	adminWriteMu.Lock()
 	cfgs[idx].AutoProxy = body.Enabled
+	adminWriteMu.Unlock()
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
@@ -622,12 +781,17 @@ func handleToggleLogHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "index out of range", http.StatusNotFound)
 		return
 	}
+	if !requireJSONContentType(w, r) {
+		return
+	}
 	var body struct{ Enabled bool }
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid body", http.StatusBadRequest)
 		return
 	}
+	adminWriteMu.Lock()
 	cfgs[idx].LogHTTP = body.Enabled
+	adminWriteMu.Unlock()
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
@@ -649,9 +813,14 @@ func handleToggleBackend(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid body", http.StatusBadRequest)
 		return
 	}
-	for _, b := range cfgs[idx].Backends {
+	if !requireJSONContentType(w, r) {
+		return
+	}
+	for _, b := range cfgs[idx].SnapshotBackends() {
 		if b.Nickname == nickname {
+			adminWriteMu.Lock()
 			b.setDisabled(body.Disabled)
+			adminWriteMu.Unlock()
 			ssePublishIndex("backend_status_changed", idx, map[string]any{
 				"configIndex": idx,
 				"nickname":    nickname,
@@ -881,12 +1050,17 @@ func handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	c := cfgs[idx]
 
+	if !requireJSONContentType(w, r) {
+		return
+	}
 	var body map[string]any
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid body", http.StatusBadRequest)
 		return
 	}
 
+	adminWriteMu.Lock()
+	defer adminWriteMu.Unlock()
 	applied := []string{}
 	for key, val := range body {
 		ok := false
@@ -943,21 +1117,33 @@ func handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		case "prefer_ipv4":
 			if v, e := toBool(val); e == nil {
 				c.PreferIPv4 = v
+				for _, b := range c.SnapshotBackends() {
+					b.PreferIPv4 = v
+				}
 				ok = true
 			}
 		case "no_ipv4":
 			if v, e := toBool(val); e == nil {
 				c.NoIPv4 = v
+				for _, b := range c.SnapshotBackends() {
+					b.NoIPv4 = v
+				}
 				ok = true
 			}
 		case "no_ipv6":
 			if v, e := toBool(val); e == nil {
 				c.NoIPv6 = v
+				for _, b := range c.SnapshotBackends() {
+					b.NoIPv6 = v
+				}
 				ok = true
 			}
 		case "local_resolve":
 			if v, e := toBool(val); e == nil {
 				c.LocalResolve = v
+				for _, b := range c.SnapshotBackends() {
+					b.LocalResolve = v
+				}
 				ok = true
 			}
 		case "ipselect":
@@ -967,7 +1153,7 @@ func handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 					// Deliberately overrides per-backend values, matching the
 					// existing timeout settings behavior.
 					c.IPSelect = v
-					for _, b := range c.Backends {
+					for _, b := range c.SnapshotBackends() {
 						b.IPSelect = v
 					}
 					ok = true
@@ -983,7 +1169,7 @@ func handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 					v = maxIPSelectDelayMs
 				}
 				c.IPSelectDelayMs = v
-				for _, b := range c.Backends {
+				for _, b := range c.SnapshotBackends() {
 					b.IPSelectDelayMs = v
 				}
 				ok = true
@@ -1011,7 +1197,7 @@ func handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 					l.SetLimit(v)
 				}
 				// also update backend limiters
-				for _, b := range c.Backends {
+				for _, b := range c.SnapshotBackends() {
 					for _, l := range b.getLimiters() {
 						l.SetLimit(v)
 					}
@@ -1021,15 +1207,15 @@ func handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		case "limitperconn":
 			if v, e := toInt(val); e == nil && v >= 0 {
 				c.LimitPerConn = v
-				for _, b := range c.Backends {
+				for _, b := range c.SnapshotBackends() {
 					b.LimitPerConn = v
 				}
 				ok = true
 			}
 		case "timeout":
-			if v, e := toInt(val); e == nil && v > 0 {
+			if v, e := toInt(val); e == nil && v > 0 && v <= maxTimeoutSeconds {
 				c.Timeout = v
-				for _, b := range c.Backends {
+				for _, b := range c.SnapshotBackends() {
 					b.Timeout = v
 				}
 				ok = true
@@ -1038,6 +1224,12 @@ func handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		if ok {
 			applied = append(applied, key)
 		}
+	}
+	// Republish the dial-policy snapshots so per-dial atomic readers see the
+	// new values: the parent plus every backend the loop may have touched.
+	c.publishDialPolicy()
+	for _, b := range c.SnapshotBackends() {
+		b.publishDialPolicy()
 	}
 	writeJSON(w, map[string]any{"status": "ok", "applied": applied})
 }
@@ -1054,12 +1246,45 @@ func toBool(v any) (bool, error) {
 	return false, strconv.ErrSyntax
 }
 
+// maxSafeInt bounds toInt results: float64→int conversion of values beyond
+// the float64-exact range is implementation-defined (arm64 saturates to
+// MaxInt64, letting e.g. {"timeout": 1e308} sail past "> 0" checks), and
+// downstream Duration arithmetic overflows far below even that.
+//
+// Two constants because one untyped constant cannot serve both branches:
+// compared against float64 it is exactly representable, but 2^53 overflows
+// 32-bit int, so the int branch compares through int64 (where the check is
+// vacuous on 32-bit platforms — int already maxes far below it).
+const (
+	maxSafeIntF  = float64(1 << 53)
+	maxSafeInt64 = int64(1) << 53
+)
+
+// maxTimeoutSeconds caps runtime timeout edits; larger values overflow
+// time.Duration arithmetic at the use sites.
+const maxTimeoutSeconds = 365 * 24 * 60 * 60
+
+// Cap on concurrent SSE subscribers: each holds a goroutine and a 64-slot
+// channel for its lifetime, and a zero-window client can otherwise pin
+// both until it disconnects.
+const maxSSEClients = 64
+
 func toInt(v any) (int, error) {
 	switch val := v.(type) {
 	case float64:
+		if math.IsNaN(val) || val > maxSafeIntF || val < -maxSafeIntF {
+			return 0, strconv.ErrRange
+		}
 		return int(val), nil
 	case string:
-		return strconv.Atoi(val)
+		n, err := strconv.Atoi(val)
+		if err != nil {
+			return 0, err
+		}
+		if int64(n) > maxSafeInt64 || int64(n) < -maxSafeInt64 {
+			return 0, strconv.ErrRange
+		}
+		return n, nil
 	}
 	return 0, strconv.ErrSyntax
 }
@@ -1067,7 +1292,7 @@ func toInt(v any) (int, error) {
 // --- Backend CRUD ---
 
 func findBackend(c *Config, nickname string) *Config {
-	for _, b := range c.Backends {
+	for _, b := range c.SnapshotBackends() {
 		if b.Nickname == nickname {
 			return b
 		}
@@ -1094,6 +1319,9 @@ func handleUpdateBackend(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "backend not found", http.StatusNotFound)
 		return
 	}
+	if !requireJSONContentType(w, r) {
+		return
+	}
 
 	var body map[string]any
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -1101,6 +1329,16 @@ func handleUpdateBackend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Hold adminWriteMu (like handleAddBackend) so these edits are mutually
+	// exclusive with every locked reader of live fields — the admin summary
+	// handlers read Method/Target/Forward under this lock, and a torn
+	// string-header read would be memory-unsafe. backendsLock keeps the
+	// backend slice consistent with add/delete; lock order matches
+	// handleAddBackend (adminWriteMu first).
+	adminWriteMu.Lock()
+	defer adminWriteMu.Unlock()
+	parent.initRuntime().backendsLock.Lock()
+	defer parent.initRuntime().backendsLock.Unlock()
 	applied := []string{}
 	for key, val := range body {
 		ok := false
@@ -1152,6 +1390,7 @@ func handleUpdateBackend(w http.ResponseWriter, r *http.Request) {
 			applied = append(applied, key)
 		}
 	}
+	b.publishDialPolicy()
 	writeJSON(w, map[string]any{"status": "ok", "applied": applied})
 }
 
@@ -1169,15 +1408,45 @@ func handleDeleteBackend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	c := cfgs[idx]
+	removed := false
+	c.initRuntime().backendsLock.Lock()
 	for i, b := range c.Backends {
 		if b.Nickname == nickname {
-			b.Close()
+			// Do NOT call b.Close(): admin-created backends share the parent
+			// config's Die channel, and closing it kills the parent's
+			// listeners (RunUDPServer watches DieChan).
 			c.Backends = append(c.Backends[:i], c.Backends[i+1:]...)
-			writeJSON(w, map[string]string{"status": "ok"})
-			return
+			removed = true
+			break
 		}
 	}
-	http.Error(w, "backend not found", http.StatusNotFound)
+	c.initRuntime().backendsLock.Unlock()
+	if !removed {
+		http.Error(w, "backend not found", http.StatusNotFound)
+		return
+	}
+	// If the deleted backend was the switch-mode target, re-point ActiveBackend
+	// at the first remaining backend (or clear it) so the switch handler does
+	// not fail every subsequent connection. The pre-lock GetActiveBackend
+	// call warms the snapshot so the re-check under adminWriteMu is lock-free
+	// (GetActiveBackend would self-deadlock on the non-reentrant mutex if it
+	// had to publish lazily while we hold it). backendsLock is released before
+	// adminWriteMu is taken, so this path never nests the two locks in the
+	// order opposite to handleAddBackend/handleUpdateBackend.
+	if c.GetActiveBackend() == nickname {
+		adminWriteMu.Lock()
+		if c.GetActiveBackend() == nickname {
+			backends := c.SnapshotBackends()
+			if len(backends) > 0 {
+				c.ActiveBackend = backends[0].Nickname
+			} else {
+				c.ActiveBackend = ""
+			}
+			c.publishActiveBackend()
+		}
+		adminWriteMu.Unlock()
+	}
+	writeJSON(w, map[string]string{"status": "ok"})
 }
 
 func handleAddBackend(w http.ResponseWriter, r *http.Request) {
@@ -1194,6 +1463,9 @@ func handleAddBackend(w http.ResponseWriter, r *http.Request) {
 	}
 	c := cfgs[idx]
 
+	if !requireJSONContentType(w, r) {
+		return
+	}
 	var body struct {
 		Nickname   string `json:"nickname"`
 		Remoteaddr string `json:"remoteaddr"`
@@ -1208,6 +1480,8 @@ func handleAddBackend(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "nickname and remoteaddr are required", http.StatusBadRequest)
 		return
 	}
+	adminWriteMu.Lock()
+	defer adminWriteMu.Unlock()
 	if findBackend(c, body.Nickname) != nil {
 		http.Error(w, "backend with this nickname already exists", http.StatusConflict)
 		return
@@ -1225,7 +1499,7 @@ func handleAddBackend(w http.ResponseWriter, r *http.Request) {
 		b.Password = c.Password
 	}
 	b.initRuntime().Die = c.DieChan()
-	b.setStat(&statServer{})
+	b.setStat(newStatServer())
 	b.LogHTTP = c.LogHTTP
 	b.Timeout = c.Timeout
 	b.PreferIPv4 = c.PreferIPv4
@@ -1235,14 +1509,18 @@ func handleAddBackend(w http.ResponseWriter, r *http.Request) {
 	b.ObfsHost = append([]string{}, c.ObfsHost...)
 	b.setAutoProxyCtx(c.getAutoProxyCtx())
 	CheckBasicConfig(b)
+	b.publishDialPolicy()
 	if c.LimitPerConn != 0 {
 		b.LimitPerConn = c.LimitPerConn
 	}
 	if parentLimiters := c.getLimiters(); len(parentLimiters) != 0 {
 		b.initRuntime().limiters = append(b.initRuntime().limiters, parentLimiters...)
 	}
+	c.initRuntime().backendsLock.Lock()
 	c.Backends = append(c.Backends, b)
-	writeJSON(w, map[string]any{"status": "ok", "index": len(c.Backends) - 1})
+	newIndex := len(c.Backends) - 1
+	c.initRuntime().backendsLock.Unlock()
+	writeJSON(w, map[string]any{"status": "ok", "index": newIndex})
 }
 
 func toString(v any) (string, error) {
@@ -1273,7 +1551,7 @@ func handleGetActiveBackend(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "index out of range", http.StatusNotFound)
 		return
 	}
-	writeJSON(w, map[string]string{"active": cfgs[idx].ActiveBackend})
+	writeJSON(w, map[string]string{"active": cfgs[idx].GetActiveBackend()})
 }
 
 func handleSetActiveBackend(w http.ResponseWriter, r *http.Request) {
@@ -1297,8 +1575,11 @@ func handleSetActiveBackend(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "nickname is required", http.StatusBadRequest)
 		return
 	}
+	if !requireJSONContentType(w, r) {
+		return
+	}
 	found := false
-	for _, b := range cfgs[idx].Backends {
+	for _, b := range cfgs[idx].SnapshotBackends() {
 		if b.Nickname == body.Nickname {
 			found = true
 			break
@@ -1308,7 +1589,10 @@ func handleSetActiveBackend(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "backend not found", http.StatusNotFound)
 		return
 	}
+	adminWriteMu.Lock()
 	cfgs[idx].ActiveBackend = body.Nickname
+	cfgs[idx].publishActiveBackend()
+	adminWriteMu.Unlock()
 	writeJSON(w, map[string]string{"status": "ok", "active": body.Nickname})
 }
 
@@ -1411,13 +1695,13 @@ func handleConnectionsTop(w http.ResponseWriter, r *http.Request) {
 	sort.Slice(conns, func(i, j int) bool {
 		switch by {
 		case "writBytes":
-			return conns[i].WritBytes > conns[j].WritBytes
+			return atomic.LoadInt64(&conns[i].WritBytes) > atomic.LoadInt64(&conns[j].WritBytes)
 		case "duration":
 			di := time.Since(conns[i].StartTime)
 			dj := time.Since(conns[j].StartTime)
 			return di > dj
 		default: // readBytes
-			return conns[i].ReadBytes > conns[j].ReadBytes
+			return atomic.LoadInt64(&conns[i].ReadBytes) > atomic.LoadInt64(&conns[j].ReadBytes)
 		}
 	})
 	if len(conns) > n {
@@ -1456,8 +1740,8 @@ func handleConnDistribution(w http.ResponseWriter, r *http.Request) {
 	history := c.getStat().tracker.History()
 	durations := make([]float64, 0, len(history))
 	for _, rec := range history {
-		if rec.EndTime != nil {
-			durMs := float64(rec.EndTime.Sub(rec.StartTime).Microseconds()) / 1000.0
+		if end, ok := rec.ended(); ok {
+			durMs := float64(end.Sub(rec.StartTime).Microseconds()) / 1000.0
 			if durMs >= 0 {
 				durations = append(durations, durMs)
 			}
@@ -1503,7 +1787,7 @@ func sortConns(conns []*ConnRecord, sortBy, order string) {
 		var less bool
 		switch sortBy {
 		case "writBytes":
-			less = conns[i].WritBytes < conns[j].WritBytes
+			less = atomic.LoadInt64(&conns[i].WritBytes) < atomic.LoadInt64(&conns[j].WritBytes)
 		case "duration":
 			di := time.Since(conns[i].StartTime)
 			dj := time.Since(conns[j].StartTime)
@@ -1519,9 +1803,9 @@ func sortConns(conns []*ConnRecord, sortBy, order string) {
 			}
 			less = ti < tj
 		case "lastActive":
-			less = conns[i].LastActivity < conns[j].LastActivity
+			less = atomic.LoadInt64(&conns[i].LastActivity) < atomic.LoadInt64(&conns[j].LastActivity)
 		default: // readBytes
-			less = conns[i].ReadBytes < conns[j].ReadBytes
+			less = atomic.LoadInt64(&conns[i].ReadBytes) < atomic.LoadInt64(&conns[j].ReadBytes)
 		}
 		if desc {
 			return !less
@@ -1582,21 +1866,30 @@ func handleConnSSE(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-store")
+	rc := http.NewResponseController(w)
+
+	// Subscribe before snapshotting so a connection that closes during the
+	// scan still delivers its "closed" event instead of leaving the stream
+	// hanging until the client disconnects on its own.
+	ch := connEventSubscribe(cid)
+	if ch == nil {
+		http.Error(w, "too many SSE clients", http.StatusServiceUnavailable)
+		return
+	}
+	defer connEventUnsubscribe(cid, ch)
 
 	// Send initial full data
 	b, _ := json.Marshal(rec)
+	rc.SetWriteDeadline(time.Now().Add(15 * time.Second))
 	fmt.Fprintf(w, "event: init\ndata: %s\n\n", b)
 	flusher.Flush()
 
 	// If already closed, send closed and exit
-	if rec.EndTime != nil {
+	if _, ended := rec.ended(); ended {
 		fmt.Fprintf(w, "event: closed\ndata: %s\n\n", b)
 		flusher.Flush()
 		return
 	}
-
-	ch := connEventSubscribe(cid)
-	defer connEventUnsubscribe(cid, ch)
 
 	for {
 		select {
@@ -1604,7 +1897,10 @@ func handleConnSSE(w http.ResponseWriter, r *http.Request) {
 			if !ok {
 				return
 			}
-			w.Write(msg)
+			rc.SetWriteDeadline(time.Now().Add(15 * time.Second))
+			if _, err := w.Write(msg); err != nil {
+				return
+			}
 			flusher.Flush()
 			// If the event is "closed", stop streaming
 			if bytes.Contains(msg, []byte("event: closed")) {
@@ -1622,14 +1918,26 @@ func handleSSE(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "streaming not supported", http.StatusInternalServerError)
 		return
 	}
+	ch := sseHub.subscribe()
+	if ch == nil {
+		http.Error(w, "too many SSE clients", http.StatusServiceUnavailable)
+		return
+	}
+	defer sseHub.unsubscribe(ch)
+	rc := http.NewResponseController(w)
+	// Bound every write: a client that stops reading (zero TCP window)
+	// would otherwise pin this goroutine forever; the deadline turns that
+	// into a write error and the loop exits.
+	setWDeadline := func() {
+		rc.SetWriteDeadline(time.Now().Add(15 * time.Second))
+	}
+
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 
-	ch := sseHub.subscribe()
-	defer sseHub.unsubscribe(ch)
-
 	// initial keepalive
+	setWDeadline()
 	fmt.Fprintf(w, "event: connected\ndata: {}\n\n")
 	flusher.Flush()
 
@@ -1639,7 +1947,10 @@ func handleSSE(w http.ResponseWriter, r *http.Request) {
 			if !ok {
 				return
 			}
-			w.Write(msg)
+			setWDeadline()
+			if _, err := w.Write(msg); err != nil {
+				return
+			}
 			flusher.Flush()
 		case <-r.Context().Done():
 			return

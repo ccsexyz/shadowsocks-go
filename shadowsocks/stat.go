@@ -8,7 +8,11 @@ import (
 )
 
 type statServer struct {
-	configIndex      int
+	// configIndex is the index of the owning config in the admin registry.
+	// -1 until sampleTraffic assigns it; the SSE publishers check it so
+	// events are not misattributed to config 0 (the zero value used to be
+	// indistinguishable from a real assignment).
+	configIndex      atomic.Int32
 	connections      int32
 	totalConnections int64
 	peakConnections  int32
@@ -18,6 +22,11 @@ type statServer struct {
 	writSnap         int64
 	connSnap         int64
 	tracker          *ConnTracker
+
+	// initMu guards the lazy initialization of tracker/targetTracker and
+	// the tracker's conn logger: the first concurrent connections used to
+	// race their check-then-set and leak one tracker or log file.
+	initMu sync.Mutex
 
 	// reject reason counters
 	rejectDecryptFail      int64
@@ -39,6 +48,15 @@ type methodStat struct {
 	ReadBytes int64 `json:"readBytes"`
 	WritBytes int64 `json:"writBytes"`
 	ConnCount int64 `json:"connCount"`
+}
+
+// newStatServer allocates a stat server with configIndex set to the
+// "unassigned" sentinel (-1): the zero value 0 would be indistinguishable
+// from a real registry index in the SSE publishers' guards.
+func newStatServer() *statServer {
+	s := &statServer{methodStats: make(map[string]*methodStat)}
+	s.configIndex.Store(-1)
+	return s
 }
 
 type statConn struct {
@@ -104,6 +122,7 @@ func newStatConn(conn Conn, s *statServer) *statConn {
 	if cm, ok := conn.(ConnMeta); ok {
 		host = cm.GetHost()
 	}
+	s.initMu.Lock()
 	if s.tracker == nil {
 		s.tracker = newConnTracker()
 	}
@@ -126,9 +145,10 @@ func newStatConn(conn Conn, s *statServer) *statConn {
 		}
 		s.targetTracker.addConn(dstAddr, host)
 	}
-	if s.configIndex >= 0 {
-		ssePublishIndex("connection_opened", s.configIndex, map[string]any{
-			"configIndex": s.configIndex,
+	s.initMu.Unlock()
+	if idx := s.configIndex.Load(); idx >= 0 {
+		ssePublishIndex("connection_opened", int(idx), map[string]any{
+			"configIndex": int(idx),
 			"connId":      rec.ID,
 		})
 	}
@@ -145,9 +165,9 @@ func (conn *statConn) Close() error {
 			conn.s.targetTracker.addBytes(conn.record.DstAddr, atomic.LoadInt64(&conn.record.ReadBytes), atomic.LoadInt64(&conn.record.WritBytes))
 			conn.s.targetTracker.updateLastSeen(conn.record.DstAddr)
 		}
-		if conn.s.configIndex >= 0 {
-			ssePublishIndex("connection_closed", conn.s.configIndex, map[string]any{
-				"configIndex": conn.s.configIndex,
+		if idx := conn.s.configIndex.Load(); idx >= 0 {
+			ssePublishIndex("connection_closed", int(idx), map[string]any{
+				"configIndex": int(idx),
 				"connId":      conn.record.ID,
 			})
 		}
@@ -226,9 +246,9 @@ func (s *statServer) incReject(reason string) {
 	default:
 		atomic.AddInt64(&s.rejectOther, 1)
 	}
-	if s.configIndex >= 0 {
-		ssePublishIndex("reject_updated", s.configIndex, map[string]any{
-			"configIndex": s.configIndex,
+	if idx := s.configIndex.Load(); idx >= 0 {
+		ssePublishIndex("reject_updated", int(idx), map[string]any{
+			"configIndex": int(idx),
 			"counters":    s.getRejectCounters(),
 		})
 	}

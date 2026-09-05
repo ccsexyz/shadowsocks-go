@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ccsexyz/shadowsocks-go/crypto"
@@ -85,27 +86,51 @@ type ProxyConfig struct {
 
 // runtime holds all live state for a Config. It is never JSON-serialized.
 type runtime struct {
-	limiters       []*Limiter
-	Vlogger        *log.Logger
-	Dlogger        *log.Logger
-	Logger         *log.Logger
-	Any            any
-	Die            chan bool
-	closers        []cb
-	tcpFilterLock  sync.Mutex
-	tcpFilterOnce  sync.Once
-	tcpFilter      bytesFilter
-	udpFilterOnce  sync.Once
-	udpFilter      bytesFilter
-	tcpIvChecker   ivChecker
-	autoProxyCtx   *autoProxy
-	chnListCtx     *chnRouteList
-	crctbl         *crc32.Table
-	disable        bool
+	limiters      []*Limiter
+	ownLimiter    bool // limiters[0] was added by this config's own CheckBasicConfig
+	Vlogger       *log.Logger
+	Dlogger       *log.Logger
+	Logger        *log.Logger
+	Any           any
+	Die           chan bool
+	closers       []cb
+	tcpFilterLock sync.Mutex
+	tcpFilterOnce sync.Once
+	tcpFilter     bytesFilter
+	udpFilterOnce sync.Once
+	udpFilter     bytesFilter
+	tcpIvChecker  ivChecker
+	autoProxyCtx  *autoProxy
+	chnListCtx    *chnRouteList
+	crctbl        *crc32.Table
+	// disable is written by the admin paths (under adminWriteMu) and read
+	// locklessly on the accept path, so it must be atomic.
+	disable        atomic.Bool
 	stat           *statServer
 	dialHealth     *dialHealth
 	ipSelCache     *ipScoreCache
 	ipSelCacheOnce sync.Once
+
+	// SS fallback detector configs, built once and shared across connections
+	// so the per-Config IV/salt replay state actually accumulates.
+	ssProxyConfigsOnce sync.Once
+	ssProxyConfigs     []*Config
+
+	// backendsLock guards the Backends slice, which the admin API mutates
+	// while connection handling iterates it.
+	backendsLock sync.RWMutex
+
+	// dialPolicyPtr holds the immutable per-dial policy snapshot; the admin
+	// API swaps it copy-on-write so dial paths read it with one atomic load
+	// instead of racing settings writes on the scalar fields.
+	dialPolicyPtr atomic.Pointer[dialPolicy]
+
+	// activeBackendPtr mirrors ActiveBackend for lock-free reads on the
+	// switch-mode data path (every connection reads it; a torn string-header
+	// read would be memory-unsafe). Published under adminWriteMu, or built
+	// lazily on first read — writes outside the admin API happen only during
+	// config load, before any reader exists.
+	activeBackendPtr atomic.Pointer[string]
 }
 
 type dialHealth struct {
@@ -144,12 +169,19 @@ func (dh *dialHealth) snapshot() (success, fail, timeout int64, avgLatencyMs flo
 }
 
 func newRuntime() *runtime {
-	return &runtime{Die: make(chan bool)}
+	// stat and dialHealth are allocated eagerly: their lazy initializers were
+	// unlocked check-then-set and raced when the first connections arrived
+	// concurrently.
+	return &runtime{
+		Die:        make(chan bool),
+		stat:       newStatServer(),
+		dialHealth: &dialHealth{},
+	}
 }
 
 func (rt *runtime) initStat() {
 	if rt.stat == nil {
-		rt.stat = &statServer{methodStats: make(map[string]*methodStat)}
+		rt.stat = newStatServer()
 	}
 }
 
@@ -164,6 +196,7 @@ type Config struct {
 	SSProxy        bool      `json:"ssproxy"`
 	ConnLogPath    string    `json:"connlogpath,omitempty"`
 	AdminAddr      string    `json:"adminaddr"`
+	AdminToken     string    `json:"admintoken,omitempty"`
 	ActiveBackend  string    `json:"active,omitempty"`
 	Target         string    `json:"target,omitempty"`
 
@@ -174,7 +207,12 @@ type Config struct {
 	LimitConfig
 	ProxyConfig
 
-	rt           *runtime
+	// rt is the lazily allocated runtime. Atomic so the initRuntime fast
+	// path is a synchronized read: the pointer store happens under rtInitMu,
+	// and without the atomic the lock-free fast-path read would race that
+	// store (Go memory model), even though it can only observe nil or a
+	// fully initialized runtime in practice.
+	rt           atomic.Pointer[runtime]
 	targetRouter *targetRouter
 }
 
@@ -273,11 +311,23 @@ func parseTargetRouter(raw map[string]string) *targetRouter {
 }
 
 // initRuntime lazily initializes the runtime and returns it.
+var rtInitMu sync.Mutex
+
+// initRuntime returns the config's runtime, allocating it on first use. The
+// fast path is an atomic load; the global mutex only serializes first-time
+// allocation, which used to race between concurrent first connections.
 func (c *Config) initRuntime() *runtime {
-	if c.rt == nil {
-		c.rt = newRuntime()
+	if rt := c.rt.Load(); rt != nil {
+		return rt
 	}
-	return c.rt
+	rtInitMu.Lock()
+	defer rtInitMu.Unlock()
+	if rt := c.rt.Load(); rt != nil {
+		return rt
+	}
+	rt := newRuntime()
+	c.rt.Store(rt)
+	return rt
 }
 
 // InitRuntime is the exported version of initRuntime.
@@ -285,45 +335,51 @@ func (c *Config) InitRuntime() *runtime { return c.initRuntime() }
 
 // Runtime accessors — all runtime state goes through these methods.
 func (c *Config) getLimiters() []*Limiter {
-	if c.rt == nil {
+	rt := c.rt.Load()
+	if rt == nil {
 		return nil
 	}
-	return c.rt.limiters
+	return rt.limiters
 }
 
 func (c *Config) getLogger() *log.Logger {
-	if c.rt == nil {
+	rt := c.rt.Load()
+	if rt == nil {
 		return nil
 	}
-	return c.rt.Logger
+	return rt.Logger
 }
 func (c *Config) getVLogger() *log.Logger {
-	if c.rt == nil {
+	rt := c.rt.Load()
+	if rt == nil {
 		return nil
 	}
-	return c.rt.Vlogger
+	return rt.Vlogger
 }
 func (c *Config) getDLogger() *log.Logger {
-	if c.rt == nil {
+	rt := c.rt.Load()
+	if rt == nil {
 		return nil
 	}
-	return c.rt.Dlogger
+	return rt.Dlogger
 }
 
 func (c *Config) DieChan() chan bool { return c.initRuntime().Die }
 
 func (c *Config) getClosers() []cb {
-	if c.rt == nil {
+	rt := c.rt.Load()
+	if rt == nil {
 		return nil
 	}
-	return c.rt.closers
+	return rt.closers
 }
 
 func (c *Config) getTCPFilter() bytesFilter {
-	if c.rt == nil {
+	rt := c.rt.Load()
+	if rt == nil {
 		return nil
 	}
-	return c.rt.tcpFilter
+	return rt.tcpFilter
 }
 func (c *Config) getTCPFilterLock() *sync.Mutex { return &c.initRuntime().tcpFilterLock }
 func (c *Config) getTCPFilterOnce() *sync.Once  { return &c.initRuntime().tcpFilterOnce }
@@ -331,56 +387,184 @@ func (c *Config) setTCPFilter(f bytesFilter)    { c.initRuntime().tcpFilter = f 
 
 func (c *Config) getUDPFilterOnce() *sync.Once { return &c.initRuntime().udpFilterOnce }
 func (c *Config) getUDPFilter() bytesFilter {
-	if c.rt == nil {
+	rt := c.rt.Load()
+	if rt == nil {
 		return nil
 	}
-	return c.rt.udpFilter
+	return rt.udpFilter
 }
 func (c *Config) setUDPFilter(f bytesFilter) { c.initRuntime().udpFilter = f }
 
 func (c *Config) getTCPIvChecker() *ivChecker {
-	if c.rt == nil {
-		return nil
-	}
-	return &c.rt.tcpIvChecker
+	return &c.initRuntime().tcpIvChecker
 }
 
 func (c *Config) getAutoProxyCtx() *autoProxy {
-	if c.rt == nil {
+	rt := c.rt.Load()
+	if rt == nil {
 		return nil
 	}
-	return c.rt.autoProxyCtx
+	return rt.autoProxyCtx
 }
 func (c *Config) setAutoProxyCtx(ap *autoProxy) { c.initRuntime().autoProxyCtx = ap }
 
 func (c *Config) getChnListCtx() *chnRouteList {
-	if c.rt == nil {
+	rt := c.rt.Load()
+	if rt == nil {
 		return nil
 	}
-	return c.rt.chnListCtx
+	return rt.chnListCtx
 }
 func (c *Config) setChnListCtx(cl *chnRouteList) { c.initRuntime().chnListCtx = cl }
 
 func (c *Config) getCRCTable() *crc32.Table {
-	if c.rt == nil {
+	rt := c.rt.Load()
+	if rt == nil {
 		return nil
 	}
-	return c.rt.crctbl
+	return rt.crctbl
 }
 
 func (c *Config) isDisabled() bool {
-	if c.rt == nil {
+	rt := c.rt.Load()
+	if rt == nil {
 		return false
 	}
-	return c.rt.disable
+	return rt.disable.Load()
 }
-func (c *Config) setDisabled(v bool) { c.initRuntime().disable = v }
+func (c *Config) setDisabled(v bool) { c.initRuntime().disable.Store(v) }
 func (c *Config) getStat() *statServer {
 	rt := c.initRuntime()
 	rt.initStat()
 	return rt.stat
 }
+
+// dialPolicy is the immutable per-dial snapshot of the admin-tunable
+// dial-path settings. The admin API replaces it wholesale (copy-on-write) via
+// atomic.Pointer: a dial reads the whole policy with one atomic load, so no
+// dial-path read can race a settings write or observe a torn multi-field
+// update. The mirrored Config fields stay the source of truth for config-file
+// handling; writes after startup republish via publishDialPolicy.
+type dialPolicy struct {
+	ipSelect      string
+	ipSelectDelay int
+	preferIPv4    bool
+	noIPv4        bool
+	noIPv6        bool
+	localResolve  bool
+	timeout       int // seconds; 0 means the use-site default
+}
+
+// dialPolicy returns the current snapshot, building it from the config fields
+// on first use. Startup writes (config parse, CheckConfig inheritance)
+// complete before serving begins, so the first reader sees final values;
+// later admin writes republish under adminWriteMu.
+func (c *Config) dialPolicy() *dialPolicy {
+	rt := c.initRuntime()
+	if p := rt.dialPolicyPtr.Load(); p != nil {
+		return p
+	}
+	adminWriteMu.Lock()
+	defer adminWriteMu.Unlock()
+	if p := rt.dialPolicyPtr.Load(); p != nil {
+		return p
+	}
+	p := c.buildDialPolicy()
+	rt.dialPolicyPtr.Store(p)
+	return p
+}
+
+// publishDialPolicy rebuilds and republishes the snapshot after an admin
+// mutation of any mirrored field. Callers hold adminWriteMu (or run before
+// serving starts).
+func (c *Config) publishDialPolicy() {
+	c.initRuntime().dialPolicyPtr.Store(c.buildDialPolicy())
+}
+
+func (c *Config) buildDialPolicy() *dialPolicy {
+	return &dialPolicy{
+		ipSelect:      c.IPSelect,
+		ipSelectDelay: c.IPSelectDelayMs,
+		preferIPv4:    c.PreferIPv4,
+		noIPv4:        c.NoIPv4,
+		noIPv6:        c.NoIPv6,
+		localResolve:  c.LocalResolve,
+		timeout:       c.Timeout,
+	}
+}
+
+// GetActiveBackend returns ActiveBackend via the lock-free snapshot: the
+// switch-mode data path reads it on every connection, and a torn
+// string-header read against a concurrent admin write would be
+// memory-unsafe. The first call publishes the snapshot under adminWriteMu;
+// later admin writes republish via publishActiveBackend.
+func (c *Config) GetActiveBackend() string {
+	rt := c.initRuntime()
+	if p := rt.activeBackendPtr.Load(); p != nil {
+		return *p
+	}
+	adminWriteMu.Lock()
+	defer adminWriteMu.Unlock()
+	if p := rt.activeBackendPtr.Load(); p != nil {
+		return *p
+	}
+	s := c.ActiveBackend
+	rt.activeBackendPtr.Store(&s)
+	return s
+}
+
+// publishActiveBackend rebuilds the lock-free snapshot after a write to
+// ActiveBackend. Callers hold adminWriteMu (or run during config load,
+// before any reader exists).
+func (c *Config) publishActiveBackend() {
+	s := c.ActiveBackend
+	c.initRuntime().activeBackendPtr.Store(&s)
+}
+
+// SetActiveBackend writes ActiveBackend and republishes the lock-free
+// snapshot that GetActiveBackend serves, so the write is visible to readers
+// that already resolved the snapshot once.
+func (c *Config) SetActiveBackend(nickname string) {
+	adminWriteMu.Lock()
+	c.ActiveBackend = nickname
+	c.publishActiveBackend()
+	adminWriteMu.Unlock()
+}
+
+// RegisterLocalAddr merges addr into Localaddrs and returns a snapshot of
+// the list, both under adminWriteMu: the accept-path setup otherwise races
+// admin readers of Localaddrs (handleGetConfigRaw).
+func (c *Config) RegisterLocalAddr(addr string) []string {
+	adminWriteMu.Lock()
+	defer adminWriteMu.Unlock()
+	c.Localaddrs = append(c.Localaddrs, addr)
+	return append([]string(nil), c.Localaddrs...)
+}
 func (c *Config) setStat(s *statServer) { c.initRuntime().stat = s }
+
+// getSSProxyConfigs builds the multi-method config set for the SS fallback
+// detector once, so its IV/salt replay state persists across connections.
+func (c *Config) getSSProxyConfigs() []*Config {
+	rt := c.initRuntime()
+	rt.ssProxyConfigsOnce.Do(func() {
+		rt.ssProxyConfigs = getConfigs(c.Method, c.Password)
+	})
+	return rt.ssProxyConfigs
+}
+
+// SnapshotBackends returns a copy of the backend list, safe to iterate while
+// the admin API concurrently adds or removes backends.
+func (c *Config) SnapshotBackends() []*Config {
+	rt := c.rt.Load()
+	if rt == nil {
+		return c.Backends
+	}
+	rt.backendsLock.RLock()
+	defer rt.backendsLock.RUnlock()
+	out := make([]*Config, len(c.Backends))
+	copy(out, c.Backends)
+	return out
+}
 func (c *Config) initDialHealth() *dialHealth {
 	rt := c.initRuntime()
 	if rt.dialHealth == nil {
@@ -435,6 +619,20 @@ func ReadConfig(path string) (configs []*Config, err error) {
 			configs = append(configs, &c)
 		}
 	}
+	// "[null]" unmarshals into a slice containing a nil entry; feeding that
+	// to CheckConfig would panic, and any config file that yields zero
+	// servers is a mistake worth failing on rather than silently running.
+	filtered := configs[:0]
+	for _, c := range configs {
+		if c != nil {
+			filtered = append(filtered, c)
+		}
+	}
+	configs = filtered
+	if len(configs) == 0 {
+		err = fmt.Errorf("config file %q contains no server configuration", path)
+		return nil, err
+	}
 	for _, c := range configs {
 		CheckConfig(c)
 	}
@@ -460,7 +658,7 @@ func (c *Config) udpFilterTestAndAdd(b []byte) bool {
 		return false
 	}
 	c.getUDPFilterOnce().Do(func() {
-		c.setUDPFilter(newBloomFilter(c.FilterCapacity, defaultFilterFalseRate))
+		c.setUDPFilter(newShardedFilter(c.FilterCapacity, defaultFilterFalseRate))
 	})
 	return c.getUDPFilter().TestAndAdd(b)
 }
@@ -470,7 +668,7 @@ func (c *Config) tcpFilterTestAndAdd(b []byte) bool {
 		return false
 	}
 	c.getTCPFilterOnce().Do(func() {
-		c.setTCPFilter(newBloomFilter(c.FilterCapacity, defaultFilterFalseRate))
+		c.setTCPFilter(newShardedFilter(c.FilterCapacity, defaultFilterFalseRate))
 	})
 	c.getTCPFilterLock().Lock()
 	ok1 := c.getTCPFilter().TestAndAdd(b)
@@ -501,6 +699,9 @@ func CheckBasicConfig(c *Config) {
 	}
 	rt := c.initRuntime()
 	rt.Logger = log.New(globalLogWriter, fmt.Sprintf("[info] [%s] ", c.Nickname), log.Lshortfile|log.Ldate|log.Ltime|log.Lmicroseconds)
+	if !crypto.HasMethod(c.Method) && c.Method != "socks5" {
+		rt.Logger.Printf("unknown cipher method %q; connections using it will fail until the config is fixed", c.Method)
+	}
 	if c.Verbose {
 		rt.Vlogger = log.New(globalLogWriter, fmt.Sprintf("[verbose] [%s] ", c.Nickname), log.Lshortfile|log.Ldate|log.Ltime|log.Lmicroseconds)
 	}
@@ -508,7 +709,19 @@ func CheckBasicConfig(c *Config) {
 		rt.Dlogger = log.New(globalLogWriter, fmt.Sprintf("[debug] [%s] ", c.Nickname), log.Lshortfile|log.Ldate|log.Ltime|log.Lmicroseconds)
 	}
 	if c.Limit != 0 {
-		rt.limiters = append(rt.limiters, NewLimiter(c.Limit))
+		// CheckBasicConfig re-runs on every admin edit of method/password;
+		// append would stack a fresh limiter per edit, and blindly replacing
+		// slot 0 would clobber an inherited parent limiter when this config
+		// was created with Limit==0 (parent limiters are appended after this
+		// call in handleAddBackend). Track ownership explicitly: the config's
+		// own limiter is prepended so it stays first, matching the original
+		// ordering.
+		if rt.ownLimiter {
+			rt.limiters[0] = NewLimiter(c.Limit)
+		} else {
+			rt.limiters = append([]*Limiter{NewLimiter(c.Limit)}, rt.limiters...)
+			rt.ownLimiter = true
+		}
 	}
 	if c.Timeout == 0 {
 		c.Timeout = defaultTimeout
@@ -577,7 +790,7 @@ func CheckConfig(c *Config) {
 		}
 	}
 	c.getStat() // ensure initialized
-	parentRt := c.rt
+	parentRt := c.rt.Load()
 	for _, v := range c.Backends {
 		v.initRuntime().Die = parentRt.Die
 		if len(v.Type) == 0 {
@@ -649,7 +862,8 @@ func (c *Config) Log(v ...any) {
 }
 
 func (c *Config) CallOnClosed(f cb) {
-	c.initRuntime().closers = append(c.rt.closers, f)
+	rt := c.initRuntime()
+	rt.closers = append(rt.closers, f)
 }
 
 func (c *Config) proxyListDump() {

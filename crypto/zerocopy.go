@@ -67,6 +67,14 @@ func (u *aeadUnpacker) Headroom() Headroom {
 }
 
 func (u *aeadUnpacker) UnpackInPlace(b []byte, packetStart, packetLen int) (payloadStart, payloadLen int, err error) {
+	// A datagram shorter than salt+tag cannot contain a valid packet; slice it
+	// here instead of below, where b[packetStart+ivLen : packetStart+packetLen]
+	// would have a lower bound above the upper one and panic on attacker-fed
+	// input (any UDP datagram shorter than the salt length).
+	if packetLen < u.ivlen+16 {
+		return 0, 0, io.ErrShortBuffer
+	}
+
 	ivLen := u.ivlen
 	u.iv = b[packetStart : packetStart+ivLen]
 
@@ -100,24 +108,16 @@ func (p *udp2022AESPacker) Headroom() Headroom {
 }
 
 func (p *udp2022AESPacker) PackInPlace(b []byte, payloadStart, payloadLen int) (packetStart, packetLen int, err error) {
-	pskKey := string(p.psk)
-	sidAny, _ := outSIDsFor(p.role).LoadOrStore(pskKey, randomSessionID())
-	sid := sidAny.(uint64)
-
-	s := udp2022GetSession(sid)
-	if s == nil {
-		sessionKey := kdf2022(p.psk, uint64ToBytes(sid), len(p.psk))
-		s = udp2022CreateSession(sid, sessionKey)
-	}
-	pid := s.sendPID.Add(1) - 1
+	st := sendStateFor(p.role, p.psk)
+	pid := st.pid.Add(1) - 1
 
 	sepHdr := b[payloadStart-16 : payloadStart]
-	binary.BigEndian.PutUint64(sepHdr[0:8], sid)
+	binary.BigEndian.PutUint64(sepHdr[0:8], st.sid)
 	binary.BigEndian.PutUint64(sepHdr[8:16], pid)
 
 	nonce := sepHdr[4:16]
 
-	aead := getAESGCM(s.sessionKey)
+	aead := getAESGCM(st.sessionKeyFor(p.psk))
 	if aead == nil {
 		return 0, 0, io.ErrShortBuffer
 	}
@@ -160,10 +160,6 @@ func (u *udp2022AESUnpacker) UnpackInPlace(b []byte, packetStart, packetLen int)
 	}
 	u.session = s
 
-	if !s.recvWindow.check(packetID) {
-		return 0, 0, io.ErrShortBuffer
-	}
-
 	aead := getAESGCM(s.sessionKey)
 	if aead == nil {
 		return 0, 0, io.ErrShortBuffer
@@ -174,6 +170,12 @@ func (u *udp2022AESUnpacker) UnpackInPlace(b []byte, packetStart, packetLen int)
 	plaintext, err := aead.Open(body[:0], nonce, body, nil)
 	if err != nil {
 		return 0, 0, err
+	}
+
+	// SIP022: the replay window must not advance before the packet has been
+	// authenticated and its main header validated.
+	if !validateUDP2022Packet(plaintext) || !s.recvWindow.check(packetID) {
+		return 0, 0, io.ErrShortBuffer
 	}
 
 	return packetStart + 16 + (len(body) - len(plaintext) - aead.Overhead()), len(plaintext), nil
@@ -191,21 +193,14 @@ func (p *udp2022ChaChaPacker) Headroom() Headroom {
 }
 
 func (p *udp2022ChaChaPacker) PackInPlace(b []byte, payloadStart, payloadLen int) (packetStart, packetLen int, err error) {
-	pskKey := string(p.psk)
-	sidAny, _ := outSIDsFor(p.role).LoadOrStore(pskKey, randomSessionID())
-	sid := sidAny.(uint64)
-
-	s := udp2022GetSession(sid)
-	if s == nil {
-		s = udp2022CreateSession(sid, nil)
-	}
-	pid := s.sendPID.Add(1) - 1
+	st := sendStateFor(p.role, p.psk)
+	pid := st.pid.Add(1) - 1
 
 	nonce := b[payloadStart-40 : payloadStart-16]
 	PutRandomBytes(nonce)
 
 	prefixed := b[payloadStart-16 : payloadStart+payloadLen]
-	binary.BigEndian.PutUint64(prefixed[0:8], sid)
+	binary.BigEndian.PutUint64(prefixed[0:8], st.sid)
 	binary.BigEndian.PutUint64(prefixed[8:16], pid)
 
 	aead, err := chacha20poly1305.NewX(p.psk)
@@ -244,8 +239,10 @@ func (u *udp2022ChaChaUnpacker) UnpackInPlace(b []byte, packetStart, packetLen i
 		return 0, 0, err
 	}
 
-	if len(full) < 17 {
-		return packetStart + 24, len(full), nil
+	if len(full) < 16 {
+		// Too short to carry the session/packet ID prefix: drop it instead
+		// of bypassing the replay filter.
+		return 0, 0, io.ErrShortBuffer
 	}
 
 	sessionID := binary.BigEndian.Uint64(full[0:8])
@@ -257,7 +254,9 @@ func (u *udp2022ChaChaUnpacker) UnpackInPlace(b []byte, packetStart, packetLen i
 	}
 	u.session = s
 
-	if !s.recvWindow.check(packetID) {
+	// SIP022: the replay window must not advance before the packet has been
+	// authenticated and its main header validated.
+	if !validateUDP2022Packet(full[16:]) || !s.recvWindow.check(packetID) {
 		return 0, 0, io.ErrShortBuffer
 	}
 
@@ -285,7 +284,7 @@ func getAESGCM(key []byte) cipher.AEAD {
 func NewPacker(method, password string, isServer bool) (Packer, error) {
 	m, ok := cipherMethod[method]
 	if !ok {
-		m = cipherMethod[DefaultMethod]
+		return nil, errInvalidMethod
 	}
 
 	if m.is2022 {
@@ -312,7 +311,7 @@ func NewPacker(method, password string, isServer bool) (Packer, error) {
 	key := kdf(password, m.keylen)
 	var newAEAD func(key []byte) (cipher.AEAD, error)
 	switch method {
-	case "chacha20-ietf-poly1305":
+	case "chacha20-ietf-poly1305", "chacha20-poly1305", "chacha20poly1305":
 		newAEAD = chacha20poly1305.New
 	default:
 		newAEAD = func(k []byte) (cipher.AEAD, error) {
@@ -331,7 +330,7 @@ func NewPacker(method, password string, isServer bool) (Packer, error) {
 func NewUnpacker(method, password string) (Unpacker, error) {
 	m, ok := cipherMethod[method]
 	if !ok {
-		m = cipherMethod[DefaultMethod]
+		return nil, errInvalidMethod
 	}
 
 	if m.is2022 {
@@ -354,7 +353,7 @@ func NewUnpacker(method, password string) (Unpacker, error) {
 	key := kdf(password, m.keylen)
 	var newAEAD func(key []byte) (cipher.AEAD, error)
 	switch method {
-	case "chacha20-ietf-poly1305":
+	case "chacha20-ietf-poly1305", "chacha20-poly1305", "chacha20poly1305":
 		newAEAD = chacha20poly1305.New
 	default:
 		newAEAD = func(k []byte) (cipher.AEAD, error) {

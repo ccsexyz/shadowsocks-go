@@ -6,25 +6,47 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
 )
 
+// maxTargetStats bounds the per-destination table: targets come from
+// client-chosen destinations, so an unbounded map lets one client grow the
+// process memory at will (and every admin All() call with it).
+const maxTargetStats = 10000
+
 // ConnRecord holds metadata for a single proxied connection.
 type ConnRecord struct {
-	ID           uint64       `json:"id"`
-	SrcAddr      string       `json:"srcAddr"`
-	DstAddr      string       `json:"dstAddr"`
-	Host         string       `json:"host"`
-	StartTime    time.Time    `json:"startTime"`
-	EndTime      *time.Time   `json:"endTime,omitempty"`
-	ReadBytes    int64        `json:"readBytes"`
-	WritBytes    int64        `json:"writBytes"`
-	PairedID     uint64       `json:"pairedID"`
-	Samples      []BwSample   `json:"samples,omitempty"`
-	LastActivity int64        `json:"lastActive"` // UnixNano of last read/write
-	lastPublish  atomic.Int64 // UnixNano of last SSE publish (throttle)
+	ID        uint64     `json:"id"`
+	SrcAddr   string     `json:"srcAddr"`
+	DstAddr   string     `json:"dstAddr"`
+	Host      string     `json:"host"`
+	StartTime time.Time  `json:"startTime"`
+	ReadBytes int64      `json:"readBytes"`
+	WritBytes int64      `json:"writBytes"`
+	PairedID  uint64     `json:"pairedID"`
+	Samples   []BwSample `json:"samples,omitempty"`
+	// LastActivity is UnixNano of last read/write.
+	LastActivity int64 `json:"lastActive"`
+	// lastPublish is UnixNano of last SSE publish (throttle).
+	lastPublish atomic.Int64
+	// endTimeNanos is UnixNano of connection close; 0 while active. Written
+	// once under the tracker lock, read locklessly by admin handlers and
+	// MarshalJSON.
+	endTimeNanos atomic.Int64
+}
+
+func (r *ConnRecord) markEnded(t time.Time) { r.endTimeNanos.Store(t.UnixNano()) }
+
+// ended reports the close time; ok is false while the connection is active.
+func (r *ConnRecord) ended() (time.Time, bool) {
+	ns := r.endTimeNanos.Load()
+	if ns == 0 {
+		return time.Time{}, false
+	}
+	return time.Unix(0, ns), true
 }
 
 // ConnTracker tracks active and recently-closed connections for one Config.
@@ -67,6 +89,10 @@ func (r *ConnRecord) MarshalJSON() ([]byte, error) {
 		samples[i].Read = atomic.LoadInt64(&r.Samples[i].Read)
 		samples[i].Write = atomic.LoadInt64(&r.Samples[i].Write)
 	}
+	var endTime *time.Time
+	if t, ok := r.ended(); ok {
+		endTime = &t
+	}
 	aux := struct {
 		ID           uint64     `json:"id"`
 		SrcAddr      string     `json:"srcAddr"`
@@ -85,10 +111,10 @@ func (r *ConnRecord) MarshalJSON() ([]byte, error) {
 		DstAddr:      r.DstAddr,
 		Host:         r.Host,
 		StartTime:    r.StartTime,
-		EndTime:      r.EndTime,
+		EndTime:      endTime,
 		ReadBytes:    atomic.LoadInt64(&r.ReadBytes),
 		WritBytes:    atomic.LoadInt64(&r.WritBytes),
-		PairedID:     r.PairedID,
+		PairedID:     atomic.LoadUint64(&r.PairedID),
 		Samples:      samples,
 		LastActivity: atomic.LoadInt64(&r.LastActivity),
 	}
@@ -128,7 +154,7 @@ func (t *ConnTracker) Unregister(rec *ConnRecord) {
 	t.mu.Lock()
 	delete(t.active, rec.ID)
 	now := time.Now()
-	rec.EndTime = &now
+	rec.markEnded(now)
 
 	if len(t.history) < t.historyCap {
 		t.history = append(t.history, rec)
@@ -269,7 +295,7 @@ func (t *ConnTracker) TrackOutbound(conn net.Conn, inboundRec *ConnRecord, dstAd
 		Samples:      make([]BwSample, maxBwSamples),
 	}
 	t.active[id] = rec
-	inboundRec.PairedID = id
+	atomic.StoreUint64(&inboundRec.PairedID, id)
 	t.mu.Unlock()
 	return &trackedOutConn{Conn: conn, record: rec, tracker: t}
 }
@@ -341,10 +367,35 @@ func (tt *TargetTracker) addConn(dstAddr string, host string) {
 	if ts == nil {
 		ts = &TargetStats{Target: dstAddr, Host: host}
 		tt.targets[dstAddr] = ts
+		if len(tt.targets) > maxTargetStats {
+			tt.evictOldestLocked()
+		}
 	}
 	atomic.AddInt64(&ts.ConnectionCount, 1)
 	ts.lastSeen.Store(time.Now().UnixNano())
 	tt.mu.Unlock()
+}
+
+// evictOldestLocked drops the least recently seen targets down to 90% of the
+// cap. Called only when the table is full, so each pass amortizes over ~10%
+// of the cap worth of new targets.
+func (tt *TargetTracker) evictOldestLocked() {
+	limit := maxTargetStats - maxTargetStats/10
+	type entry struct {
+		key      string
+		lastSeen int64
+	}
+	entries := make([]entry, 0, len(tt.targets))
+	for k, ts := range tt.targets {
+		entries = append(entries, entry{k, ts.lastSeen.Load()})
+	}
+	if len(entries) <= limit {
+		return
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].lastSeen < entries[j].lastSeen })
+	for _, e := range entries[:len(entries)-limit] {
+		delete(tt.targets, e.key)
+	}
 }
 
 func (tt *TargetTracker) addBytes(dstAddr string, readBytes, writBytes int64) {
@@ -378,16 +429,11 @@ func (tt *TargetTracker) All() []*TargetStats {
 	for _, ts := range tt.targets {
 		out = append(out, ts)
 	}
-	// sort by total bytes descending
-	for i := 0; i < len(out)-1; i++ {
-		for j := i + 1; j < len(out); j++ {
-			bi := atomic.LoadInt64(&out[i].TotalReadBytes) + atomic.LoadInt64(&out[i].TotalWritBytes)
-			bj := atomic.LoadInt64(&out[j].TotalReadBytes) + atomic.LoadInt64(&out[j].TotalWritBytes)
-			if bj > bi {
-				out[i], out[j] = out[j], out[i]
-			}
-		}
-	}
+	sort.Slice(out, func(i, j int) bool {
+		bi := atomic.LoadInt64(&out[i].TotalReadBytes) + atomic.LoadInt64(&out[i].TotalWritBytes)
+		bj := atomic.LoadInt64(&out[j].TotalReadBytes) + atomic.LoadInt64(&out[j].TotalWritBytes)
+		return bi > bj
+	})
 	return out
 }
 
@@ -408,13 +454,9 @@ func (tt *TargetTracker) TopByConns(n int) []*TargetStats {
 	for _, ts := range tt.targets {
 		out = append(out, ts)
 	}
-	for i := 0; i < len(out)-1; i++ {
-		for j := i + 1; j < len(out); j++ {
-			if atomic.LoadInt64(&out[j].ConnectionCount) > atomic.LoadInt64(&out[i].ConnectionCount) {
-				out[i], out[j] = out[j], out[i]
-			}
-		}
-	}
+	sort.Slice(out, func(i, j int) bool {
+		return atomic.LoadInt64(&out[j].ConnectionCount) > atomic.LoadInt64(&out[i].ConnectionCount)
+	})
 	if len(out) > n {
 		out = out[:n]
 	}

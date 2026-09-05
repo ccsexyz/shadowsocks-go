@@ -12,8 +12,11 @@ func RunSwitchServer(c *ss.Config) {
 }
 
 func findActiveBackend(c *ss.Config) *ss.Config {
-	for _, b := range c.Backends {
-		if b.Nickname == c.ActiveBackend {
+	// activeBackend() reads under adminWriteMu: the admin API rewrites the
+	// field at runtime and a torn string-header read would be memory-unsafe.
+	active := c.GetActiveBackend()
+	for _, b := range c.SnapshotBackends() {
+		if b.Nickname == active {
 			return b
 		}
 	}
@@ -27,7 +30,7 @@ func switchHandler(ac *ss.AcceptedConn) {
 
 	backend := findActiveBackend(c)
 	if backend == nil {
-		c.Log("switch: active backend not found:", c.ActiveBackend)
+		c.Log("switch: active backend not found:", c.GetActiveBackend())
 		return
 	}
 
@@ -73,6 +76,6 @@ func switchHandler(ac *ss.AcceptedConn) {
 	if c.LogHTTP {
 		conn = ss.NewHttpLogConn(conn, c)
 	}
-	c.Log("switch:", c.ActiveBackend, "from", conn.RemoteAddr(), "to", rconn.RemoteAddr())
+	c.Log("switch:", c.GetActiveBackend(), "from", conn.RemoteAddr(), "to", rconn.RemoteAddr())
 	ss.Pipe(conn, rconn, c)
 }

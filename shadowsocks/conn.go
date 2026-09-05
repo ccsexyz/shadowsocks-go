@@ -3,6 +3,7 @@ package ss
 import (
 	"io"
 	"net"
+	"sync"
 	"time"
 
 	"github.com/ccsexyz/shadowsocks-go/internal/utils"
@@ -155,6 +156,11 @@ func (c *BaseConn) Read(buf []byte, pool *utils.BufPool) ([][]byte, error) {
 		b = make([]byte, 65536)
 	}
 	n, err := c.raw.Read(b)
+	if n > 0 {
+		// Bytes read together with an error must still be delivered (io.Reader
+		// contract); a follow-up read reports the error.
+		return [][]byte{b[:n]}, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -249,6 +255,15 @@ type HttpLogConn struct {
 	Conn
 	pr, pw *utils.HTTPHeaderParser
 	c      *Config
+	// logMu serializes access to the parsers and their pool-owned buffers:
+	// ss.Pipe closes both ends once either direction exits, so Close runs
+	// concurrently with the peer goroutine's Read/Write, and returning a
+	// parser buffer to the shared pool while the other goroutine is still
+	// parsing into it aliases the buffer across connections.
+	logMu sync.Mutex
+	// closeOnce guards against the echo path (Pipe(conn, conn)) closing the
+	// same conn twice and returning its parser buffers to the pool twice.
+	closeOnce sync.Once
 }
 
 func NewHttpLogConn(conn Conn, c *Config) *HttpLogConn {
@@ -267,48 +282,60 @@ func cleanHTTPParser(p *utils.HTTPHeaderParser) {
 }
 
 func (conn *HttpLogConn) Close() error {
-	if conn.pr != nil {
-		cleanHTTPParser(conn.pr)
-		conn.pr = nil
-	}
-	if conn.pw != nil {
-		cleanHTTPParser(conn.pw)
-		conn.pw = nil
-	}
+	conn.closeOnce.Do(func() {
+		conn.logMu.Lock()
+		if conn.pr != nil {
+			cleanHTTPParser(conn.pr)
+			conn.pr = nil
+		}
+		if conn.pw != nil {
+			cleanHTTPParser(conn.pw)
+			conn.pw = nil
+		}
+		conn.logMu.Unlock()
+	})
 	return conn.Conn.Close()
 }
 
 func (conn *HttpLogConn) Read(buf []byte, pool *utils.BufPool) ([][]byte, error) {
 	segs, err := conn.Conn.Read(buf, pool)
-	if err == nil && conn.pr != nil && len(segs) > 0 {
-		ok, e := conn.pr.Read(segs[0])
-		if ok {
-			buf := utils.GetBuf(httpbuffersize)
-			defer utils.PutBuf(buf)
-			n2, _ := conn.pr.Encode(buf)
-			conn.c.Log(conn.LocalAddr(), "->", conn.RemoteAddr(), utils.SliceToString(buf[:n2]))
+	if err == nil && len(segs) > 0 {
+		conn.logMu.Lock()
+		if conn.pr != nil {
+			ok, e := conn.pr.Read(segs[0])
+			if ok {
+				buf := utils.GetBuf(httpbuffersize)
+				n2, _ := conn.pr.Encode(buf)
+				conn.c.Log(conn.LocalAddr(), "->", conn.RemoteAddr(), utils.SliceToString(buf[:n2]))
+				utils.PutBuf(buf)
+			}
+			if e != nil || ok {
+				cleanHTTPParser(conn.pr)
+				conn.pr = nil
+			}
 		}
-		if e != nil || ok {
-			cleanHTTPParser(conn.pr)
-			conn.pr = nil
-		}
+		conn.logMu.Unlock()
 	}
 	return segs, err
 }
 
 func (conn *HttpLogConn) Write(bufs ...[]byte) (n int, err error) {
-	if conn.pw != nil && len(bufs) > 0 {
-		ok, _ := conn.pw.Read(bufs[0])
-		if ok {
-			buf := utils.GetBuf(httpbuffersize)
-			defer utils.PutBuf(buf)
-			n2, _ := conn.pw.Encode(buf)
-			conn.c.Log(conn.LocalAddr(), "->", conn.RemoteAddr(), utils.SliceToString(buf[:n2]))
+	if len(bufs) > 0 {
+		conn.logMu.Lock()
+		if conn.pw != nil {
+			ok, _ := conn.pw.Read(bufs[0])
+			if ok {
+				buf := utils.GetBuf(httpbuffersize)
+				n2, _ := conn.pw.Encode(buf)
+				conn.c.Log(conn.LocalAddr(), "->", conn.RemoteAddr(), utils.SliceToString(buf[:n2]))
+				utils.PutBuf(buf)
+			}
+			if ok {
+				cleanHTTPParser(conn.pw)
+				conn.pw = nil
+			}
 		}
-		if ok {
-			cleanHTTPParser(conn.pw)
-			conn.pw = nil
-		}
+		conn.logMu.Unlock()
 	}
 	return conn.Conn.Write(bufs...)
 }

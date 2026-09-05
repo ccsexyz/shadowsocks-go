@@ -2,6 +2,7 @@ package utils
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log"
 	"net"
@@ -50,13 +51,35 @@ func (ctx *UDPServerCtx) runUDPServer(conn net.PacketConn, handle func(*SubConn)
 	ctx.init()
 	defer ctx.close()
 	buf := make([]byte, ctx.Mtu)
+	errStreak := 0
 
 	for {
 		n, addr, err := conn.ReadFrom(buf)
 		if err != nil {
-			log.Println(conn.LocalAddr(), err)
-			return
+			// Only a closed PacketConn ends the loop. Per-packet errors (bad
+			// decrypt, spoofed source) previously killed the whole
+			// UDP relay with one datagram; log and keep serving instead.
+			if errors.Is(err, net.ErrClosed) {
+				log.Println(conn.LocalAddr(), err)
+				return
+			}
+			log.Println(conn.LocalAddr(), "udp read error (ignored):", err)
+			// A persistently failing ReadFrom (e.g. EMSGSIZE, EINVAL) must
+			// not spin the loop hot. Back off before retrying; the streak
+			// resets on the first successful read.
+			errStreak++
+			d := time.Duration(errStreak) * 10 * time.Millisecond
+			if d > time.Second {
+				d = time.Second
+			}
+			select {
+			case <-ctx.die:
+				return
+			case <-time.After(d):
+			}
+			continue
 		}
+		errStreak = 0
 		if addr == nil {
 			continue
 		}
@@ -104,7 +127,12 @@ func PipeForUDPServer(c1, c2 Conn, ctx *UDPServerCtx) {
 	c2die := make(chan bool)
 	f := func(dst, src Conn, die chan bool) {
 		defer close(die)
-		buf := make([]byte, 65536)
+		// 65536 fits any single UDP datagram (max 65507 on the wire), but the
+		// relay conns reserve headroom in front of it (a stored SIP022/ATYP
+		// response header, the SOCKS5 RSV/FRAG prefix) and read the payload
+		// into buf[hdrlen:]; the extra 128 bytes keep those max-size payloads
+		// from being silently truncated by the recvinto.
+		buf := make([]byte, 65536+128)
 		var pool BufPool
 		for {
 			src.SetReadDeadline(time.Now().Add(time.Second * time.Duration(ctx.Expires)))

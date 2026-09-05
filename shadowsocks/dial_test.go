@@ -1,19 +1,21 @@
 package ss
 
 import (
+	"io"
+	"net"
+	"strings"
 	"testing"
 )
 
+// TestDialSocks5WithOptions_DataWrite pins that opt.Data survives a dial
+// error: the socks5 error path must not nil it out.
 func TestDialSocks5WithOptions_DataWrite(t *testing.T) {
-	// Verify dialSocks5WithOptions writes opt.Data after handshake.
-	// We can't easily test the full SOCKS5 flow without a real proxy,
-	// but we can verify the function signature and basic path.
 	opt := &DialOptions{
 		Target: "127.0.0.1:80",
 		C: &Config{
 			CryptoConfig: CryptoConfig{Method: "socks5"},
 			NetworkConfig: NetworkConfig{
-				Remoteaddr: "127.0.0.1:1", // will fail, but we test error path
+				Remoteaddr: "127.0.0.1:1", // unreachable: exercises the error path
 			},
 		},
 		Data: []byte("test-data"),
@@ -22,7 +24,6 @@ func TestDialSocks5WithOptions_DataWrite(t *testing.T) {
 	if err == nil {
 		t.Error("expected error dialing to 127.0.0.1:1")
 	}
-	// Data should NOT be nil'd on error path
 	if opt.Data == nil {
 		t.Error("opt.Data should not be nil on error path")
 	}
@@ -73,48 +74,6 @@ func TestCheckAndModifyTarget_NoIPv6(t *testing.T) {
 	}
 }
 
-func TestDialSSWithOptions_Socks5(t *testing.T) {
-	// Verify socks5 path is taken when Method is "socks5"
-	c := &Config{
-		CryptoConfig: CryptoConfig{Method: "socks5"},
-		NetworkConfig: NetworkConfig{
-			Remoteaddr: "127.0.0.1:1",
-			Timeout:    1,
-		},
-	}
-	CheckBasicConfig(c)
-
-	opt := &DialOptions{
-		Target: "127.0.0.1:80",
-		C:      c,
-	}
-	_, err := dialSSWithOptions(opt)
-	if err == nil {
-		t.Error("expected connection error dialing to 127.0.0.1:1")
-	}
-}
-
-func TestDialSSWithOptions_BackendsEmpty(t *testing.T) {
-	// Verify error when no backends are available
-	c := &Config{
-		CryptoConfig: CryptoConfig{Method: "aes-128-gcm", Password: "test"},
-		NetworkConfig: NetworkConfig{
-			Remoteaddr: "127.0.0.1:1",
-			Timeout:    1,
-		},
-	}
-	CheckBasicConfig(c)
-
-	opt := &DialOptions{
-		Target: "127.0.0.1:80",
-		C:      c,
-	}
-	_, err := dialSSWithOptions(opt)
-	if err == nil {
-		t.Error("expected connection error")
-	}
-}
-
 func TestDialSSWithOptions_BackendsWithSocks5(t *testing.T) {
 	// Verify backends loop works when one backend has method "socks5"
 	c := &Config{
@@ -138,7 +97,7 @@ func TestDialSSWithOptions_BackendsWithSocks5(t *testing.T) {
 	if err == nil {
 		t.Error("expected connection error to unreachable backend")
 	}
-	// opt.Data should be nil'd after backends loop (line 186)
+	// opt.Data should be nil'd after the backends loop
 	if opt.Data != nil {
 		t.Error("opt.Data should be nil after backends loop returns")
 	}
@@ -166,5 +125,84 @@ func TestDialSSWithOptions_CheckAndModifyTarget_PreventsDoubleWrite(t *testing.T
 	// After checkAndModifyTarget creates newOpt, opt.Data should be nil
 	if opt.Data != nil {
 		t.Error("opt.Data should be nil after checkAndModifyTarget creates newOpt")
+	}
+}
+
+// TestDialSSWithOptions_BackendsWinnerUsable pins the multi-backend race
+// contract: the conn returned by dialSSWithOptions must be the one handed off
+// by its dialer goroutine and must be immediately usable. The pre-fix shape
+// (buffered conch + post-send die re-check) could close the winner when the
+// sender was preempted between its buffered send and the re-check.
+func TestDialSSWithOptions_BackendsWinnerUsable(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			nc, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				io.Copy(io.Discard, nc)
+				nc.Close()
+			}()
+		}
+	}()
+
+	backends := make([]*Config, 4)
+	for i := range backends {
+		backends[i] = &Config{
+			CryptoConfig:  CryptoConfig{Method: "plain"},
+			NetworkConfig: NetworkConfig{Remoteaddr: ln.Addr().String(), Timeout: 5},
+		}
+	}
+	c := &Config{Backends: backends}
+	CheckConfig(c)
+
+	for round := 0; round < 50; round++ {
+		opt := &DialOptions{Target: "127.0.0.1:80", C: c}
+		conn, err := dialSSWithOptions(opt)
+		if err != nil {
+			t.Fatalf("round %d: dial: %v", round, err)
+		}
+		if conn == nil {
+			t.Fatalf("round %d: nil conn", round)
+		}
+		// A closed-winner race surfaces here as "use of a closed network
+		// connection"; the fix must make every round succeed.
+		if _, err := conn.Write([]byte("ping")); err != nil {
+			t.Fatalf("round %d: winner conn unusable: %v", round, err)
+		}
+		conn.Close()
+	}
+}
+
+// TestDialSSWithOptions_BackendsAllFailLastError pins error transparency:
+// when every backend fails, the returned error wraps the last dial failure
+// instead of the bare errNoBackends sentinel.
+func TestDialSSWithOptions_BackendsAllFailLastError(t *testing.T) {
+	backends := make([]*Config, 2)
+	for i := range backends {
+		backends[i] = &Config{
+			CryptoConfig:  CryptoConfig{Method: "plain"},
+			NetworkConfig: NetworkConfig{Remoteaddr: "127.0.0.1:1", Timeout: 1},
+		}
+	}
+	c := &Config{Backends: backends}
+	CheckConfig(c)
+
+	opt := &DialOptions{Target: "127.0.0.1:80", C: c}
+	_, err := dialSSWithOptions(opt)
+	if err == nil {
+		t.Fatal("expected error when all backends fail")
+	}
+	if !strings.Contains(err.Error(), "no available backends") {
+		t.Fatalf("err = %v, want it to mention no available backends", err)
+	}
+	if !strings.Contains(err.Error(), "connect") {
+		t.Fatalf("err = %v, want it to wrap the underlying dial failure", err)
 	}
 }

@@ -10,12 +10,12 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ccsexyz/shadowsocks-go/crypto"
 	"github.com/ccsexyz/shadowsocks-go/domain"
 	"github.com/ccsexyz/shadowsocks-go/internal/utils"
-	"github.com/ccsexyz/shadowsocks-go/redir"
 	"github.com/gorilla/websocket"
 )
 
@@ -28,22 +28,41 @@ type Listener interface {
 
 type chListener struct {
 	ch   chan net.Conn
+	done chan struct{}
 	addr net.Addr
+	once sync.Once
 }
 
 func (cl *chListener) Accept() (net.Conn, error) {
-	conn, ok := <-cl.ch
-	if !ok {
-		return nil, fmt.Errorf("channel closed")
+	select {
+	case conn := <-cl.ch:
+		return conn, nil
+	case <-cl.done:
+		// Close queued-but-unaccepted conns instead of leaking them; the
+		// channel itself is never closed so a racing send can't panic.
+		for {
+			select {
+			case conn := <-cl.ch:
+				conn.Close()
+				continue
+			default:
+			}
+			return nil, fmt.Errorf("listener closed")
+		}
 	}
-	return conn, nil
 }
 
 func (cl *chListener) Addr() net.Addr {
 	return cl.addr
 }
 
+// Close signals the Serve loop to stop. Closing ch directly is not an option:
+// the acceptor goroutine may be mid-send on the same channel and a send on a
+// closed channel would panic.
 func (cl *chListener) Close() error {
+	cl.once.Do(func() {
+		close(cl.done)
+	})
 	return nil
 }
 
@@ -67,6 +86,7 @@ type listener struct {
 	rawlis   net.Listener
 	c        *Config
 	die      chan bool
+	dieOnce  sync.Once
 	connch   chan Conn
 	errch    chan error
 	httpch   chan net.Conn
@@ -82,7 +102,6 @@ var (
 	SS2022Handler  = AcceptHandler(ss2022AcceptHandler)
 	SSMultiHandler = AcceptHandler(ssMultiAcceptHandler)
 	SocksAcceptor  = AcceptHandler(socksAcceptor)
-	RedirAcceptor  = AcceptHandler(redirAcceptor)
 )
 
 func limitAcceptHandler(conn Conn, lis *listener) AcceptResult {
@@ -103,11 +122,21 @@ func NewListener(lis net.Listener, c *Config, handlers []AcceptHandler) *listene
 		errch:    make(chan error, 32),
 	}
 	if c.Type == "wstunnel" {
-		l.httpsrv = &http.Server{Handler: l}
+		// ReadHeaderTimeout bounds unauthenticated slowloris header holds;
+		// IdleTimeout reaps dead keep-alive conns. Hijacked (websocket)
+		// conns are exempt from both, so relay traffic is unaffected.
+		l.httpsrv = &http.Server{
+			Handler:           l,
+			ReadHeaderTimeout: 30 * time.Second,
+			IdleTimeout:       2 * time.Minute,
+		}
 		go func() {
-			err := l.httpsrv.Serve(&chListener{ch: l.httpch, addr: lis.Addr()})
+			err := l.httpsrv.Serve(&chListener{ch: l.httpch, done: make(chan struct{}), addr: lis.Addr()})
 			if err != nil {
-				l.errch <- err
+				select {
+				case l.errch <- err:
+				default:
+				}
 			}
 		}()
 	}
@@ -226,7 +255,11 @@ func (lis *listener) acceptor() {
 			return
 		}
 		if isWstunnel {
-			lis.httpch <- conn
+			select {
+			case lis.httpch <- conn:
+			case <-lis.die:
+				conn.Close()
+			}
 			continue
 		}
 		go lis.handleNewConn(newBaseConn(conn, lis.c))
@@ -261,11 +294,10 @@ func (lis *listener) Addr() net.Addr {
 }
 
 func (lis *listener) Close() error {
-	select {
-	case <-lis.die:
-	default:
-		close(lis.die)
-	}
+	// select-default-close is not atomic: two concurrent Closes (e.g. the
+	// config die goroutine and an acceptor's deferred Close) can both see
+	// the channel open and panic on the second close.
+	lis.dieOnce.Do(func() { close(lis.die) })
 	if lis.httpsrv != nil {
 		lis.httpsrv.Close()
 	}
@@ -276,7 +308,13 @@ func (lis *listener) Accept() (conn Conn, err error) {
 	for {
 		select {
 		case <-lis.die:
-			err = <-lis.errch
+			// Non-blocking: the acceptor may have dropped its final error
+			// when errch was full, and blocking here would hang shutdown.
+			select {
+			case err = <-lis.errch:
+			default:
+				err = fmt.Errorf("cannot accept from closed listener")
+			}
 			if err == nil {
 				err = fmt.Errorf("cannot accept from closed listener")
 			}
@@ -390,18 +428,18 @@ func ssMultiAcceptHandler(conn Conn, lis *listener) AcceptResult {
 		return AcceptResult{AcceptReject, nil}
 	}
 
-	ctx, err := ParseAddrWithMultipleBackends(buf[:n], lis.c.Backends)
+	ctx, err := ParseAddrWithMultipleBackends(buf[:n], lis.c.SnapshotBackends())
 	if err != nil {
 		conn.SetReadDeadline(time.Now().Add(5 * time.Millisecond))
 		nn, rerr := ReadN(conn, buf[n:], nil)
 		conn.SetReadDeadline(time.Time{})
 		if rerr == nil && nn > 0 {
 			n += nn
-			ctx, err = ParseAddrWithMultipleBackends(buf[:n], lis.c.Backends)
+			ctx, err = ParseAddrWithMultipleBackends(buf[:n], lis.c.SnapshotBackends())
 		}
 		if err != nil {
 			lis.c.Log("recv an unexpected header from", conn.RemoteAddr().String(),
-				"numBackends:", len(lis.c.Backends),
+				"numBackends:", len(lis.c.SnapshotBackends()),
 				"read:", n, "bytes", "raw:", buf[:n],
 				"err:", err)
 			lis.c.getStat().incReject("parse")
@@ -522,7 +560,9 @@ func ssAcceptHandler(conn Conn, lis *listener) AcceptResult {
 	pdata := frame
 	addr, rest, err := ParseAddr(pdata)
 	if err != nil {
-		err = fmt.Errorf("ParseAddr after decrypt: %w (method=%s, decrypted=%d bytes: %x)", err, lis.c.Method, len(pdata), pdata)
+		// Never log decrypted payload bytes; on a wrong-but-matching
+		// password this would be the user's plaintext traffic.
+		err = fmt.Errorf("ParseAddr after decrypt: %w (method=%s, decrypted=%d bytes)", err, lis.c.Method, len(pdata))
 		lis.c.getStat().incReject("parse")
 		return AcceptResult{AcceptReject, nil}
 	}
@@ -563,16 +603,35 @@ func httpProxyAcceptor(conn Conn, lis *listener) AcceptResult {
 	parser := utils.NewHTTPHeaderParser(utils.GetBuf(buffersize))
 	defer utils.PutBuf(parser.GetBuf())
 	buf := make([]byte, 4096)
+	// Bytes that followed the header inside the last segment (a small POST
+	// body, pipelined request) — the parser consumes them but they belong to
+	// the tunneled stream, so they are replayed after the rewritten header.
+	// Copied immediately: the Encode below reuses buf and would clobber them.
+	var excess []byte
+	fed := 0
+	lastN := 0
 	for {
 		n, err := ReadN(conn, buf, nil)
 		if err != nil {
 			return AcceptResult{AcceptReject, nil}
 		}
+		fed += n
+		lastN = n
 		ok, err := parser.Read(buf[:n])
 		if err != nil {
 			return AcceptResult{AcceptReject, nil}
 		}
 		if ok {
+			if over := fed - parser.HeaderLen(); over > 0 {
+				// over is bounded by lastN: the header must complete inside
+				// the final segment, so the excess is its tail. Clamp anyway
+				// so a parser that reports completion early can't make the
+				// slice bounds go negative.
+				if over > lastN {
+					over = lastN
+				}
+				excess = append(excess, buf[lastN-over:lastN]...)
+			}
 			break
 		}
 	}
@@ -593,6 +652,19 @@ func httpProxyAcceptor(conn Conn, lis *listener) AcceptResult {
 		_, err = io.WriteString(AsReadWriteCloser(conn, nil), "HTTP/1.1 200 Connection Established\r\n\r\n")
 		if err != nil {
 			return AcceptResult{AcceptReject, nil}
+		}
+		// Bytes that followed the CONNECT header belong to the tunneled
+		// stream. The parse buffer is 4KB while the peeked segment can be
+		// much larger, so the excess may be split: what the parser consumed
+		// beyond the header (excess) comes first in stream order, then any
+		// bytes the parse buffer never reached (the peeked conn's remain).
+		if rconn, ok := conn.(*RemainConn); ok {
+			var newRemain []byte
+			newRemain = append(newRemain, excess...)
+			newRemain = append(newRemain, rconn.remain...)
+			rconn.remain = newRemain
+		} else if len(excess) > 0 {
+			conn = &RemainConn{Conn: conn, remain: excess}
 		}
 		conn = DecayRemainConn(conn)
 		if cm, ok := conn.(ConnMeta); ok {
@@ -643,8 +715,16 @@ func httpProxyAcceptor(conn Conn, lis *listener) AcceptResult {
 	rconn, ok := conn.(*RemainConn)
 	if !ok {
 		rconn = &RemainConn{Conn: conn}
+		conn = rconn
 	}
+	// Stream order after the rewrite: rewritten header, then the excess the
+	// parser consumed past the header, then any peek bytes the 4KB parse
+	// buffer never reached (a large single segment splits the payload).
+	pending := append([]byte{}, rconn.remain...)
+	rconn.remain = rconn.remain[:0]
 	rconn.remain = append(rconn.remain, buf...)
+	rconn.remain = append(rconn.remain, excess...)
+	rconn.remain = append(rconn.remain, pending...)
 	if cm, ok := conn.(ConnMeta); ok {
 		cm.SetDst(domain.NewDstAddr(host, port))
 	}
@@ -750,6 +830,12 @@ func socks4Detector(conn Conn, buf []byte, n int, lis *listener) (AcceptResult, 
 	if err != nil {
 		return AcceptResult{AcceptReject, nil}, true
 	}
+	// Drop the peeked SOCKS4 request: it is protocol framing, not payload.
+	// Returning the RemainConn as-is would replay the request bytes
+	// (VER CMD DSTPORT DSTIP USERID) into the tunneled stream.
+	if rconn, ok := conn.(*RemainConn); ok {
+		conn = rconn.Conn
+	}
 	if cm, ok := conn.(ConnMeta); ok {
 		cm.SetDst(dstaddr)
 	}
@@ -760,56 +846,183 @@ func socks6Detector(conn Conn, buf []byte, n int, lis *listener) (AcceptResult, 
 	if buf[0] != verSocks6 || buf[1] != cmdConnect {
 		return AcceptResult{}, false
 	}
+	if n < 3 {
+		// Not enough bytes for VER+CMD+ATYP; ParseAddr(buf[2:n]) would panic.
+		return AcceptResult{AcceptReject, nil}, true
+	}
 	addr, data, err := ParseAddr(buf[2:n])
 	if err != nil {
 		return AcceptResult{AcceptReject, nil}, true
 	}
-	if cm, ok := conn.(ConnMeta); ok {
+	// Strip the full peeked request (VER+CMD+address) and keep only the
+	// post-address bytes as replay data. Wrapping the already-wrapped peeked
+	// conn used to replay data followed by the whole request into the
+	// tunneled stream.
+	base := conn
+	if rconn, ok := conn.(*RemainConn); ok {
+		base = rconn.Conn
+	}
+	if len(data) > 0 {
+		base = &RemainConn{Conn: base, remain: slices.Clone(data)}
+	}
+	if cm, ok := base.(ConnMeta); ok {
 		cm.SetDst(addr)
 	}
-	return AcceptResult{AcceptContinue, &RemainConn{Conn: conn, remain: data}}, true
+	return AcceptResult{AcceptContinue, base}, true
 }
 
 func socks5Detector(conn Conn, buf []byte, n int, lis *listener) (AcceptResult, bool) {
 	ver := buf[0]
-	cmd := buf[1]
 	if ver != verSocks5 {
 		return AcceptResult{}, false
 	}
-	if n != int(cmd)+2 {
+	if n < 2 {
 		return AcceptResult{AcceptReject, nil}, true
 	}
-	_, err := conn.Write([]byte{5, 0})
+	nmethods := int(buf[1])
+	greetingLen := 2 + nmethods
+	if n < greetingLen {
+		// RFC 1928 clients may split the greeting across TCP segments and
+		// the peeked read consumed only the first ones. Accumulate the
+		// remainder from the raw connection — reading through the peeked
+		// RemainConn would replay bytes already consumed. greetingLen is
+		// at most 257, far below the buffer, and the accept deadline bounds
+		// a client that never sends the rest.
+		raw := conn
+		if rconn, ok := conn.(*RemainConn); ok {
+			raw = rconn.Conn
+		}
+		for n < greetingLen {
+			nn, rerr := ReadN(raw, buf[n:greetingLen], nil)
+			if rerr != nil || nn == 0 {
+				return AcceptResult{AcceptReject, nil}, true
+			}
+			n += nn
+		}
+	}
+	// RFC 1928 method negotiation: this server only implements no-auth, so
+	// accept only when the client offered it and reply NO ACCEPTABLE METHODS
+	// otherwise. Replying {5,0} unconditionally broke strict clients that
+	// only offer user/pass.
+	hasNoAuth := false
+	for _, m := range buf[2:greetingLen] {
+		if m == 0 {
+			hasNoAuth = true
+			break
+		}
+	}
+	if !hasNoAuth {
+		conn.Write([]byte{verSocks5, 0xFF})
+		return AcceptResult{AcceptReject, nil}, true
+	}
+	_, err := conn.Write([]byte{verSocks5, 0})
 	if err != nil {
 		return AcceptResult{AcceptReject, nil}, true
 	}
-	// Drain pre-loaded greeting bytes from the peeked conn before
-	// reading the CONNECT request from the raw connection.
-	if rconn, ok := conn.(*RemainConn); ok && len(rconn.remain) > 0 {
-		conn = rconn.Conn
+	// Re-scope the replayed bytes: drop the greeting, keep any request bytes
+	// that arrived in the same segment so the request assembly below sees
+	// them instead of losing them with the greeting.
+	if rconn, ok := conn.(*RemainConn); ok {
+		if n > greetingLen {
+			conn = &RemainConn{Conn: rconn.Conn, remain: DupBuffer(buf[greetingLen:n])}
+		} else {
+			conn = rconn.Conn
+		}
 	}
-	n, err = ReadN(conn, buf, nil)
-	if err != nil {
+	// Assemble the CONNECT/UDP request: it may have arrived partially inside
+	// the greeting segment or fragmented across TCP segments. Parse the
+	// ATYP-dependent length and read until the full request is buffered;
+	// every index below is guarded by have/n checks (a short read used to be
+	// able to reach ParseAddr with stale greeting bytes and panic).
+	have := 0
+	req := 0
+	for {
+		// Request layout: VER CMD RSV ATYP ADDR PORT — the address header
+		// starts at buf[3].
+		if have >= 4 {
+			switch buf[3] {
+			case typeIPv4:
+				req = 4 + lenIPv4 + 2
+			case typeIPv6:
+				req = 4 + lenIPv6 + 2
+			case 3:
+				if have >= 5 {
+					req = 5 + int(buf[4]) + 2
+				}
+			default:
+				return AcceptResult{AcceptReject, nil}, true
+			}
+		}
+		if req != 0 && have >= req {
+			break
+		}
+		if have >= len(buf) {
+			return AcceptResult{AcceptReject, nil}, true
+		}
+		nn, rerr := ReadN(conn, buf[have:], nil)
+		if rerr != nil || nn == 0 {
+			return AcceptResult{AcceptReject, nil}, true
+		}
+		have += nn
+	}
+	n = req
+	if buf[0] != verSocks5 || (buf[1] != cmdConnect && buf[1] != cmdUDP) || (!lis.c.UDPRelay && buf[1] == cmdUDP) {
 		return AcceptResult{AcceptReject, nil}, true
 	}
-	ver = buf[0]
-	cmd = buf[1]
-	if ver != verSocks5 || (cmd != cmdConnect && cmd != cmdUDP) || (!lis.c.UDPRelay && cmd == cmdUDP) {
-		return AcceptResult{AcceptReject, nil}, true
-	}
-	if lis.c.UDPRelay && cmd == cmdUDP {
+	if lis.c.UDPRelay && buf[1] == cmdUDP {
 		addr, err := net.ResolveUDPAddr("udp", lis.c.Localaddr)
 		if err != nil {
 			return AcceptResult{AcceptReject, nil}, true
 		}
-		copy(buf, []byte{5, 0, 0, 1})
-		copy(buf[4:], addr.IP.To4())
-		binary.BigEndian.PutUint16(buf[8:], uint16(addr.Port))
-		_, err = conn.Write(buf[:10])
-		for err == nil {
-			_, err = ReadN(conn, buf, nil)
+		// Encode BND.ADDR per the resolved address family: with an IPv6
+		// Localaddr, addr.IP.To4() returns nil and the old code broadcast
+		// junk left over from the client's request in the IPv4 reply.
+		var resp []byte
+		if ip4 := addr.IP.To4(); ip4 != nil {
+			resp = []byte{5, 0, 0, 1}
+			resp = append(resp, ip4...)
+		} else {
+			resp = []byte{5, 0, 0, 4}
+			resp = append(resp, addr.IP.To16()...)
+		}
+		resp = binary.BigEndian.AppendUint16(resp, uint16(addr.Port))
+		if _, err := conn.Write(resp); err != nil {
+			return AcceptResult{AcceptReject, nil}, true
+		}
+		// Standard clients hold the UDP ASSOCIATE control connection open and
+		// idle. handleNewConn armed a 4s detection deadline that would kill
+		// every relay after 4s of TCP silence, so clear it: this drain loop
+		// runs for the lifetime of the association and exits when the client
+		// disconnects.
+		conn.SetReadDeadline(time.Time{})
+		for {
+			if _, err := ReadN(conn, buf, nil); err != nil {
+				break
+			}
 		}
 		return AcceptResult{AcceptReject, nil}, true
+	}
+	// A client may pipeline payload with the request (one TCP segment). The
+	// assembly loop read past the request into buf[req:have], and the peeked
+	// RemainConn may still hold bytes the assembly buffer never reached —
+	// both belong to the tunneled stream, in stream order.
+	base := conn
+	if rc, ok := conn.(*RemainConn); ok {
+		base = rc.Conn
+		var leftover []byte
+		if have > req {
+			leftover = append(leftover, buf[req:have]...)
+		}
+		if len(rc.remain) > 0 {
+			leftover = append(leftover, rc.remain...)
+		}
+		if len(leftover) > 0 {
+			conn = &RemainConn{Conn: base, remain: leftover}
+		} else {
+			conn = base
+		}
+	} else if have > req {
+		conn = &RemainConn{Conn: base, remain: append([]byte{}, buf[req:have]...)}
 	}
 	addr, _, err := ParseAddr(buf[3:n])
 	if err != nil {
@@ -840,7 +1053,10 @@ func httpProxyDetector(conn Conn, buf []byte, n int, lis *listener) (AcceptResul
 }
 
 func ssFallbackDetector(conn Conn, buf []byte, n int, lis *listener) AcceptResult {
-	ctx, sserr := ParseAddrWithMultipleBackends(buf[:n], getConfigs(lis.c.Method, lis.c.Password))
+	// Shared, once-built configs: rebuilding them per connection gave every
+	// connection a fresh IV checker, silently disabling salt replay
+	// detection on this path (and re-running kdf per conn).
+	ctx, sserr := ParseAddrWithMultipleBackends(buf[:n], lis.c.getSSProxyConfigs())
 	if sserr != nil {
 		lis.c.Log("receive invalid header from", conn.RemoteAddr().String(),
 			"method:", lis.c.Method,
@@ -858,27 +1074,6 @@ func ssFallbackDetector(conn Conn, buf []byte, n int, lis *listener) AcceptResul
 		return AcceptResult{AcceptReject, nil}
 	}
 	return AcceptResult{AcceptContinue, c}
-}
-
-func redirAcceptor(conn Conn, lis *listener) AcceptResult {
-	tconn, err := getNetTCPConn(conn)
-	if err != nil {
-		lis.c.Log(err)
-		return AcceptResult{AcceptReject, nil}
-	}
-	target, err := redir.GetOrigDst(tconn)
-	if err != nil || len(target) == 0 {
-		lis.c.Log(err)
-		return AcceptResult{AcceptReject, nil}
-	}
-	host, port, err := net.SplitHostPort(target)
-	if err != nil {
-		return AcceptResult{AcceptReject, nil}
-	}
-	if cm, ok := conn.(ConnMeta); ok {
-		cm.SetDst(domain.NewDstAddr(host, port))
-	}
-	return AcceptResult{AcceptContinue, conn}
 }
 
 func DialUDP(c *Config) (conn Conn, err error) {

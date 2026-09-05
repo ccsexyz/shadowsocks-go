@@ -683,7 +683,7 @@ func testSS2022Exchange(t *testing.T, doReverse bool) {
 
 	svSalt := make([]byte, 32)
 	sConn := newServerCryptoConn2022(newBaseConn(rawServer, cfg), method, psk, svSalt, cliSalt, serverCiph)
-	clientAead := newClientCryptoConn2022(newBaseConn(rawClient, cfg), method, psk, ciph)
+	clientAead := newClientCryptoConn2022(newBaseConn(rawClient, cfg), method, psk, salt, ciph)
 	defer sConn.Close()
 	defer clientAead.Close()
 
@@ -761,7 +761,7 @@ func testAEAD2022Large(t *testing.T, size int) {
 		}
 
 		// Let the codec handle the server handshake via doServerHandshake.
-		clientAead := newClientCryptoConn2022(newBaseConn(rawClient, nil), method, psk, ciph)
+		clientAead := newClientCryptoConn2022(newBaseConn(rawClient, nil), method, psk, salt, ciph)
 
 		// Read the handshake greeting ("ok")
 		greeting := make([]byte, 2)
@@ -928,7 +928,7 @@ func TestAEAD2022ConcurrentReadWrite(t *testing.T) {
 
 	svSalt := make([]byte, 32)
 	serverAead := newServerCryptoConn2022(newBaseConn(rawServer, cfg), method, psk, svSalt, cliSalt, serverCiph)
-	clientAead := newClientCryptoConn2022(newBaseConn(rawClient, cfg), method, psk, ciph)
+	clientAead := newClientCryptoConn2022(newBaseConn(rawClient, cfg), method, psk, salt, ciph)
 	defer clientAead.Close()
 	defer serverAead.Close()
 
@@ -1438,5 +1438,47 @@ func TestDeferClose_FlagToggle(t *testing.T) {
 	cc.CancelDeferClose()
 	if cc.deferClose {
 		t.Error("CancelDeferClose() did not clear deferClose flag")
+	}
+}
+
+// dataThenEOFConn returns (3, io.EOF) once, then (0, io.EOF): per io.Reader,
+// the 3 bytes must be delivered before the error.
+type dataThenEOFConn struct{ done bool }
+
+func (c *dataThenEOFConn) Read(b []byte) (int, error) {
+	if !c.done {
+		c.done = true
+		copy(b, "abc")
+		return 3, io.EOF
+	}
+	return 0, io.EOF
+}
+func (c *dataThenEOFConn) Write(b []byte) (int, error)   { return len(b), nil }
+func (c *dataThenEOFConn) Close() error                  { return nil }
+func (c *dataThenEOFConn) LocalAddr() net.Addr           { return nil }
+func (c *dataThenEOFConn) RemoteAddr() net.Addr          { return nil }
+func (c *dataThenEOFConn) SetDeadline(_ time.Time) error { return nil }
+func (c *dataThenEOFConn) SetReadDeadline(_ time.Time) error {
+	return nil
+}
+func (c *dataThenEOFConn) SetWriteDeadline(_ time.Time) error {
+	return nil
+}
+
+// TestBaseConnDeliversDataWithError pins the io.Reader contract in
+// BaseConn.Read: bytes read together with an error are delivered first, and a
+// follow-up read reports the error.
+func TestBaseConnDeliversDataWithError(t *testing.T) {
+	bc := newBaseConn(&dataThenEOFConn{}, nil)
+	buf := make([]byte, 64)
+	segs, err := bc.Read(buf, nil)
+	if err != nil {
+		t.Fatalf("first read must deliver data, got err %v", err)
+	}
+	if string(segs[0]) != "abc" {
+		t.Fatalf("data = %q, want abc", segs[0])
+	}
+	if _, err := bc.Read(buf, nil); err == nil {
+		t.Fatal("second read must report the error")
 	}
 }

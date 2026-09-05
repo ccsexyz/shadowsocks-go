@@ -9,7 +9,11 @@ import (
 
 var bufPoolGets, bufPoolMisses atomic.Int64
 
-var bufPools [11]sync.Pool
+// 12 size classes: 64B … 64KB plus a 128KB class. The largest class must
+// cover domain.BufferSize (65568): anything above the 64KB classes used to
+// fall through to make/PutBuf-discard, silently disabling pooling on the
+// accept and MultiUDP hot paths.
+var bufPools [12]sync.Pool
 
 func init() {
 	for it := 0; it < len(bufPools); it++ {
@@ -56,7 +60,7 @@ func getIndex(n int) int {
 }
 
 func GetBuf(n int) []byte {
-	if n > 0 && n <= 65536 {
+	if n > 0 && n <= 1<<17 {
 		bufPoolGets.Add(1)
 		return bufPools[getIndex(n)].Get().([]byte)[:n]
 	}
@@ -64,12 +68,19 @@ func GetBuf(n int) []byte {
 }
 
 func PutBuf(b []byte) {
-	if len(b) > 65536 || len(b) == 0 {
+	if len(b) > 1<<17 || len(b) == 0 {
 		return
 	}
 	index := getIndex(len(b))
+	size := 1 << uint(index+6)
+	// Defensive: the pool slice-extends to the full size class, so a buffer
+	// with a smaller capacity (e.g. make([]byte, 100) or a resliced one)
+	// would panic here instead of being rejected.
+	if cap(b) < size {
+		return
+	}
 	//lint:ignore SA6002 boxing []byte in any; negligible vs pooled buffer lifetime
-	bufPools[index].Put(b[:(1 << uint(index+6))])
+	bufPools[index].Put(b[:size])
 }
 
 func CopyBuffer(b []byte) []byte {

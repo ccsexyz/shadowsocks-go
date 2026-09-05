@@ -171,7 +171,13 @@ func (a *AEADDecryptCipherStream) ReadFrame(buf []byte) ([]byte, error) {
 			if err := a.crypt.Decrypt(tag[:need], tag[:need]); err != nil {
 				return nil, fmt.Errorf("decrypt tag fail: %w", err)
 			}
-			a.tagLen = int(binary.BigEndian.Uint16(tag[:2]) & aeadSizeMask)
+			// The two high bits are reserved by the AEAD spec; a length
+			// above 0x3FFF is a protocol violation, not a maskable value.
+			l := int(binary.BigEndian.Uint16(tag[:2]))
+			if l > aeadSizeMask {
+				return nil, fmt.Errorf("invalid chunk length %d", l)
+			}
+			a.tagLen = l
 		}
 
 		expected := a.tagLen + overhead
@@ -234,7 +240,12 @@ RETRY:
 			err = fmt.Errorf("decrypt tag fail: %w", err2)
 			return
 		}
-		a.tagLen = int(binary.BigEndian.Uint16(tag[:2]) & aeadSizeMask)
+		l := int(binary.BigEndian.Uint16(tag[:2]))
+		if l > aeadSizeMask {
+			err = fmt.Errorf("invalid chunk length %d", l)
+			return
+		}
+		a.tagLen = l
 	}
 
 	expected := a.tagLen + a.crypt.Overhead()

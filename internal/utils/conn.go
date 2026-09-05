@@ -124,12 +124,18 @@ func (conn *SubConn) Close() error {
 		close(conn.die)
 	}
 	if conn.connsMap != nil && conn.raddr != nil {
-		conn.connsMap.Delete(conn.raddr.String())
+		// Conditional delete: a new SubConn for the same remote address may
+		// have replaced this one in the map while this session was winding
+		// down; deleting by key alone would orphan the new session.
+		conn.connsMap.CompareAndDelete(conn.raddr.String(), any(conn))
 	}
 	for i := range conn.bufs {
 		conn.bufs[i].Release()
 	}
 	conn.bufs = nil
+	if conn.rtimer != nil {
+		conn.rtimer.Stop()
+	}
 	select {
 	case <-conn.rbsig:
 	default:
@@ -201,11 +207,10 @@ func (conn *SubConn) ReadBuffer() ([][]byte, error) {
 		}
 		conn.lock.Unlock()
 
-		select {
-		case <-conn.rbsig:
-		default:
-		}
-
+		// input() appends to bufs before signaling rbsig, so by the time a
+		// signal is observable the queue check above has already re-run; do
+		// NOT drain the signal here — consuming it between the queue check
+		// and the wait below would lose the wakeup for data already queued.
 		select {
 		case <-conn.rbsig:
 		case <-conn.die:
