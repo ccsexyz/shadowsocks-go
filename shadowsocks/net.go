@@ -397,7 +397,7 @@ func ssMultiAcceptHandler2(conn Conn, lis *listener, addr *SockAddr, n int,
 	}
 	setInnerCfg(conn, chs)
 	c = conn
-	chs.LogD("choose", chs.Method, chs.Password, addr.Host(), addr.Port())
+	chs.LogD("choose", chs.Method, addr.Host(), addr.Port())
 	return
 }
 

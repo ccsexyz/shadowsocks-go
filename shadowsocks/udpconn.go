@@ -315,7 +315,7 @@ func (c *MultiUDPConn) ReadFrom(b []byte) (n int, addr net.Addr, err error) {
 				}
 			}
 			c.getSession(addr.String(), ctx.chs)
-			ctx.chs.LogD("udp mode choose", ctx.chs.Method, ctx.chs.Password)
+			ctx.chs.LogD("udp mode choose", ctx.chs.Method)
 			n = copy(b, ctx.addr.Hdr)
 			n += copy(b[n:], ctx.data)
 		} else {
