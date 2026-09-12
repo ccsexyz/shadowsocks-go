@@ -42,7 +42,10 @@ func freeUDPPort(t *testing.T) int {
 // waitUDPBound polls addr with a probe datagram until the port stops
 // answering ICMP port-unreachable, i.e. some socket is bound there. Probe
 // packets are garbage that the SS servers drop (or the udptun relays —
-// harmless noise).
+// harmless noise). A read timeout alone proves nothing while ICMP delivery
+// is delayed or rate-limited, so the wait also dwells for a minimum window:
+// by the time it returns, the server goroutine is definitely past its
+// ListenUDP even when package-parallel tests load the machine.
 func waitUDPBound(t *testing.T, addr string) {
 	t.Helper()
 	udpAddr, err := net.ResolveUDPAddr("udp", addr)
@@ -55,14 +58,15 @@ func waitUDPBound(t *testing.T, addr string) {
 	}
 	defer probe.Close()
 	deadline := time.Now().Add(3 * time.Second)
+	dwell := time.Now().Add(250 * time.Millisecond)
 	for {
 		probe.Write([]byte{0})
-		probe.SetReadDeadline(time.Now().Add(30 * time.Millisecond))
+		probe.SetReadDeadline(time.Now().Add(50 * time.Millisecond))
 		buf := make([]byte, 16)
 		if _, err := probe.Read(buf); err == nil {
 			return // something answered (e.g. udptun echo) — definitely bound
-		} else if !isConnRefused(err) {
-			return // timeout: ICMP not reported → bound (or lost); good enough
+		} else if !isConnRefused(err) && !time.Now().Before(dwell) {
+			return // timeout past the dwell window: bound (or lost); good enough
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("udp server at %s never came up", addr)
