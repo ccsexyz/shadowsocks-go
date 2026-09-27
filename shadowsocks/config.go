@@ -103,8 +103,9 @@ type runtime struct {
 	autoProxyCtx  *autoProxy
 	chnListCtx    *chnRouteList
 	crctbl        *crc32.Table
-	// disable is written by the admin paths (under adminWriteMu) and read
-	// locklessly on the accept path, so it must be atomic.
+	// disable is seeded from the Config.Disabled field when the runtime is
+	// allocated, then written by the admin paths (under adminWriteMu) and
+	// read locklessly on the accept path, so it must be atomic.
 	disable        atomic.Bool
 	stat           *statServer
 	dialHealth     *dialHealth
@@ -199,6 +200,12 @@ type Config struct {
 	AdminToken     string    `json:"admintoken,omitempty"`
 	ActiveBackend  string    `json:"active,omitempty"`
 	Target         string    `json:"target,omitempty"`
+
+	// Disabled seeds the runtime disable flag: a server (or a backend entry)
+	// can ship configured off and be switched on later through the admin API.
+	// Once the runtime exists the flag is the source of truth, and this field
+	// is never written back.
+	Disabled bool `json:"disabled"`
 
 	CryptoConfig
 	ObfsConfig
@@ -326,6 +333,9 @@ func (c *Config) initRuntime() *runtime {
 		return rt
 	}
 	rt := newRuntime()
+	// The config field is only the initial value; from here on the admin
+	// paths own the flag.
+	rt.disable.Store(c.Disabled)
 	c.rt.Store(rt)
 	return rt
 }
@@ -428,7 +438,10 @@ func (c *Config) getCRCTable() *crc32.Table {
 func (c *Config) isDisabled() bool {
 	rt := c.rt.Load()
 	if rt == nil {
-		return false
+		// No runtime yet: the config field is still the only value, and a
+		// backend that has never served a connection can reach the dial
+		// path in this state.
+		return c.Disabled
 	}
 	return rt.disable.Load()
 }

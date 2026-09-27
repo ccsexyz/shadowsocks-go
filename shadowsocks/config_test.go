@@ -98,6 +98,61 @@ func TestConfig_Disabled(t *testing.T) {
 	}
 }
 
+func TestConfig_DisabledFromConfigFile(t *testing.T) {
+	// A Config that never went through CheckConfig has no runtime yet;
+	// isDisabled must still honor the field.
+	fresh := &Config{Disabled: true}
+	if !fresh.isDisabled() {
+		t.Error("field should be honored before the runtime exists")
+	}
+	if (&Config{}).isDisabled() {
+		t.Error("empty config should be enabled before the runtime exists")
+	}
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	err := os.WriteFile(path, []byte(`{
+		"server": "127.0.0.1:8388",
+		"password": "test",
+		"method": "aes-256-gcm",
+		"disabled": true,
+		"backends": [
+			{"server": "127.0.0.1:9001", "password": "test", "method": "aes-256-gcm", "disabled": true},
+			{"server": "127.0.0.1:9002", "password": "test", "method": "aes-256-gcm"}
+		]
+	}`), 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	configs, err := ReadConfig(path)
+	if err != nil {
+		t.Fatalf("ReadConfig: %v", err)
+	}
+	c := configs[0]
+
+	// ReadConfig runs CheckConfig, which allocates the runtime, so from here
+	// on the value survives only if initRuntime seeded it.
+	if c.rt.Load() == nil {
+		t.Fatal("expected CheckConfig to have allocated the runtime")
+	}
+	if !c.isDisabled() {
+		t.Error("parent should be disabled from config")
+	}
+	backends := c.Backends
+	if !backends[0].isDisabled() {
+		t.Error("backend with disabled:true should be disabled")
+	}
+	if backends[1].isDisabled() {
+		t.Error("backend without the field should stay enabled")
+	}
+
+	// The admin API then owns the flag.
+	c.setDisabled(false)
+	if c.isDisabled() {
+		t.Error("admin enable should override the config default")
+	}
+}
+
 func TestConfig_StatAccess(t *testing.T) {
 	c := &Config{}
 
