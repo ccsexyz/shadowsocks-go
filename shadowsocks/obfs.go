@@ -1092,10 +1092,8 @@ func DialWsConn(address, host string, cfg *cfg) (Conn, error) {
 	if mode != ipSelectOff {
 		policy := newIPSelPolicy(cfg)
 		useScore := mode == ipSelectSmart
-		var cache *ipScoreCache
-		if useScore {
-			cache = cfg.getIPSelectCache()
-		}
+		// Same as DialTCP: the cache feeds the decision history in race mode.
+		cache := cfg.getIPSelectCache()
 		d.NetDialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
 			return dialIPSelect(ctx, network, addr, policy, cache, useScore)
 		}

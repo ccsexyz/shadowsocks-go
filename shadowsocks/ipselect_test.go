@@ -100,7 +100,15 @@ func TestIPScoreCacheRecordAndRank(t *testing.T) {
 		netip.MustParseAddr("4.4.4.4"),
 		netip.MustParseAddr("3.3.3.3"),
 	}
-	ranked := c.rankCandidates("example.com", ips, ipSelPolicy{})
+	rank := func(host string, list []netip.Addr, p ipSelPolicy) []netip.Addr {
+		scored := orderScored(c.scoreAll(host, list, time.Now()), p)
+		out := make([]netip.Addr, len(scored))
+		for i, s := range scored {
+			out[i] = s.addr
+		}
+		return out
+	}
+	ranked := rank("example.com", ips, ipSelPolicy{})
 	if ranked[0] != ips[0] {
 		t.Errorf("fastest ip should rank first, got %v", ranked)
 	}
@@ -114,7 +122,7 @@ func TestIPScoreCacheRecordAndRank(t *testing.T) {
 	// PreferIPv4 groups all v4 ahead of v6.
 	v6 := netip.MustParseAddr("2001:db8::1")
 	mixed := []netip.Addr{v6, ips[1]}
-	ranked = c.rankCandidates("example.com", mixed, ipSelPolicy{PreferIPv4: true})
+	ranked = rank("example.com", mixed, ipSelPolicy{PreferIPv4: true})
 	if ranked[0] != ips[1] {
 		t.Errorf("PreferIPv4 should put v4 first, got %v", ranked)
 	}
@@ -415,6 +423,51 @@ func TestDialIPSelectParentCancellation(t *testing.T) {
 	if st != nil {
 		t.Fatalf("parent cancellation should not be recorded as a failure, got %+v", st)
 	}
+	// The same rule applies to the decision history: a dial aborted by the
+	// caller has no decision worth showing.
+	if n := len(cache.snapshotHistory()); n != 0 {
+		t.Fatalf("parent cancellation should not be recorded in the history, got %d entries", n)
+	}
+
+	// A canceled race (every candidate fails together) stays out too.
+	ipSelLookup = func(ctx context.Context, host string) ([]netip.Addr, error) {
+		return []netip.Addr{
+			netip.MustParseAddr("2001:db8::1"),
+			netip.MustParseAddr("127.0.0.1"),
+		}, nil
+	}
+	parent2, cancel2 := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel2()
+	}()
+	_, err = dialIPSelect(parent2, "tcp", "cancel.test:80",
+		ipSelPolicy{Timeout: 2 * time.Second, Delay: 150 * time.Millisecond}, cache, true)
+	if err != context.Canceled {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+	if n := len(cache.snapshotHistory()); n != 0 {
+		t.Fatalf("canceled race should not be recorded in the history, got %d entries", n)
+	}
+
+	// And a canceled lookup.
+	ipSelLookup = func(ctx context.Context, host string) ([]netip.Addr, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	parent3, cancel3 := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel3()
+	}()
+	_, err = dialIPSelect(parent3, "tcp", "cancel.test:80",
+		ipSelPolicy{Timeout: 2 * time.Second, Delay: 150 * time.Millisecond}, cache, true)
+	if err != context.Canceled {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+	if n := len(cache.snapshotHistory()); n != 0 {
+		t.Fatalf("canceled lookup should not be recorded in the history, got %d entries", n)
+	}
 }
 
 func TestDialIPSelectLiteralDisabledFamily(t *testing.T) {
@@ -422,6 +475,126 @@ func TestDialIPSelectLiteralDisabledFamily(t *testing.T) {
 		ipSelPolicy{NoIPv4: true, Timeout: time.Second, Delay: 100 * time.Millisecond}, nil, false)
 	if err == nil {
 		t.Error("expected error dialing v4 with NoIPv4")
+	}
+}
+
+func TestDialIPSelectRecordsDecisionHistory(t *testing.T) {
+	origLookup, origDial := ipSelLookup, ipSelDial
+	t.Cleanup(func() { ipSelLookup, ipSelDial = origLookup, origDial })
+
+	ipSelLookup = func(ctx context.Context, host string) ([]netip.Addr, error) {
+		return []netip.Addr{
+			netip.MustParseAddr("2001:db8::1"),
+			netip.MustParseAddr("127.0.0.1"),
+		}, nil
+	}
+	ipSelDial = func(ctx context.Context, network, address string, timeout time.Duration) (net.Conn, time.Duration, error) {
+		host, _, err := net.SplitHostPort(address)
+		if err != nil {
+			return nil, 0, err
+		}
+		if host == "2001:db8::1" {
+			return nil, time.Millisecond, fmt.Errorf("refused")
+		}
+		c1, c2 := net.Pipe()
+		t.Cleanup(func() { c1.Close(); c2.Close() })
+		return c1, 5 * time.Millisecond, nil
+	}
+
+	cache := newIPScoreCache()
+	// Seed the stats so ranking and the reported "why" are deterministic:
+	// v4 is the known-good IP, v6 has never connected. A canceled race loser
+	// is not dialed at all, so a two-candidate dial cannot seed them itself.
+	cache.record("history.test", "127.0.0.1", 5*time.Millisecond, true)
+	cache.record("history.test", "2001:db8::1", 0, false)
+
+	conn, err := dialIPSelect(context.Background(), "tcp", "history.test:80",
+		ipSelPolicy{Timeout: time.Second, Delay: 150 * time.Millisecond}, cache, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn.Close()
+
+	hist := cache.snapshotHistory()
+	if len(hist) != 1 {
+		t.Fatalf("history = %d entries, want 1", len(hist))
+	}
+	d := hist[0]
+	if d.Host != "history.test" || d.Winner != "127.0.0.1" {
+		t.Fatalf("decision = %+v", d)
+	}
+	if d.ElapsedMs <= 0 || d.Time.IsZero() {
+		t.Errorf("decision should carry time and elapsed, got %+v", d)
+	}
+	var v4, v6 *ipSelCandView
+	for k := range d.Candidates {
+		switch d.Candidates[k].IP {
+		case "127.0.0.1":
+			v4 = &d.Candidates[k]
+		case "2001:db8::1":
+			v6 = &d.Candidates[k]
+		}
+	}
+	if v4 == nil || v6 == nil {
+		t.Fatalf("candidates = %+v", d.Candidates)
+	}
+	// v4 carries its measured rtt as score; v6 has only failures.
+	if v4.ScoreMs <= 0 || v4.ScoreMs > 10 {
+		t.Errorf("v4 score = %v, want ~5ms (measured rtt)", v4.ScoreMs)
+	}
+	if v6.ScoreMs != ipSelScoreNeverConnected {
+		t.Errorf("v6 score = %v, want never-connected sentinel", v6.ScoreMs)
+	}
+	if v4.Err != "" {
+		t.Errorf("winner should have no error, got %q", v4.Err)
+	}
+
+	// All-fail dial: the decision records the failure and per-candidate errors.
+	ipSelDial = func(ctx context.Context, network, address string, timeout time.Duration) (net.Conn, time.Duration, error) {
+		return nil, time.Millisecond, fmt.Errorf("refused")
+	}
+	if _, err := dialIPSelect(context.Background(), "tcp", "history.test:80",
+		ipSelPolicy{Timeout: time.Second, Delay: 150 * time.Millisecond}, cache, true); err == nil {
+		t.Fatal("expected all-fail dial to fail")
+	}
+	hist = cache.snapshotHistory()
+	if len(hist) != 2 {
+		t.Fatalf("history = %d entries, want 2", len(hist))
+	}
+	d = hist[0]
+	if d.Reason != ipSelReasonFailed || d.Winner != "" || d.Error == "" {
+		t.Fatalf("failed decision = %+v", d)
+	}
+	for _, cv := range d.Candidates {
+		if cv.Err == "" {
+			t.Errorf("every attempted candidate should carry its error: %+v", cv)
+		}
+	}
+}
+
+func TestDialIPSelectLiteralRecordsDecision(t *testing.T) {
+	origDial := ipSelDial
+	t.Cleanup(func() { ipSelDial = origDial })
+	ipSelDial = func(ctx context.Context, network, address string, timeout time.Duration) (net.Conn, time.Duration, error) {
+		c1, c2 := net.Pipe()
+		t.Cleanup(func() { c1.Close(); c2.Close() })
+		return c1, time.Millisecond, nil
+	}
+
+	cache := newIPScoreCache()
+	conn, err := dialIPSelect(context.Background(), "tcp", "1.2.3.4:80",
+		ipSelPolicy{Timeout: time.Second}, cache, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn.Close()
+
+	hist := cache.snapshotHistory()
+	if len(hist) != 1 {
+		t.Fatalf("history = %d entries, want 1", len(hist))
+	}
+	if d := hist[0]; d.Reason != ipSelReasonLiteral || d.Winner != "1.2.3.4" {
+		t.Fatalf("decision = %+v", d)
 	}
 }
 

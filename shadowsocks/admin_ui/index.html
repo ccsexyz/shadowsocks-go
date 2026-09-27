@@ -4,16 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Shadowsocks Admin</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
 /* =========================================================
    Design Tokens — Material 3 inspired
    ========================================================= */
 :root {
-  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-  --font-mono: 'JetBrains Mono', 'SF Mono', 'Menlo', Monaco, Consolas, monospace;
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'Menlo', Monaco, Consolas, monospace;
 
   /* Light theme */
   --bg: #f8f9fa;
@@ -482,7 +479,7 @@ body.dark .badge-switch { color: #5ed9d9; background: #0a2a2d; }
   display: flex;
   align-items: flex-end;
   gap: 2px;
-  height: 36px;
+  height: 52px;
   margin: 0 24px 16px;
   padding: 4px 0;
 }
@@ -492,26 +489,62 @@ body.dark .badge-switch { color: #5ed9d9; background: #0a2a2d; }
   min-width: 2px;
   border-radius: 2px 2px 0 0;
   transition: height 0.4s var(--transition-slow);
-  opacity: 0.7;
+  opacity: 0.75;
 }
 
 .sparkline .bar.read { background: linear-gradient(to top, var(--success), color-mix(in srgb, var(--success) 60%, transparent)); }
 .sparkline .bar.write { background: linear-gradient(to top, var(--primary), color-mix(in srgb, var(--primary) 60%, transparent)); }
+
+/* Card hero — the two live rates lead the card */
+.card-hero {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  margin: 0 24px 12px;
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.card-hero > div {
+  padding: 12px 16px 10px;
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.card-hero > div + div { border-left: 1px solid var(--outline-variant); }
+
+.hero-val {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  line-height: 1.1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+
+.card-hero .hero-down .hero-val { color: var(--dl); }
+.card-hero .hero-up .hero-val { color: var(--ul); }
 
 /* Card Stats */
 .card-stats {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 1px;
-  margin: 0 24px 16px;
+  margin: 0 24px 10px;
   background: var(--outline-variant);
+  border: 1px solid var(--outline-variant);
   border-radius: var(--radius-md);
   overflow: hidden;
 }
 
 .stat-cell {
   text-align: center;
-  padding: 10px 4px;
+  padding: 9px 4px;
   background: var(--surface);
   transition: background var(--transition-fast);
 }
@@ -519,7 +552,7 @@ body.dark .badge-switch { color: #5ed9d9; background: #0a2a2d; }
 .stat-cell:hover { background: var(--surface-hover); }
 
 .stat-value {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--text);
   letter-spacing: -0.2px;
@@ -530,7 +563,7 @@ body.dark .badge-switch { color: #5ed9d9; background: #0a2a2d; }
 }
 
 .stat-sub {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -549,6 +582,19 @@ body.dark .badge-switch { color: #5ed9d9; background: #0a2a2d; }
   margin-top: 2px;
   font-weight: 500;
 }
+
+/* Card totals footer — cumulative bytes stay quiet */
+.card-totals {
+  display: flex;
+  justify-content: space-between;
+  margin: 0 24px 4px;
+  padding: 0 2px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.card-totals b { color: var(--text-secondary); font-weight: 600; }
 
 /* Toggles */
 .toggles {
@@ -742,7 +788,7 @@ body.dark .badge-switch { color: #5ed9d9; background: #0a2a2d; }
    ========================================================= */
 .detail {
   display: none;
-  max-width: 880px;
+  max-width: 1040px;
   margin: 0 auto;
   animation: slideUp 0.4s var(--transition-slow);
 }
@@ -780,6 +826,23 @@ body.dark .badge-switch { color: #5ed9d9; background: #0a2a2d; }
   padding: 32px;
   box-shadow: var(--shadow-2);
   animation: scaleIn 0.4s var(--transition-slow);
+  /* Wide screens flow narrow sections into two columns; .span-2 sections
+     (charts, upstreams, connection table) take the full row. */
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 44px;
+  align-items: start;
+}
+
+.detail-card > .detail-header,
+.detail-card > .detail-meta,
+.detail-card > .detail-chart,
+.detail-card > .detail-stats,
+.detail-card > .detail-actions,
+.detail-card > .span-2 { grid-column: 1 / -1; }
+
+@media (max-width: 1000px) {
+  .detail-card { grid-template-columns: 1fr; }
 }
 
 .detail-header {
@@ -822,6 +885,7 @@ body.dark .badge-switch { color: #5ed9d9; background: #0a2a2d; }
   border: 1px solid var(--outline-variant);
 }
 .range-pill:hover { background: var(--primary-container); color: var(--primary); border-color: transparent; }
+.range-pill.active { background: var(--primary); color: #fff; border-color: transparent; }
 
 /* Connection waterfall */
 .wf-wrap {
@@ -831,20 +895,64 @@ body.dark .badge-switch { color: #5ed9d9; background: #0a2a2d; }
 .wf-legend { display: flex; gap: 16px; padding: 8px 12px; font-size: 10px; color: var(--text-tertiary); }
 
 .proc-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-bottom: 16px;
-}
-.proc-chart {
   background: var(--surface);
   border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-1);
+  padding: 16px 16px 12px;
+  margin-bottom: 28px;
+}
+.proc-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.proc-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  flex: 1;
+}
+.proc-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+.proc-chart {
+  background: var(--surface-variant);
+  border: 1px solid var(--outline-variant);
   border-radius: var(--radius-md);
-  padding: 8px 12px 4px;
+  padding: 10px 12px 6px;
   width: 100%;
   box-sizing: border-box;
 }
+.proc-chart-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+  font-size: 11px;
+}
+.proc-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+.proc-dot { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+.proc-val {
+  font-weight: 700;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
 .proc-chart canvas { width: 100%; display: block; }
+@media (max-width: 1000px) { .proc-grid { grid-template-columns: 1fr; } }
 
 .detail-chart {
   margin-bottom: 24px;
@@ -874,8 +982,9 @@ body.dark .badge-switch { color: #5ed9d9; background: #0a2a2d; }
 .detail-stats .stat-sub  { font-size: 16px; }
 
 .detail-section {
-  margin-bottom: 32px;
+  margin-bottom: 28px;
   animation: fadeIn 0.5s var(--transition-slow) both;
+  min-width: 0;
 }
 
 .detail-section:nth-child(2) { animation-delay: 0.05s; }
@@ -883,6 +992,9 @@ body.dark .badge-switch { color: #5ed9d9; background: #0a2a2d; }
 .detail-section:nth-child(4) { animation-delay: 0.15s; }
 
 .detail-section h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: 11px;
   color: var(--text-tertiary);
   font-weight: 700;
@@ -891,6 +1003,15 @@ body.dark .badge-switch { color: #5ed9d9; background: #0a2a2d; }
   margin-bottom: 14px;
   padding-bottom: 10px;
   border-bottom: 1px solid var(--outline-variant);
+}
+
+.detail-section h3::before {
+  content: '';
+  width: 3px;
+  height: 11px;
+  border-radius: 2px;
+  background: var(--primary);
+  flex-shrink: 0;
 }
 
 /* Settings */
@@ -1132,7 +1253,12 @@ body.dark .badge-switch { color: #5ed9d9; background: #0a2a2d; }
   width: 100%;
   border-collapse: collapse;
   font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
+
+.conn-table tbody tr { transition: background var(--transition-fast); }
+.conn-table tbody tr:nth-child(even) { background: color-mix(in srgb, var(--surface-variant) 40%, transparent); }
+.conn-table tbody tr:hover { background: var(--primary-container); }
 
 .conn-table th {
   text-align: left;
@@ -1413,6 +1539,9 @@ body.dark .bw-bar-fill.w { background: var(--primary); }
   .grid { grid-template-columns: 1fr; gap: 16px; }
   .detail-card { padding: 24px; }
   .detail-stats { grid-template-columns: repeat(2, 1fr); }
+  .card-stats { grid-template-columns: repeat(2, 1fr); }
+  .conn-table-wrap { overflow-x: auto; }
+  .conn-table { min-width: 640px; }
   .conn-table td, .conn-table th { padding: 10px 12px; }
   .stats { gap: 8px; }
   .stat-chip { padding: 5px 10px; font-size: 11px; }
@@ -1438,15 +1567,28 @@ body.dark .bw-bar-fill.w { background: var(--primary); }
 .conn-table thead th { background: var(--surface); }
 /* --- empty state --- */
 .conn-empty { text-align: center; padding: 32px 16px; color: var(--text-tertiary); font-size: 13px; }
-.conn-empty::before { content: ''; display: block; width: 36px; height: 36px; margin: 0 auto 12px; border-radius: 50%; background: var(--outline-variant); opacity: 0.5; }
+.conn-empty::before {
+  content: '';
+  display: block;
+  width: 44px;
+  height: 44px;
+  margin: 0 auto 12px;
+  border-radius: 50%;
+  border: 2px dashed var(--outline);
+}
+
+/* --- focus visibility (keyboard users) --- */
+:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 4px; }
 /* --- detail rhythm --- */
-.detail-section + .detail-section { padding-top: 24px; border-top: 1px solid var(--outline-variant); margin-top: 8px; }
+/* Sections sit in a two-column grid; the h3 underline + margins carry the rhythm. */
 </style>
 </head>
 <body>
 <div class="app">
   <div class="header">
     <h1><a href="#"><span class="dot"></span>Shadowsocks Admin</a></h1>
+    <button class="theme-btn" onclick="toggleTheme()" title="Toggle theme" id="themeBtn">☀</button>
+    <div class="spacer"></div>
     <div class="stats">
       <div class="stat-chip">Servers <span id="numConfigs">0</span></div>
       <div class="stat-chip">Conns <span id="totalConns">0</span></div>
@@ -1454,32 +1596,45 @@ body.dark .bw-bar-fill.w { background: var(--primary); }
       <div class="stat-chip">&uarr; <span id="totalWrit">0</span></div>
       <div class="stat-chip">Up <span id="uptime">0s</span></div>
     </div>
-    <div class="spacer"></div>
-    <button class="theme-btn" onclick="toggleTheme()" title="Toggle theme" id="themeBtn">☀</button>
   </div>
 
   <div class="error-banner" id="errorBanner"></div>
 
+  <datalist id="ss-methods">
+    <option value="aes-128-gcm"></option>
+    <option value="aes-192-gcm"></option>
+    <option value="aes-256-gcm"></option>
+    <option value="chacha20-ietf-poly1305"></option>
+    <option value="chacha20-poly1305"></option>
+    <option value="plain"></option>
+    <option value="2022-blake3-aes-128-gcm"></option>
+    <option value="2022-blake3-aes-256-gcm"></option>
+    <option value="2022-blake3-chacha20-poly1305"></option>
+    <option value="socks5"></option>
+  </datalist>
+
   <div class="container">
     <!-- Overview -->
     <div id="overview">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-        <span style="font-size:10px;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:0.05em">Process</span>
-        <span class="range-pill" id="range60" onclick="switchProcRange('60s')" style="background:var(--primary);color:#fff">60s</span>
-        <span class="range-pill" id="range30m" onclick="switchProcRange('30m')">30m</span>
-      </div>
       <div class="proc-panel" id="procPanel">
-        <div class="proc-chart">
-          <div style="font-size:10px;color:var(--text-tertiary);margin-bottom:2px">CPU <span class="proc-label" id="proc-label-cpu">60s</span></div>
-          <canvas id="proc-cpu" height="80"></canvas>
+        <div class="proc-head">
+          <span class="proc-title">Process Monitor</span>
+          <span class="range-pill active" id="range60" onclick="switchProcRange('60s')">60s</span>
+          <span class="range-pill" id="range30m" onclick="switchProcRange('30m')">30m</span>
         </div>
-        <div class="proc-chart">
-          <div style="font-size:10px;color:var(--text-tertiary);margin-bottom:2px">Heap <span class="proc-label" id="proc-label-heap">60s</span></div>
-          <canvas id="proc-heap" height="80"></canvas>
-        </div>
-        <div class="proc-chart" id="procFDChart">
-          <div style="font-size:10px;color:var(--text-tertiary);margin-bottom:2px">FDs <span class="proc-label" id="proc-label-fd">60s</span></div>
-          <canvas id="proc-fd" height="80"></canvas>
+        <div class="proc-grid">
+          <div class="proc-chart">
+            <div class="proc-chart-head"><span class="proc-name"><i class="proc-dot" style="background:#7c3aed"></i>CPU</span><span class="proc-val" id="procval-cpu">–</span></div>
+            <canvas id="proc-cpu" height="80"></canvas>
+          </div>
+          <div class="proc-chart">
+            <div class="proc-chart-head"><span class="proc-name"><i class="proc-dot" style="background:#e67e22"></i>Heap</span><span class="proc-val" id="procval-heap">–</span></div>
+            <canvas id="proc-heap" height="80"></canvas>
+          </div>
+          <div class="proc-chart" id="procFDChart">
+            <div class="proc-chart-head"><span class="proc-name"><i class="proc-dot" style="background:#3498db"></i>FDs</span><span class="proc-val" id="procval-fd">–</span></div>
+            <canvas id="proc-fd" height="80"></canvas>
+          </div>
         </div>
       </div>
       <div class="grid" id="grid"></div>
@@ -1556,9 +1711,8 @@ body.dark .bw-bar-fill.w { background: var(--primary); }
    ========================================================= */
 (function() {
   const stored = localStorage.getItem('ss-theme');
-  if (stored === 'dark') { document.body.classList.add('dark'); }
-  else if (!stored) { document.body.classList.remove('dark'); }
-  else { document.body.classList.remove('dark'); }
+  const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  if (stored === 'dark' || (!stored && prefersDark)) document.body.classList.add('dark');
   updateThemeBtn();
 })();
 
@@ -1566,6 +1720,10 @@ function toggleTheme() {
   document.body.classList.toggle('dark');
   localStorage.setItem('ss-theme', document.body.classList.contains('dark') ? 'dark' : 'light');
   updateThemeBtn();
+  // Canvas charts bake theme colors in at draw time — redraw what is visible.
+  pollProcess();
+  if (detailIndex >= 0 && detail.classList.contains('open')) updateDetailData();
+  if (historyCfgIndex >= 0) pollHistory(historyCfgIndex);
 }
 
 function updateThemeBtn() {
@@ -1581,18 +1739,21 @@ const detail = document.getElementById('detail');
 
 const cards = new Map();
 const TOGGLE_GRACE = 2000;
+// Per-config traffic sample buffers: refreshed from /api/traffic by the
+// pollers, appended live by stats_updated SSE events in between.
+const trafficCache = {};
 
 function fmtBytes(b) {
   if (b == null || b === 0) return '0 B';
-  if (b < 1024) return b + ' B';
+  if (b < 1024) return Math.round(b) + ' B';
   if (b < 1048576) return (b / 1024).toFixed(1) + ' KB';
   if (b < 1073741824) return (b / 1048576).toFixed(1) + ' MB';
   return (b / 1073741824).toFixed(2) + ' GB';
 }
 
 function fmtRate(b) {
-  if (b == null || b === 0) return '0';
-  if (b < 1024) return b + ' B/s';
+  if (b == null || b === 0) return '0 B/s';
+  if (b < 1024) return Math.round(b) + ' B/s';
   if (b < 1048576) return (b / 1024).toFixed(1) + ' KB/s';
   return (b / 1048576).toFixed(1) + ' MB/s';
 }
@@ -1644,55 +1805,76 @@ function renderSparkline(el, trafficSamples) {
   el.innerHTML = html;
 }
 
-// Canvas area chart for download (blue, dspd) and upload (green, dspu)
-function drawAreaChart(canvas, trafficSamples, field, color, alpha) {
+// Canvas area chart for the detail traffic panels. kind is 'read' | 'write';
+// colors come from the --dl/--ul theme variables so dark mode follows.
+function drawAreaChart(canvas, trafficSamples, field, kind) {
   if (!canvas) return;
   var ctx = canvas.getContext('2d');
   if (!trafficSamples || !trafficSamples.length) {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     return;
   }
-  var rect = canvas.parentElement.getBoundingClientRect();
-  var w = rect.width - 32;
-  if (w < 100) w = 400;
-  var h = 100;
-  canvas.width = w;
-  canvas.style.width = w + 'px';
+  // Display size is governed by CSS (.detail-chart canvas: 100% x 160px);
+  // back the canvas at dpr resolution and draw in CSS pixels.
+  var rect = canvas.getBoundingClientRect();
+  var w = Math.max(100, Math.round(rect.width));
+  var h = Math.max(60, Math.round(rect.height));
+  var dpr = window.devicePixelRatio || 1;
+  canvas.width = w * dpr;
+  canvas.height = h * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  var color = kind === 'write' ? cssVar('--ul', '#1e8e3e') : cssVar('--dl', '#1a73e8');
+  var padL = 44, padR = 8, padT = 10;
+  var pw = w - padL - padR, ph = h - padT - 6;
 
   var n = trafficSamples.length;
-  var stepX = w / Math.max(1, n - 1);
   var peak = 1;
   for (var i = 0; i < n; i++) {
     var v = trafficSamples[i][field] || 0;
     if (v > peak) peak = v;
   }
+  var stepX = pw / Math.max(1, n - 1);
 
   ctx.clearRect(0, 0, w, h);
-  ctx.beginPath();
-  ctx.moveTo(0, h);
-  for (var i = 0; i < n; i++) {
-    var vh = ((trafficSamples[i][field] || 0) / peak) * (h - 2);
-    ctx.lineTo(i * stepX, h - vh);
+
+  // Y-axis grid + labels (peak, 2/3, 1/3, 0)
+  ctx.strokeStyle = cssVar('--outline-variant', 'rgba(0,0,0,0.06)'); ctx.lineWidth = 1;
+  ctx.fillStyle = cssVar('--text-tertiary', 'rgba(0,0,0,0.35)'); ctx.font = '9px sans-serif';
+  for (var l = 0; l <= 3; l++) {
+    var gy = Math.round(padT + ph * l / 3) + 0.5;
+    ctx.beginPath(); ctx.moveTo(padL, gy); ctx.lineTo(w - padR, gy); ctx.stroke();
+    ctx.fillText(fmtBytes(peak * (3 - l) / 3) + '/s', 2, gy + 3);
   }
-  ctx.lineTo((n - 1) * stepX, h);
+
+  // Area with a fading gradient
+  var grad = ctx.createLinearGradient(0, padT, 0, padT + ph);
+  grad.addColorStop(0, withAlpha(color, 0.25));
+  grad.addColorStop(1, withAlpha(color, 0.02));
+  ctx.beginPath();
+  ctx.moveTo(padL, padT + ph);
+  for (var i = 0; i < n; i++) {
+    var vh = ((trafficSamples[i][field] || 0) / peak) * ph;
+    ctx.lineTo(padL + i * stepX, padT + ph - vh);
+  }
+  ctx.lineTo(padL + (n - 1) * stepX, padT + ph);
   ctx.closePath();
-  ctx.fillStyle = alpha;
+  ctx.fillStyle = grad;
   ctx.fill();
   ctx.strokeStyle = color;
   ctx.lineWidth = 1.5;
   ctx.stroke();
-  // peak label
-  ctx.fillStyle = 'rgba(0,0,0,0.45)';
-  ctx.font = '10px Inter, sans-serif';
-  ctx.fillText('peak ' + fmtBytes(peak) + '/s', 4, 12);
-}
 
-function renderLargeSparkline(el, trafficSamples) {
-  // legacy: el may be the old div, find canvases by conventional IDs
-  var i = el ? el.id : '';
-  if (i && i.indexOf('dsp') === 0) i = i.substring(3);
-  drawAreaChart(document.getElementById('dspd-' + i), trafficSamples, 'readRate', '#1a73e8', 'rgba(26,115,232,0.2)');
-  drawAreaChart(document.getElementById('dspu-' + i), trafficSamples, 'writRate', '#1e8e3e', 'rgba(30,142,62,0.2)');
+  // "Now" dot on the last sample
+  var last = trafficSamples[n - 1][field] || 0;
+  var ly = padT + ph - (last / peak) * ph;
+  ctx.beginPath();
+  ctx.arc(padL + (n - 1) * stepX, ly, 3.5, 0, Math.PI * 2);
+  ctx.fillStyle = color;
+  ctx.fill();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = cssVar('--surface', '#fff');
+  ctx.stroke();
 }
 
 /* =========================================================
@@ -1723,15 +1905,19 @@ function createCard(cfg) {
       <select class="switch-select" id="swsel-${cfg.index}" onchange="onSetActive(${cfg.index}, this.value)" onclick="event.stopPropagation()"></select>
     </div>
     <div class="sparkline" id="sp-${cfg.index}"></div>
+    <div class="card-hero">
+      <div class="hero-down"><div class="hero-val" id="sreadrate-${cfg.index}">0</div><div class="stat-label">&darr; Download</div></div>
+      <div class="hero-up"><div class="hero-val" id="swritrate-${cfg.index}">0</div><div class="stat-label">&uarr; Upload</div></div>
+    </div>
     <div class="card-stats">
       <div class="stat-cell"><div class="stat-value" id="sconn-${cfg.index}">0</div><div class="stat-label">Conns</div></div>
-      <div class="stat-cell"><div class="stat-sub up" id="sconnrate-${cfg.index}">0</div><div class="stat-label">Conn/s</div></div>
+      <div class="stat-cell"><div class="stat-value" id="sconnrate-${cfg.index}">0</div><div class="stat-label">Conn/s</div></div>
       <div class="stat-cell"><div class="stat-value" id="speak-${cfg.index}">0</div><div class="stat-label">Peak</div></div>
       <div class="stat-cell"><div class="stat-value" id="stotal-${cfg.index}">0</div><div class="stat-label">Total</div></div>
-      <div class="stat-cell"><div class="stat-sub down" id="sreadrate-${cfg.index}">0</div><div class="stat-label">&darr; Rate</div></div>
-      <div class="stat-cell"><div class="stat-sub up" id="swritrate-${cfg.index}">0</div><div class="stat-label">&uarr; Rate</div></div>
-      <div class="stat-cell"><div class="stat-value" id="sread-${cfg.index}">0</div><div class="stat-label">&darr; Total</div></div>
-      <div class="stat-cell"><div class="stat-value" id="swrit-${cfg.index}">0</div><div class="stat-label">&uarr; Total</div></div>
+    </div>
+    <div class="card-totals">
+      <span>&darr; <b id="sread-${cfg.index}">0</b></span>
+      <span>&uarr; <b id="swrit-${cfg.index}">0</b></span>
     </div>
     <div class="toggles" id="tgl-${cfg.index}" onclick="event.stopPropagation()">
       <label class="toggle click-through">
@@ -1762,6 +1948,7 @@ function createCard(cfg) {
 
 function updateCard(cfg, trafficSamples, cardEntry) {
   const i = cfg.index;
+  cardEntry.lastCfg = cfg; // for immediate re-renders (e.g. toggleBackends)
   const sd = document.getElementById('sd-' + i);
   if (sd) sd.className = 'status-dot ' + (cfg.disabled ? 'off' : 'on');
   cardEntry.el.classList.toggle('disabled', cfg.disabled);
@@ -1812,6 +1999,36 @@ function updateCard(cfg, trafficSamples, cardEntry) {
   updateBackendsSummary(i, cfg.type, cfg.active, cfg.backends, cardEntry);
 }
 
+// Shared row renderer for the card backends panel and the detail upstream
+// list — they were two near-identical copies of the same markup.
+// opts: isSwitch, active, itemClass, idPrefix, tglPrefix, withHealth, withActions
+function backendItemHTML(i, b, opts) {
+  const idSafe = sanitize(b.nickname);
+  const isActive = opts.isSwitch && b.nickname === opts.active;
+  const target = b.target || '';
+  const info = target ? '&rarr; ' + esc(target) : ('&rarr; ' + esc(b.remoteaddr) + ' [' + esc(b.method) + ']');
+  let h = '<div class="' + opts.itemClass + (isActive ? ' active' : '') + '" id="' + opts.idPrefix + i + '-' + idSafe + '">';
+  h += '<div>';
+  if (opts.isSwitch) {
+    h += '<span class="active-radio' + (isActive ? ' on' : '') + '" onclick="event.stopPropagation();onSetActive(' + i + ',\'' + escAttr(b.nickname) + '\')" title="Set as active backend"></span>';
+  }
+  h += '<span class="bname">' + esc(b.nickname) + '</span> <span class="binfo">' + info + '</span></div>';
+  h += '<div class="bstats">';
+  if (opts.withHealth) {
+    const hs = esc(b.healthStatus || 'unknown');
+    h += '<span class="health-dot health-' + hs + '" title="Health: ' + hs + '"></span>';
+  }
+  h += '<b>' + (b.connections || 0) + '</b> conns &darr;<b>' + fmtBytes(b.totalReadBytes) + '</b> &uarr;<b>' + fmtBytes(b.totalWritBytes) + '</b></div>';
+  h += '<label class="toggle"><input type="checkbox" id="' + opts.tglPrefix + i + '-' + idSafe + '" ' + (b.disabled ? '' : 'checked') + ' onchange="onToggleBackend(' + i + ',\'' + escAttr(b.nickname) + '\',this)"><span class="toggle-slider"></span></label>';
+  if (opts.withActions) {
+    h += '<div class="backend-actions">' +
+      '<button onclick="editBackend(' + i + ',\'' + escAttr(b.nickname) + '\',\'' + escAttr(b.remoteaddr) + '\',\'' + escAttr(b.method) + '\',\'\')">Edit</button>' +
+      '<button class="danger" onclick="deleteBackend(' + i + ',\'' + escAttr(b.nickname) + '\')">Del</button>' +
+      '</div>';
+  }
+  return h + '</div>';
+}
+
 function updateBackendsSummary(i, cfgType, active, backends, cardEntry) {
   const bk = document.getElementById('bk-' + i);
   const btn = document.getElementById('btn-bk-' + i);
@@ -1823,23 +2040,11 @@ function updateBackendsSummary(i, cfgType, active, backends, cardEntry) {
   if (btn) { btn.style.display = ''; btn.innerHTML = (cardEntry.backendsOpen ? '&#9660;' : '&#9654;') + ' Backends (' + backends.length + ')'; }
   if (!bk) return;
   bk.style.display = cardEntry.backendsOpen ? 'block' : 'none';
-  let html = '';
   const isSwitch = (cfgType === 'switch');
-  for (const b of backends) {
-    const target = b.target || '';
-    const addr = target || b.remoteaddr;
-    const info = target ? '&rarr; ' + esc(target) : ('&rarr; ' + esc(b.remoteaddr) + ' [' + esc(b.method) + ']');
-    html += '<div class="backend-item' + (isSwitch && b.nickname === active ? ' active' : '') + '" id="bki-' + i + '-' + sanitize(b.nickname) + '">';
-    html += '<div>';
-    if (isSwitch) {
-      html += '<span class="active-radio' + (b.nickname === active ? ' on' : '') + '" onclick="event.stopPropagation();onSetActive(' + i + ',\'' + escAttr(b.nickname) + '\')" title="Set as active backend"></span>';
-    }
-    html += '<span class="bname">' + esc(b.nickname) + '</span> <span class="binfo">' + info + '</span></div>' +
-      '<div class="bstats"><b>' + (b.connections || 0) + '</b> conns &darr;<b>' + fmtBytes(b.totalReadBytes) + '</b> &uarr;<b>' + fmtBytes(b.totalWritBytes) + '</b></div>' +
-      '<label class="toggle"><input type="checkbox" id="btgl-' + i + '-' + sanitize(b.nickname) + '" ' + (b.disabled ? '' : 'checked') + ' onchange="onToggleBackend(' + i + ',\'' + escAttr(b.nickname) + '\',this)"><span class="toggle-slider"></span></label>' +
-      '</div>';
-  }
-  bk.innerHTML = html;
+  bk.innerHTML = backends.map(b => backendItemHTML(i, b, {
+    isSwitch, active, itemClass: 'backend-item',
+    idPrefix: 'bki-', tglPrefix: 'btgl-', withHealth: false, withActions: false
+  })).join('');
 }
 
 /* =========================================================
@@ -1872,17 +2077,18 @@ function showDetail(index) {
     const mts = (minTraffic && minTraffic[index]) ? minTraffic[index] : [];
     renderDetailShell(cfg, ts, mts, rawCfg);
     pollActiveConns(index);
+    loadIPSelect(index);
   }).catch(e => showError(e.message));
 }
 
 function renderDetailShell(cfg, trafficSamples, minTrafficSamples, rawCfg) {
   if (!detail) return;
   detail.innerHTML = buildDetailHTML(cfg, trafficSamples, rawCfg);
-  drawAreaChart(document.getElementById('dspd-' + cfg.index), trafficSamples, 'readRate', '#1a73e8', 'rgba(26,115,232,0.2)');
-  drawAreaChart(document.getElementById('dspu-' + cfg.index), trafficSamples, 'writRate', '#1e8e3e', 'rgba(30,142,62,0.2)');
+  drawAreaChart(document.getElementById('dspd-' + cfg.index), trafficSamples, 'readRate', 'read');
+  drawAreaChart(document.getElementById('dspu-' + cfg.index), trafficSamples, 'writRate', 'write');
   if (minTrafficSamples) {
-    drawAreaChart(document.getElementById('dspd30-' + cfg.index), minTrafficSamples, 'readRate', '#1a73e8', 'rgba(26,115,232,0.2)');
-    drawAreaChart(document.getElementById('dspu30-' + cfg.index), minTrafficSamples, 'writRate', '#1e8e3e', 'rgba(30,142,62,0.2)');
+    drawAreaChart(document.getElementById('dspd30-' + cfg.index), minTrafficSamples, 'readRate', 'read');
+    drawAreaChart(document.getElementById('dspu30-' + cfg.index), minTrafficSamples, 'writRate', 'write');
   }
 }
 
@@ -1898,6 +2104,7 @@ function updateDetailData() {
     fetch('/api/configs/' + i + '/targets/top?n=10').then(r => r.json()).catch(() => [])
   ]).then(([cfg, traffic, minTraffic, rejects, dist, targets]) => {
     if (detailIndex !== i) return;
+    loadIPSelect(i);
     const ts = (traffic && traffic[i]) ? traffic[i] : [];
     const mts = (minTraffic && minTraffic[i]) ? minTraffic[i] : [];
     updateDetailStatsInPlace(cfg, ts, mts);
@@ -1908,16 +2115,16 @@ function updateDetailData() {
 }
 
 // Direct DOM updates from SSE data — zero HTTP calls
-function updateCardRates(i, connections, readRate, writRate) {
+function updateCardRates(i, connections, readRate, writRate, connRate) {
   setText('sconn-' + i, connections);
-  setText('sconnrate-' + i, (readRate + writRate > 0 ? '+' : '') + ' update');
+  setText('sconnrate-' + i, (connRate || 0) + '/s');
   setText('sreadrate-' + i, fmtRate(readRate));
   setText('swritrate-' + i, fmtRate(writRate));
 }
 
-function updateDetailRates(i, connections, readRate, writRate) {
+function updateDetailRates(i, connections, readRate, writRate, connRate) {
   setText('dsconn-' + i, connections);
-  setText('dsconnrate-' + i, 'update');
+  setText('dsconnrate-' + i, (connRate || 0) + '/s');
   setText('dsreadrate-' + i, fmtRate(readRate));
   setText('dswritrate-' + i, fmtRate(writRate));
 }
@@ -1933,12 +2140,12 @@ function updateDetailStatsInPlace(cfg, trafficSamples, minTrafficSamples) {
   setText('dsread-' + i, fmtBytes(cfg.totalReadBytes));
   setText('dswrit-' + i, fmtBytes(cfg.totalWritBytes));
   // 60s charts (2s interval)
-  drawAreaChart(document.getElementById('dspd-' + i), trafficSamples, 'readRate', '#1a73e8', 'rgba(26,115,232,0.2)');
-  drawAreaChart(document.getElementById('dspu-' + i), trafficSamples, 'writRate', '#1e8e3e', 'rgba(30,142,62,0.2)');
+  drawAreaChart(document.getElementById('dspd-' + i), trafficSamples, 'readRate', 'read');
+  drawAreaChart(document.getElementById('dspu-' + i), trafficSamples, 'writRate', 'write');
   // 30min charts (1min interval)
   if (minTrafficSamples) {
-    drawAreaChart(document.getElementById('dspd30-' + i), minTrafficSamples, 'readRate', '#1a73e8', 'rgba(26,115,232,0.2)');
-    drawAreaChart(document.getElementById('dspu30-' + i), minTrafficSamples, 'writRate', '#1e8e3e', 'rgba(30,142,62,0.2)');
+    drawAreaChart(document.getElementById('dspd30-' + i), minTrafficSamples, 'readRate', 'read');
+    drawAreaChart(document.getElementById('dspu30-' + i), minTrafficSamples, 'writRate', 'write');
   }
   updateDetailBackendStats(i, cfg.backends);
   const cfgPanel = document.getElementById('dgcfg-' + i);
@@ -2013,6 +2220,93 @@ function renderTopTargets(i, targets) {
   el.innerHTML = h;
 }
 
+/* =========================================================
+   IP selection panel
+   ========================================================= */
+const IPSEL_REASON_LABELS = {
+  race: 'race won', explore: 'explore probe', single: 'single candidate',
+  literal: 'literal IP', failed: 'all failed', resolve: 'resolve failed'
+};
+
+function fmtAgo(t) {
+  if (!t) return '-';
+  const s = Math.floor((Date.now() - new Date(t).getTime()) / 1000);
+  if (s < 0) return 'now';
+  return fmtDuration(s) + ' ago';
+}
+
+// scoreMs wire values: -2 = seen but never connected (ranks last),
+// -1 = no data (ranks early); otherwise the ranking score in ms.
+function fmtScoreMs(sm) {
+  if (sm === -2) return '<span style="color:var(--error)">never</span>';
+  if (sm == null || sm === -1) return '-';
+  return Math.round(sm * 10) / 10 + 'ms';
+}
+function fmtScoreTitle(sm) {
+  if (sm === -2) return 'never connected — ranked last';
+  if (sm == null || sm === -1) return 'no data yet — ranked early';
+  return 'score ' + (Math.round(sm * 10) / 10) + 'ms (lower = tried earlier)';
+}
+
+function loadIPSelect(i) {
+  fetch('/api/configs/' + i + '/ipselect').then(r => r.json()).then(d => {
+    if (detailIndex === i) renderIPSelect(i, d);
+  }).catch(() => {});
+}
+
+function renderIPSelect(i, d) {
+  const el = document.getElementById('dipsel-body-' + i);
+  if (!el) return;
+  if (!d) { el.innerHTML = '<div class="conn-empty">Not available</div>'; return; }
+  if (d.mode === 'off') {
+    el.innerHTML = '<div class="conn-empty">ipselect is off &mdash; set "ipselect" to smart or race to enable IP optimization for dual-stack upstreams.</div>';
+    return;
+  }
+  let h = '<div style="font-size:12px;color:var(--text-secondary);margin-bottom:8px">' +
+    'mode <b>' + esc(d.mode) + '</b> &middot; stagger ' + (d.delayMs || 0) + 'ms' +
+    (d.preferIPv4 ? ' &middot; prefer IPv4' : '') +
+    (d.noIPv4 ? ' &middot; no IPv4' : '') + (d.noIPv6 ? ' &middot; no IPv6' : '') +
+    '</div>';
+  if (!d.hosts || !d.hosts.length) {
+    h += '<div class="conn-empty">No per-IP statistics yet' +
+      (d.mode === 'race' ? ' (race mode keeps no scores &mdash; it just races candidates)' : '') + '</div>';
+  }
+  for (const hv of (d.hosts || [])) {
+    h += '<div style="margin-bottom:10px"><div style="font-size:12px;margin-bottom:4px"><b>' + esc(hv.host) + '</b>' +
+      (hv.source ? ' <span style="color:var(--text-tertiary)">(via ' + esc(hv.source) + ')</span>' : '') +
+      ' <span style="color:var(--text-tertiary)">&middot; next dial tries in this order</span></div>' +
+      '<div class="conn-table-wrap"><table class="conn-table"><thead><tr><th>#</th><th>IP</th><th>RTT (EWMA)</th><th title="ranking score: EWMA rtt &times; failure penalty; lower = tried earlier">Score</th><th>OK</th><th>Fail</th><th>Streak</th><th>Last seen</th></tr></thead><tbody>';
+    (hv.candidates || []).forEach((c, idx) => {
+      const bad = c.failStreak > 0;
+      h += '<tr' + (idx === 0 ? ' style="font-weight:600"' : '') + '><td>' + (idx + 1) + '</td>' +
+        '<td class="addr">' + esc(c.ip) + '</td>' +
+        '<td>' + (c.rttMs ? (Math.round(c.rttMs * 10) / 10 + 'ms') : '-') + '</td>' +
+        '<td title="' + escAttr(fmtScoreTitle(c.scoreMs)) + '">' + fmtScoreMs(c.scoreMs) + '</td>' +
+        '<td>' + (c.success || 0) + '</td>' +
+        '<td' + (bad ? ' style="color:var(--error)"' : '') + '>' + (c.fail || 0) + '</td>' +
+        '<td' + (bad ? ' style="color:var(--error)"' : '') + '>' + (c.failStreak || 0) + '</td>' +
+        '<td>' + fmtAgo(c.lastSeen) + '</td></tr>';
+    });
+    h += '</tbody></table></div></div>';
+  }
+  h += '<div style="font-size:12px;margin:12px 0 4px"><b>Decision history</b> <span style="color:var(--text-tertiary)">(newest first)</span></div>';
+  if (!d.history || !d.history.length) {
+    h += '<div class="conn-empty">No dial decisions recorded yet</div>';
+  } else {
+    h += '<div class="conn-table-wrap" style="max-height:320px;overflow-y:auto"><table class="conn-table"><thead><tr><th>Time</th><th>Host</th><th>Picked</th><th>Why</th><th>Took</th></tr></thead><tbody>';
+    for (const e of d.history) {
+      h += '<tr><td>' + new Date(e.time).toLocaleTimeString() + '</td>' +
+        '<td class="addr">' + esc(e.host) + (e.source ? ' <span style="color:var(--text-tertiary)">(' + esc(e.source) + ')</span>' : '') + '</td>' +
+        '<td class="addr">' + (e.winner ? '<b>' + esc(e.winner) + '</b>' : '&mdash;') + '</td>' +
+        '<td>' + (IPSEL_REASON_LABELS[e.reason] || esc(e.reason)) +
+        (e.error ? ' <span style="color:var(--error)" title="' + escAttr(e.error) + '">err</span>' : '') + '</td>' +
+        '<td>' + (e.elapsedMs ? Math.round(e.elapsedMs) + 'ms' : '-') + '</td></tr>';
+    }
+    h += '</tbody></table></div>';
+  }
+  swapInnerHTML(el, h);
+}
+
 function buildSafeConfigForDisplay(cfg) {
   return {
     nickname: cfg.nickname, type: cfg.type, localaddr: cfg.localaddr,
@@ -2049,26 +2343,11 @@ function rebuildDetailBackends(i, cfgType, active, backends) {
       '<div class="detail-actions" style="margin-top:8px"><button class="btn" onclick="showAddBackend(' + i + ')">+ Add Upstream</button></div>';
     return;
   }
-  let html = '';
   const isSwitch = (cfgType === 'switch');
-  for (const b of backends) {
-    const isActive = isSwitch && b.nickname === active;
-    const target = b.target || '';
-    const addr = target || b.remoteaddr;
-    const info = target ? '&rarr; ' + esc(target) : ('&rarr; ' + esc(b.remoteaddr) + ' [' + esc(b.method) + ']');
-    html += '<div class="detail-backend-item' + (isActive ? ' active' : '') + '" id="dbe-' + i + '-' + sanitize(b.nickname) + '">';
-    html += '<div>';
-    if (isSwitch) {
-      html += '<span class="active-radio' + (isActive ? ' on' : '') + '" onclick="event.stopPropagation();onSetActive(' + i + ',\'' + escAttr(b.nickname) + '\')" title="Set as active backend"></span>';
-    }
-    html += '<span class="bname">' + esc(b.nickname) + '</span> <span class="binfo">' + info + '</span></div>' +
-      '<div class="bstats"><b>' + (b.connections || 0) + '</b> conns &darr;<b>' + fmtBytes(b.totalReadBytes) + '</b> &uarr;<b>' + fmtBytes(b.totalWritBytes) + '</b></div>' +
-      '<label class="toggle"><input type="checkbox" id="dbtgl-' + i + '-' + sanitize(b.nickname) + '" ' + (b.disabled ? '' : 'checked') + ' onchange="onToggleBackend(' + i + ',\'' + escAttr(b.nickname) + '\',this)"><span class="toggle-slider"></span></label>' +
-      '<div class="backend-actions">' +
-      '<button onclick="editBackend(' + i + ',\'' + escAttr(b.nickname) + '\',\'' + escAttr(b.remoteaddr) + '\',\'' + escAttr(b.method) + '\',\'\')">Edit</button>' +
-      '<button class="danger" onclick="deleteBackend(' + i + ',\'' + escAttr(b.nickname) + '\')">Del</button>' +
-      '</div></div>';
-  }
+  const html = backends.map(b => backendItemHTML(i, b, {
+    isSwitch, active, itemClass: 'detail-backend-item',
+    idPrefix: 'dbe-', tglPrefix: 'dbtgl-', withHealth: false, withActions: true
+  })).join('');
   section.innerHTML = html +
     '<div id="be-form-' + i + '"></div>' +
     '<div class="detail-actions" style="margin-top:8px"><button class="btn" onclick="showAddBackend(' + i + ')">+ Add Upstream</button></div>';
@@ -2162,30 +2441,23 @@ function buildDetailHTML(cfg, trafficSamples, rawCfg) {
           ${settingNumber(i, 'Timeout (s)', rawCfg.timeout, 'timeout')}
         </div>
       </div>` : ''}
-      <div class="detail-section" id="dg-backends-${i}">
+      <div class="detail-section span-2" id="dg-backends-${i}">
         <h3>Upstreams${cfg.backends && cfg.backends.length ? ' (' + cfg.backends.length + ')' : ''}</h3>
-        ${cfg.backends && cfg.backends.length ? cfg.backends.map(b => {
-          const isActive = cfg.type === 'switch' && cfg.active === b.nickname;
-          const target = b.target || '';
-          const addr = target || b.remoteaddr;
-          const info = target ? '&rarr; ' + esc(target) : ('&rarr; ' + esc(b.remoteaddr) + ' [' + esc(b.method) + ']');
-          const hs2 = b.healthStatus || 'unknown';
-          return '<div class="detail-backend-item' + (isActive ? ' active' : '') + '" id="dbe-' + i + '-' + sanitize(b.nickname) + '">' +
-            '<div>' + (cfg.type === 'switch' ? '<span class="active-radio' + (isActive ? ' on' : '') + '" onclick="event.stopPropagation();onSetActive(' + i + ',\'' + escAttr(b.nickname) + '\')" title="Set as active backend"></span>' : '') + '<span class="bname">' + esc(b.nickname) + '</span> <span class="binfo">' + info + '</span></div>' +
-            '<div class="bstats"><span class="health-dot health-' + hs2 + '" title="Health: ' + hs2 + '"></span><b>' + (b.connections || 0) + '</b> conns &darr;<b>' + fmtBytes(b.totalReadBytes) + '</b> &uarr;<b>' + fmtBytes(b.totalWritBytes) + '</b></div>' +
-            '<label class="toggle"><input type="checkbox" id="dbtgl-' + i + '-' + sanitize(b.nickname) + '" ' + (b.disabled ? '' : 'checked') + ' onchange="onToggleBackend(' + i + ',\'' + escAttr(b.nickname) + '\',this)"><span class="toggle-slider"></span></label>' +
-            '<div class="backend-actions">' +
-            '<button onclick="editBackend(' + i + ',\'' + escAttr(b.nickname) + '\',\'' + escAttr(b.remoteaddr) + '\',\'' + escAttr(b.method) + '\',\'\')">Edit</button>' +
-            '<button class="danger" onclick="deleteBackend(' + i + ',\'' + escAttr(b.nickname) + '\')">Del</button>' +
-            '</div></div>';
-        }).join('') : '<div class="conn-empty">No upstreams configured</div>'}
+        ${cfg.backends && cfg.backends.length ? cfg.backends.map(b => backendItemHTML(i, b, {
+          isSwitch: cfg.type === 'switch', active: cfg.active, itemClass: 'detail-backend-item',
+          idPrefix: 'dbe-', tglPrefix: 'dbtgl-', withHealth: true, withActions: true
+        })).join('') : '<div class="conn-empty">No upstreams configured</div>'}
         <div id="be-form-${i}"></div>
         <div class="detail-actions" style="margin-top:8px">
           <button class="btn" onclick="showAddBackend(${i})">+ Add Upstream</button>
         </div>
       </div>
+      <div class="detail-section span-2" id="dipsel-${i}">
+        <h3>IP Selection</h3>
+        <div id="dipsel-body-${i}"><div class="conn-empty">Loading...</div></div>
+      </div>
       ${rawCfg ? `
-      <div class="detail-section" id="dgcfg-${i}">
+      <div class="detail-section span-2" id="dgcfg-${i}">
         <h3>Configuration</h3>
         <div class="detail-config" id="dgcfgtxt-${i}">${esc(JSON.stringify(rawCfg, null, 2))}</div>
       </div>` : ''}
@@ -2200,7 +2472,7 @@ function buildDetailHTML(cfg, trafficSamples, rawCfg) {
       <div class="detail-section" id="dtgt-${i}" style="display:none">
         <h3>Top Targets</h3>
       </div>
-      <div class="detail-section">
+      <div class="detail-section span-2">
         <h3>Active Connections</h3>
         <div class="toolbar">
           <input id="conn-search-${i}" type="search" placeholder="Search host, src, dst..." oninput="renderConnTableFromCache()">
@@ -2238,6 +2510,10 @@ function toggleBackends(index) {
   const ce = cards.get(index);
   if (!ce) return;
   ce.backendsOpen = !ce.backendsOpen;
+  // Re-render right away — otherwise the panel only flips on the next poll.
+  if (ce.lastCfg) {
+    updateBackendsSummary(index, ce.lastCfg.type, ce.lastCfg.active, ce.lastCfg.backends, ce);
+  }
 }
 
 async function onSetActive(index, nickname) {
@@ -2264,6 +2540,7 @@ async function refreshSingleCard(index) {
     const ce = cards.get(index);
     if (!ce) return;
     const ts = (traffic && traffic[index]) ? traffic[index] : [];
+    trafficCache[index] = ts;
     updateCard(cfg, ts, ce);
   } catch (e) { /* ignore */ }
 }
@@ -2316,14 +2593,9 @@ let connSortAsc = false;
 function sortBy(col) {
   if (connSortCol === col) { connSortAsc = !connSortAsc; }
   else { connSortCol = col; connSortAsc = true; }
-  const el = document.getElementById('activeConns-' + detailIndex);
-  const hel = document.getElementById('historyTable');
-  if (el && detailIndex >= 0) {
-    fetch('/api/configs/' + detailIndex + '/connections').then(r => r.json()).then(d => renderConnTable(el, d, true, detailIndex));
-  }
-  if (hel && historyCfgIndex >= 0) {
-    fetch('/api/configs/' + historyCfgIndex + '/connections/history').then(r => r.json()).then(d => renderConnTable(hel, d, false, historyCfgIndex));
-  }
+  // Re-render from cache — refetching here raced with the pollers; the
+  // cache is at most one poll interval (10s) stale.
+  renderConnTableFromCache();
 }
 
 function sortArrow(col) {
@@ -2343,30 +2615,37 @@ function escAttr(v) {
     .replace(/>/g, '&gt;');
 }
 
-// Cache of last-fetched connections for client-side filtering without re-fetch
+// Cache of the last-rendered connection list (either view) for client-side
+// filtering and re-sorting without a redundant fetch.
 var cachedConns = null;
+var cachedConnsEl = null;
 var cachedConnsIdx = -1;
 var cachedConnsActive = false;
 
 function renderConnTableFromCache() {
-  if (!cachedConns) {
-    var el = document.getElementById('activeConns-' + detailIndex);
-    if (el) el.innerHTML = '<div class="conn-empty">Connections not loaded yet</div>';
+  if (cachedConns && cachedConnsEl) {
+    // Ignore inputs from a view whose data isn't cached (history page
+    // before its first table render, or while the timeline view is shown).
+    if (cachedConnsActive) {
+      if (detailIndex !== cachedConnsIdx || !detail.classList.contains('open')) return;
+    } else {
+      if (historyCfgIndex !== cachedConnsIdx || historyViewMode !== 'table') return;
+    }
+    renderConnTable(cachedConnsEl, cachedConns, cachedConnsActive, cachedConnsIdx);
     return;
   }
-  var el = document.getElementById('activeConns-' + cachedConnsIdx);
-  renderConnTable(el, cachedConns, cachedConnsActive, cachedConnsIdx);
+  var el = document.getElementById('activeConns-' + detailIndex);
+  if (el) el.innerHTML = '<div class="conn-empty">Connections not loaded yet</div>';
 }
 
 function renderConnTable(el, conns, isActive, configIndex) {
   if (!el) return;
-  // Cache for client-side filtering
-  if (isActive && configIndex >= 0) {
-    cachedConns = conns; cachedConnsIdx = configIndex; cachedConnsActive = isActive;
-  }
+  // Cache for client-side filtering and re-sorting
+  cachedConns = conns; cachedConnsEl = el;
+  cachedConnsIdx = configIndex; cachedConnsActive = isActive;
 
-  // Client-side search filter (reads from static input, not rebuilt by polling)
-  const q = isActive ? (document.getElementById('conn-search-' + configIndex)?.value || '').toLowerCase() : '';
+  // Client-side search filter (reads from the toolbar input, not rebuilt by polling)
+  const q = (document.getElementById('conn-search-' + configIndex)?.value || '').toLowerCase();
   if (q && conns) {
     conns = conns.filter(function(c) {
       return (c.host && c.host.toLowerCase().indexOf(q) >= 0) ||
@@ -2379,13 +2658,19 @@ function renderConnTable(el, conns, isActive, configIndex) {
     el.innerHTML = '<div class="conn-empty">' + (isActive ? 'No active connections' : 'No history') + (q ? ' matching "' + esc(q) + '"' : '') + '</div>';
     return;
   }
+  const byId = new Map(conns.map(c => [c.id, c]));
   const paired = new Map();
   for (const c of conns) {
-    if (c.pairedID) {
-      const partner = conns.find(x => x.id === c.pairedID);
-      if (partner && !paired.has(c.id)) {
-        paired.set(c.pairedID, { in: c, out: partner });
-        paired.set(c.id, { in: partner, out: c });
+    if (c.pairedID && !paired.has(c.id)) {
+      const partner = byId.get(c.pairedID);
+      if (partner) {
+        // The outbound leg is the record with SrcAddr "server"; always
+        // display the inbound (client-facing) side first regardless of
+        // which leg the server listed first.
+        const inRec = c.srcAddr === 'server' ? partner : c;
+        const outRec = c.srcAddr === 'server' ? c : partner;
+        paired.set(inRec.id, { in: inRec, out: outRec });
+        paired.set(outRec.id, { in: inRec, out: outRec });
       }
     }
   }
@@ -2403,15 +2688,16 @@ function renderConnTable(el, conns, isActive, configIndex) {
     }
   }
 
-  function connStatus(r) { if (r.endTime) return 'closed'; if (r.lastActive && (Date.now() - r.lastActive / 1000000) > 1000) return 'idle'; return 'active'; }
   const sortKey = (r) => {
     const c = r.inp;
     switch (connSortCol) {
       case 'id': return c.id;
-      case 'status': return connStatus(c);
+      case 'status': return connStateOf(c);
       case 'src': return c.srcAddr || '';
       case 'dst': return c.dstAddr || '';
-      case 'dur': return Date.now() - new Date(c.startTime).getTime();
+      // Active rows sort by running time; history rows by start time (the
+      // column is labeled "Start" there, and duration lives in endTime).
+      case 'dur': return isActive ? Date.now() - new Date(c.startTime).getTime() : new Date(c.startTime).getTime();
       case 'read': return c.readBytes;
       case 'write': return c.writBytes;
       default: return c.id;
@@ -2444,7 +2730,7 @@ function renderConnTable(el, conns, isActive, configIndex) {
   for (const row of rows) {
     if (row.pair) {
       const inp = row.inp, out = row.out;
-      const st = connStatus(inp);
+      const st = connStateOf(inp);
       const dur = st === 'active' ? fmtDurationMs(now - new Date(inp.startTime).getTime())
         : fmtDurationMs(new Date(inp.endTime).getTime() - new Date(inp.startTime).getTime());
       const startStr = new Date(inp.startTime).toLocaleTimeString();
@@ -2459,7 +2745,7 @@ function renderConnTable(el, conns, isActive, configIndex) {
         '</tr>';
     } else {
       const c = row.inp;
-      const st = connStatus(c);
+      const st = connStateOf(c);
       const dur = st === 'active' ? fmtDurationMs(now - new Date(c.startTime).getTime())
         : fmtDurationMs(new Date(c.endTime).getTime() - new Date(c.startTime).getTime());
       const startStr = new Date(c.startTime).toLocaleTimeString();
@@ -2475,7 +2761,7 @@ function renderConnTable(el, conns, isActive, configIndex) {
     }
   }
   html += '</tbody></table></div>';
-  el.innerHTML = html;
+  swapInnerHTML(el, html);
 }
 
 /* =========================================================
@@ -2503,14 +2789,14 @@ function settingNumber(index, label, val, key) {
 function applyBoolSetting(index, key, val) {
   const body = {};
   body[key] = val;
-  fetch('/api/configs/' + index + '/settings', { method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) })
+  apiJSON('/api/configs/' + index + '/settings', { method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) })
     .catch(e => showError(e.message));
 }
 
 function applyNumSetting(index, key, val) {
   const body = {};
   body[key] = parseInt(val) || 0;
-  fetch('/api/configs/' + index + '/settings', { method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) })
+  apiJSON('/api/configs/' + index + '/settings', { method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) })
     .catch(e => showError(e.message));
 }
 
@@ -2523,7 +2809,7 @@ function showAddBackend(index) {
   el.innerHTML = `<div class="backend-form">
     <input name="nick" placeholder="Nickname" value="">
     <input name="addr" placeholder="Remote (host:port)" value="">
-    <input name="meth" placeholder="Method" value="">
+    <input name="meth" placeholder="Method" value="" list="ss-methods">
     <input name="pass" placeholder="Password" value="" type="text">
     <button onclick="addBackend(${index},this)">Save</button>
     <button class="cancel" onclick="this.parentElement.remove()">Cancel</button>
@@ -2536,7 +2822,7 @@ function editBackend(index, nickname, addr, method, _pass) {
   el.innerHTML = `<div class="backend-form">
     <span style="font-size:12px;color:var(--text-tertiary);font-weight:500">Editing <b style="color:var(--text)">${esc(nickname)}</b></span>
     <input name="addr" placeholder="Remote (host:port)" value="${escAttr(addr)}">
-    <input name="meth" placeholder="Method" value="${escAttr(method)}">
+    <input name="meth" placeholder="Method" value="${escAttr(method)}" list="ss-methods">
     <input name="pass" placeholder="Password" value="" type="text">
     <button onclick="updateBackend(${index},'${escAttr(nickname)}',this)">Save</button>
     <button class="cancel" onclick="this.parentElement.remove()">Cancel</button>
@@ -2552,12 +2838,14 @@ function updateBackend(index, nickname, form) {
   if (meth) body.method = meth;
   if (pass) body.password = pass;
   if (!Object.keys(body).length) return;
-  fetch('/api/configs/' + index + '/backends/' + encodeURIComponent(nickname), {
+  apiJSON('/api/configs/' + index + '/backends/' + encodeURIComponent(nickname), {
     method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
-  }).then(r => r.json()).then(d => {
+  }).then(d => {
     if (d.status === 'ok') {
       form.parentElement.remove();
       refreshDetailAfterBackendChange(index);
+    } else {
+      showError('Failed to update upstream' + (d.error ? ': ' + d.error : ''));
     }
   }).catch(e => showError(e.message));
 }
@@ -2569,26 +2857,26 @@ function addBackend(index, btn) {
   const meth = form.querySelector('[name=meth]').value.trim();
   const pass = form.querySelector('[name=pass]').value.trim();
   if (!nick || !addr) return;
-  fetch('/api/configs/' + index + '/backends', {
+  apiJSON('/api/configs/' + index + '/backends', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({ nickname: nick, remoteaddr: addr, method: meth, password: pass })
-  }).then(r => r.json()).then(d => {
+  }).then(d => {
     if (d.status === 'ok') {
       form.remove();
       refreshDetailAfterBackendChange(index);
     } else {
-      showError('Failed to add backend');
+      showError('Failed to add backend' + (d.error ? ': ' + d.error : ''));
     }
   }).catch(e => showError(e.message));
 }
 
 function deleteBackend(index, nickname) {
   if (!confirm('Delete upstream "' + nickname + '"?')) return;
-  fetch('/api/configs/' + index + '/backends/' + encodeURIComponent(nickname), { method: 'DELETE' })
-    .then(r => r.json()).then(d => {
+  apiJSON('/api/configs/' + index + '/backends/' + encodeURIComponent(nickname), { method: 'DELETE' })
+    .then(d => {
       if (d.status === 'ok') refreshDetailAfterBackendChange(index);
-      else showError('Failed to delete');
+      else showError('Failed to delete' + (d.error ? ': ' + d.error : ''));
     }).catch(e => showError(e.message));
 }
 
@@ -2599,6 +2887,40 @@ function fmtDurationMs(ms) {
   return Math.floor(ms / 3600000) + 'h ' + Math.floor((ms % 3600000) / 60000) + 'm';
 }
 
+// Read a CSS custom property (canvas colors must follow the active theme).
+function cssVar(name, fallback) {
+  if (!window.getComputedStyle) return fallback;
+  var v = getComputedStyle(document.body).getPropertyValue(name).trim();
+  return v || fallback;
+}
+
+// '#rrggbb' (+ alpha) → rgba() string, for canvas gradients.
+function withAlpha(hex, a) {
+  var h = String(hex).replace('#', '');
+  if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+  var n = parseInt(h, 16);
+  if (isNaN(n)) return String(hex);
+  return 'rgba(' + ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a + ')';
+}
+
+// A connection counts as idle after this long without traffic (lastActive is UnixNano).
+var CONN_IDLE_MS = 30000;
+
+function connStateOf(r) {
+  if (r.endTime) return 'closed';
+  if (r.lastActive && (Date.now() - r.lastActive / 1000000) > CONN_IDLE_MS) return 'idle';
+  return 'active';
+}
+
+// fetch JSON, surfacing non-2xx responses (plain-text http.Error bodies)
+// as thrown errors instead of failing JSON.parse downstream.
+function apiJSON(url, opts) {
+  return fetch(url, opts).then(r => {
+    if (!r.ok) return r.text().then(t => { throw new Error(t || ('HTTP ' + r.status)); });
+    return r.json();
+  });
+}
+
 /* =========================================================
    History page
    ========================================================= */
@@ -2607,10 +2929,8 @@ var historyViewMode = 'table';
 
 function switchHistoryView(mode, index) {
   historyViewMode = mode;
-  document.getElementById('hviewtable').style.background = mode === 'table' ? 'var(--primary)' : 'var(--surface-variant)';
-  document.getElementById('hviewtable').style.color = mode === 'table' ? '#fff' : 'var(--text-secondary)';
-  document.getElementById('hviewtl').style.background = mode === 'timeline' ? 'var(--primary)' : 'var(--surface-variant)';
-  document.getElementById('hviewtl').style.color = mode === 'timeline' ? '#fff' : 'var(--text-secondary)';
+  document.getElementById('hviewtable').classList.toggle('active', mode === 'table');
+  document.getElementById('hviewtl').classList.toggle('active', mode === 'timeline');
   pollHistory(index);
 }
 
@@ -2627,14 +2947,17 @@ function showHistoryPage(index) {
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
       <h2 id="hpTitle" style="margin:0">Connection History</h2>
       <span style="display:flex;gap:4px">
-        <span class="range-pill" id="hviewtable" onclick="switchHistoryView('table',${index})" style="background:var(--primary);color:#fff">Table</span>
+        <span class="range-pill active" id="hviewtable" onclick="switchHistoryView('table',${index})">Table</span>
         <span class="range-pill" id="hviewtl" onclick="switchHistoryView('timeline',${index})">Timeline</span>
       </span>
+    </div>
+    <div class="toolbar">
+      <input id="conn-search-${index}" type="search" placeholder="Search host, src, dst..." oninput="renderConnTableFromCache()">
     </div>
     <div id="historyTable"><div class="conn-empty">Loading...</div></div>`;
   fetch('/api/configs/' + index).then(r => r.json()).then(cfg => {
     if (historyCfgIndex !== index) return;
-    document.getElementById('hpTitle').textContent = 'Connection History — ' + esc(dispName(cfg));
+    document.getElementById('hpTitle').textContent = 'Connection History — ' + dispName(cfg);
   }).catch(() => {});
   pollHistory(index);
 }
@@ -2664,11 +2987,24 @@ function setText(id, val) {
   if (el) el.textContent = val == null ? '-' : val;
 }
 
+// Replace el.innerHTML while preserving the scroll position of the
+// recreated .conn-table-wrap inside it — full rebuilds otherwise jump
+// back to the top on every poll interval.
+function swapInnerHTML(el, html) {
+  var wrap = el.querySelector ? el.querySelector('.conn-table-wrap') : null;
+  var st = wrap ? wrap.scrollTop : 0;
+  el.innerHTML = html;
+  if (st) {
+    wrap = el.querySelector('.conn-table-wrap');
+    if (wrap) wrap.scrollTop = st;
+  }
+}
+
 function esc(s) {
   if (s == null) return '';
-  const d = document.createElement('div');
-  d.textContent = String(s);
-  return d.innerHTML;
+  return String(s).replace(/[&<>"']/g, function(ch) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch];
+  });
 }
 
 // escAttr is defined once, in the token bootstrap block above; every
@@ -2711,7 +3047,9 @@ async function pollOverview() {
       seen.add(cfg.index);
       let cardEntry = cards.get(cfg.index);
       if (!cardEntry) cardEntry = createCard(cfg);
-      updateCard(cfg, (traffic && traffic[cfg.index]) ? traffic[cfg.index] : [], cardEntry);
+      const ts = (traffic && traffic[cfg.index]) ? traffic[cfg.index] : [];
+      trafficCache[cfg.index] = ts;
+      updateCard(cfg, ts, cardEntry);
     }
     for (const [idx, entry] of cards) {
       if (!seen.has(idx)) { entry.el.remove(); cards.delete(idx); }
@@ -2817,31 +3155,30 @@ function showConnDetail(configIndex, connID) {
       else if (mode === 'bar') canvas = document.getElementById('bwbar-' + rec.id);
       if (canvas) {
         var ctx = canvas.getContext('2d');
+        var dpr = window.devicePixelRatio || 1;
+        var dlCol = cssVar('--dl', '#1a73e8'), ulCol = cssVar('--ul', '#1e8e3e');
         var n = a.lastSec + 1;
+        var w = canvas.width / dpr, h = canvas.height / dpr;
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.clearRect(0, 0, w, h);
+        var stepX = w / Math.max(1, n - 1);
         if (mode === 'line') {
-          var dpr = window.devicePixelRatio || 1;
-          var w = canvas.width / dpr, h = canvas.height / dpr;
-          ctx.save(); ctx.scale(dpr, dpr); ctx.clearRect(0, 0, w, h);
-          var stepX = w / Math.max(1, n - 1);
-          ctx.strokeStyle = 'rgba(0,0,0,0.06)'; ctx.lineWidth = 0.5;
+          ctx.strokeStyle = cssVar('--outline-variant', 'rgba(0,0,0,0.06)'); ctx.lineWidth = 0.5;
           for (var g = 0; g <= 3; g++) { var gy = Math.round(h*g/3)+0.5; ctx.beginPath(); ctx.moveTo(0,gy); ctx.lineTo(w,gy); ctx.stroke(); }
           ctx.beginPath();
           for (var i = 0; i < n; i++) { var rh = ((rec.samples[i]?rec.samples[i].r:0)||0)/a.peak*(h-4); i===0 ? ctx.moveTo(i*stepX, h-rh) : ctx.lineTo(i*stepX, h-rh); }
-          ctx.strokeStyle = '#1a73e8'; ctx.lineWidth = 2; ctx.stroke();
+          ctx.strokeStyle = dlCol; ctx.lineWidth = 2; ctx.stroke();
           ctx.beginPath();
           for (var i = 0; i < n; i++) { var wh = ((rec.samples[i]?rec.samples[i].w:0)||0)/a.peak*(h-4); i===0 ? ctx.moveTo(i*stepX, h-wh) : ctx.lineTo(i*stepX, h-wh); }
-          ctx.strokeStyle = '#1e8e3e'; ctx.lineWidth = 2; ctx.stroke();
-          ctx.restore();
+          ctx.strokeStyle = ulCol; ctx.lineWidth = 2; ctx.stroke();
         } else {
-          var w2 = canvas.width, h2 = canvas.height;
-          ctx.clearRect(0, 0, w2, h2);
-          var barW = Math.max(2, Math.floor(w2 / n));
+          var barW = Math.max(2, Math.floor(w / n));
           for (var i = 0; i < n; i++) {
             var s = rec.samples[i] || {r:0,w:0};
-            var rh2 = Math.max(1, Math.round(s.r / a.peak * h2));
-            var wh2 = Math.max(1, Math.round(s.w / a.peak * h2));
-            ctx.fillStyle = '#1a73e8'; ctx.fillRect(i * barW, h2 - rh2, Math.max(1, barW/2 - 0.5), rh2);
-            ctx.fillStyle = '#1e8e3e'; ctx.fillRect(i * barW + barW/2 + 0.5, h2 - wh2, Math.max(1, barW/2 - 0.5), wh2);
+            var rh2 = Math.max(1, Math.round(s.r / a.peak * h));
+            var wh2 = Math.max(1, Math.round(s.w / a.peak * h));
+            ctx.fillStyle = dlCol; ctx.fillRect(i * barW, h - rh2, Math.max(1, barW/2 - 0.5), rh2);
+            ctx.fillStyle = ulCol; ctx.fillRect(i * barW + barW/2 + 0.5, h - wh2, Math.max(1, barW/2 - 0.5), wh2);
           }
         }
       }
@@ -2889,10 +3226,9 @@ function pollConnDetail(configIndex, connID) {
 function renderConnDetail(rec, paired, configIndex) {
   window._bwRec = rec; // for renderBwView
   const cd = document.getElementById('connDetail');
-  const isActive = !rec.endTime;
-  const isIdle = isActive && rec.lastActive && (Date.now() - rec.lastActive / 1000000) > 1000;
-  const cStatus = rec.endTime ? 'closed' : (isIdle ? 'idle' : 'active');
-  const cLabel = rec.endTime ? 'Closed' : (isIdle ? 'Idle' : 'Active');
+  const cStatus = connStateOf(rec);
+  const isActive = cStatus !== 'closed';
+  const cLabel = cStatus === 'closed' ? 'Closed' : (cStatus === 'idle' ? 'Idle' : 'Active');
   const dur = isActive
     ? fmtDurationMs(Date.now() - new Date(rec.startTime).getTime())
     : fmtDurationMs(new Date(rec.endTime).getTime() - new Date(rec.startTime).getTime());
@@ -2982,18 +3318,23 @@ function buildBwBar(rec) {
   setTimeout(function() {
     var c = document.getElementById(cid);
     if (!c) return;
-    var pw = c.parentElement.getBoundingClientRect().width - 32;
-    var w = Math.max(pw, 300), h = 180;
-    c.width = w; c.height = h;
+    // Canvas displays at .bw-canvas CSS size (100% x 180px) — size the
+    // backing store to the laid-out width, scaled by dpr for crispness.
+    var w = Math.max(300, Math.round(c.getBoundingClientRect().width));
+    var h = 180;
+    var dpr = window.devicePixelRatio || 1;
+    c.width = w * dpr; c.height = h * dpr;
     var ctx = c.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     var barW = Math.max(2, Math.floor(w / (a.lastSec + 1)));
+    var dlCol = cssVar('--dl', '#1a73e8'), ulCol = cssVar('--ul', '#1e8e3e');
     ctx.clearRect(0, 0, w, h);
     for (var i = 0; i <= a.lastSec; i++) {
       var s = rec.samples[i] || {r:0,w:0};
       var rh = Math.max(1, Math.round(s.r / a.peak * h));
       var wh = Math.max(1, Math.round(s.w / a.peak * h));
-      ctx.fillStyle = '#1a73e8'; ctx.fillRect(i * barW, h - rh, Math.max(1, barW/2 - 0.5), rh);
-      ctx.fillStyle = '#1e8e3e'; ctx.fillRect(i * barW + barW/2 + 0.5, h - wh, Math.max(1, barW/2 - 0.5), wh);
+      ctx.fillStyle = dlCol; ctx.fillRect(i * barW, h - rh, Math.max(1, barW/2 - 0.5), rh);
+      ctx.fillStyle = ulCol; ctx.fillRect(i * barW + barW/2 + 0.5, h - wh, Math.max(1, barW/2 - 0.5), wh);
     }
   }, 50);
   return '<canvas id="' + cid + '" class="bw-canvas"></canvas>' + bwSummary(a);
@@ -3006,17 +3347,17 @@ function buildBwLine(rec) {
   setTimeout(function() {
     var c = document.getElementById(cid);
     if (!c) return;
+    var w = Math.max(300, Math.round(c.getBoundingClientRect().width));
+    var h = 180;
     var dpr = window.devicePixelRatio || 1;
-    var pw = c.parentElement.getBoundingClientRect().width - 32;
-    var w = Math.max(pw, 300), h = 180;
-    c.width = w * dpr; c.height = h * dpr; c.style.width = w + 'px'; c.style.height = h + 'px';
+    c.width = w * dpr; c.height = h * dpr;
     var ctx = c.getContext('2d');
-    ctx.scale(dpr, dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
     var n = a.lastSec + 1, stepX = w / Math.max(1, n - 1);
 
     // Grid
-    ctx.strokeStyle = 'rgba(0,0,0,0.06)'; ctx.lineWidth = 0.5;
+    ctx.strokeStyle = cssVar('--outline-variant', 'rgba(0,0,0,0.06)'); ctx.lineWidth = 0.5;
     for (var g = 0; g <= 3; g++) {
       var gy = Math.round(h * g / 3) + 0.5;
       ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(w, gy); ctx.stroke();
@@ -3028,7 +3369,7 @@ function buildBwLine(rec) {
       var rh = ((rec.samples[i] ? rec.samples[i].r : 0) || 0) / a.peak * (h - 4);
       if (i === 0) ctx.moveTo(i * stepX, h - rh); else ctx.lineTo(i * stepX, h - rh);
     }
-    ctx.strokeStyle = '#1a73e8'; ctx.lineWidth = 2; ctx.stroke();
+    ctx.strokeStyle = cssVar('--dl', '#1a73e8'); ctx.lineWidth = 2; ctx.stroke();
 
     // Upload line
     ctx.beginPath();
@@ -3036,7 +3377,7 @@ function buildBwLine(rec) {
       var wh = ((rec.samples[i] ? rec.samples[i].w : 0) || 0) / a.peak * (h - 4);
       if (i === 0) ctx.moveTo(i * stepX, h - wh); else ctx.lineTo(i * stepX, h - wh);
     }
-    ctx.strokeStyle = '#1e8e3e'; ctx.lineWidth = 2; ctx.stroke();
+    ctx.strokeStyle = cssVar('--ul', '#1e8e3e'); ctx.lineWidth = 2; ctx.stroke();
   }, 50);
   return '<canvas id="' + cid + '" class="bw-canvas"></canvas>' + bwSummary(a);
 }
@@ -3054,9 +3395,7 @@ function updateBwPills(recId) {
   var mode = bwViewMode[recId] || 'bar';
   ['table','bar','line'].forEach(function(m) {
     var el = document.getElementById('bwview' + m + '-' + recId);
-    if (!el) return;
-    el.style.background = m === mode ? 'var(--primary)' : 'var(--surface-variant)';
-    el.style.color = m === mode ? '#fff' : 'var(--text-secondary)';
+    if (el) el.classList.toggle('active', m === mode);
   });
 }
 
@@ -3092,9 +3431,16 @@ function hideConnDetail() {
       var d = JSON.parse(e.data);
       var cfgIdx = d.configIndex;
       // Update card rates directly from SSE data (no HTTP fetch needed)
-      updateCardRates(cfgIdx, d.connections, d.readRate, d.writRate);
+      updateCardRates(cfgIdx, d.connections, d.readRate, d.writRate, d.connRate);
+      // Append the live sample so the card sparkline moves in real time
+      var buf = trafficCache[cfgIdx];
+      if (buf) {
+        buf.push({ readRate: d.readRate || 0, writRate: d.writRate || 0 });
+        if (buf.length > 40) buf.splice(0, buf.length - 40);
+        renderSparkline(document.getElementById('sp-' + cfgIdx), buf);
+      }
       // Update detail stats too if we're viewing this config
-      if (detailIndex === cfgIdx) updateDetailRates(cfgIdx, d.connections, d.readRate, d.writRate);
+      if (detailIndex === cfgIdx) updateDetailRates(cfgIdx, d.connections, d.readRate, d.writRate, d.connRate);
     } catch(_) {}
   });
   evtSource.addEventListener('connection_opened', function(e) {
@@ -3170,11 +3516,14 @@ function procYLabel(peak, field) {
 function drawProcChart(canvas, data, field, color, label) {
   if (!canvas || !data || !data.length) return;
   var ctx = canvas.getContext('2d');
-  var h = canvas.height || 80;
+  var h = 80;
   var yPadLeft = 36, yPadRight = 4;
   var rect = canvas.parentElement.getBoundingClientRect();
   var w = rect.width - 24; if (w < 200) w = 300;
-  canvas.width = w; canvas.style.width = w + 'px';
+  var dpr = window.devicePixelRatio || 1;
+  canvas.width = w * dpr; canvas.style.width = w + 'px';
+  canvas.height = h * dpr; canvas.style.height = h + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
   var n = data.length, peak = 1;
   for (var i = 0; i < n; i++) { var v = data[i][field] || 0; if (v > peak) peak = v; }
@@ -3184,8 +3533,8 @@ function drawProcChart(canvas, data, field, color, label) {
   ctx.clearRect(0, 0, w, h);
 
   // Y-axis grid lines + labels (3 levels: peak, peak/2, 0)
-  ctx.strokeStyle = 'rgba(0,0,0,0.06)'; ctx.lineWidth = 1;
-  ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.font = '9px Inter, sans-serif';
+  ctx.strokeStyle = cssVar('--outline-variant', 'rgba(0,0,0,0.06)'); ctx.lineWidth = 1;
+  ctx.fillStyle = cssVar('--text-tertiary', 'rgba(0,0,0,0.35)'); ctx.font = '9px sans-serif';
   var levels = 3;
   for (var l = 0; l <= levels; l++) {
     var y = 2 + (h - 4) * l / levels;
@@ -3195,38 +3544,32 @@ function drawProcChart(canvas, data, field, color, label) {
     ctx.fillText(txt, 2, y + 4);
   }
 
-  // Area chart
+  // Area chart with a fading gradient
+  var grad = ctx.createLinearGradient(0, 2, 0, h);
+  grad.addColorStop(0, withAlpha(color, 0.28));
+  grad.addColorStop(1, withAlpha(color, 0.02));
   ctx.beginPath(); ctx.moveTo(yPadLeft, h);
   for (var i = 0; i < n; i++) { ctx.lineTo(yPadLeft + i * stepX, h - ((data[i][field] || 0) / peak) * (h - 4)); }
   ctx.lineTo(yPadLeft + (n - 1) * stepX, h); ctx.closePath();
-  ctx.fillStyle = color + '18';
+  ctx.fillStyle = grad;
   ctx.fill();
   ctx.strokeStyle = color; ctx.lineWidth = 1.5;
   ctx.stroke();
 
-  // Current value label (right side)
-  ctx.fillStyle = color; ctx.font = 'bold 10px Inter, sans-serif';
+  // Current value lives in the chart header (setText)
   var raw = data[n-1][field] || 0;
-  var valStr = procYLabel(raw, field);
-  var tw = ctx.measureText(valStr).width;
-  ctx.fillText(valStr, w - tw - yPadRight, 12);
+  var valId = field === 'cpuPercent' ? 'procval-cpu' : field === 'heapAlloc' ? 'procval-heap' : 'procval-fd';
+  setText(valId, procYLabel(raw, field));
 }
 
 var procRange = '60s';
-var procBuffer60s = [];
 var procBuffer60s = []; // local ring buffer for SSE-driven process data
 
 function switchProcRange(r) {
-  if (r === '30m') { procBuffer60s = []; } // reset buffer when switching range
   procRange = r;
-  if (r === '30m') { procBuffer60s = []; pollProcess(); } // full reload for 30m
-  document.getElementById('range60').style.background = r === '60s' ? 'var(--primary)' : 'var(--surface-variant)';
-  document.getElementById('range60').style.color = r === '60s' ? '#fff' : 'var(--text-secondary)';
-  document.getElementById('range30m').style.background = r === '30m' ? 'var(--primary)' : 'var(--surface-variant)';
-  document.getElementById('range30m').style.color = r === '30m' ? '#fff' : 'var(--text-secondary)';
-  document.getElementById('proc-label-cpu').textContent = r;
-  document.getElementById('proc-label-heap').textContent = r;
-  document.getElementById('proc-label-fd').textContent = r;
+  if (r === '30m') procBuffer60s = []; // stale 60s samples must not pollute the next 60s view
+  document.getElementById('range60').classList.toggle('active', r === '60s');
+  document.getElementById('range30m').classList.toggle('active', r === '30m');
   pollProcess();
 }
 
@@ -3308,20 +3651,20 @@ function renderTimeline(el, conns, configIndex) {
 
     // Grid lines
     var ticks = 5;
-    ctx.strokeStyle = 'rgba(0,0,0,0.06)'; ctx.lineWidth = 0.5;
+    ctx.strokeStyle = cssVar('--outline-variant', 'rgba(0,0,0,0.06)'); ctx.lineWidth = 0.5;
     for (var t = 0; t <= ticks; t++) {
       var tx = labelW + Math.round(chartW * t / ticks) + 0.5;
       ctx.beginPath(); ctx.moveTo(tx, 20); ctx.lineTo(tx, h); ctx.stroke();
     }
     // Horizontal row lines
-    ctx.strokeStyle = 'rgba(0,0,0,0.04)'; ctx.lineWidth = 0.5;
+    ctx.strokeStyle = cssVar('--outline-variant', 'rgba(0,0,0,0.04)'); ctx.lineWidth = 0.5;
     for (var i = 0; i <= conns.length; i++) {
       var ry = headerH + i * rowH + 0.5;
       ctx.beginPath(); ctx.moveTo(labelW, ry); ctx.lineTo(w, ry); ctx.stroke();
     }
 
     // Time axis header
-    ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.font = '10px Inter, sans-serif';
+    ctx.fillStyle = cssVar('--text-tertiary', 'rgba(0,0,0,0.5)'); ctx.font = '10px sans-serif';
     for (var t = 0; t <= ticks; t++) {
       var ts = tMin + range * t / ticks;
       ctx.fillText(new Date(ts).toLocaleTimeString(), labelW + chartW * t / ticks, 14);
@@ -3347,7 +3690,7 @@ function renderTimeline(el, conns, configIndex) {
 
       // Traffic label on bar (right side, or inside if bar is wide enough)
       var bytesText = '↓' + fmtBytes(c.readBytes || 0) + ' ↑' + fmtBytes(c.writBytes || 0);
-      ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.font = '9px Inter, sans-serif';
+      ctx.fillStyle = cssVar('--text-secondary', 'rgba(0,0,0,0.55)'); ctx.font = '9px sans-serif';
       var tw = ctx.measureText(bytesText).width;
       if (bw > tw + 10) {
         ctx.fillText(bytesText, x + 4, y + barH - 4);
@@ -3359,7 +3702,7 @@ function renderTimeline(el, conns, configIndex) {
 
       // Host label — truncate to fit in label area
       var labelMax = labelW - 12;
-      ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.font = '11px Inter, sans-serif';
+      ctx.fillStyle = cssVar('--text', 'rgba(0,0,0,0.7)'); ctx.font = '11px sans-serif';
       var fullHost = host;
       while (ctx.measureText(fullHost + '…').width > labelMax && fullHost.length > 4) {
         fullHost = fullHost.substring(0, fullHost.length - 1);

@@ -500,11 +500,9 @@ func DialTCP(address string, cfg *cfg) (*BaseConn, error) {
 	} else {
 		policy := newIPSelPolicy(cfg)
 		useScore := mode == ipSelectSmart
-		var cache *ipScoreCache
-		if useScore {
-			cache = cfg.getIPSelectCache()
-		}
-		netconn, err = dialIPSelect(context.Background(), "tcp", address, policy, cache, useScore)
+		// The cache also carries the admin-visible decision history, so race
+		// mode passes it too; scoring stays gated by useScore in dialIPSelect.
+		netconn, err = dialIPSelect(context.Background(), "tcp", address, policy, cfg.getIPSelectCache(), useScore)
 	}
 	if err != nil {
 		return nil, err

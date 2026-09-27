@@ -34,6 +34,7 @@ const (
 	ipSelStatTTL           = 30 * time.Minute
 	ipSelMaxHosts          = 1024
 	ipSelMaxIPsPerHost     = 32
+	ipSelHistorySize       = 64 // decision-history ring size per cache
 )
 
 // normalizeIPSelectMode returns a valid ipselect mode. Empty and invalid
@@ -98,7 +99,7 @@ func (p ipSelPolicy) filter(ips []netip.Addr) []netip.Addr {
 
 // preferIPv4 groups all IPv4 candidates ahead of IPv6 while preserving the
 // relative order inside each family. It is used by race mode, which has no
-// score cache to perform the grouping in rankCandidates.
+// score cache for orderScored to rank with.
 func (p ipSelPolicy) preferIPv4(ips []netip.Addr) []netip.Addr {
 	if !p.PreferIPv4 {
 		return ips
@@ -134,6 +135,7 @@ type ipScoreCache struct {
 	maxHosts int
 	maxIPs   int
 	ttl      time.Duration
+	hist     ipSelHistory
 }
 
 func newIPScoreCache() *ipScoreCache {
@@ -250,51 +252,225 @@ func (c *ipScoreCache) evictLocked(now time.Time) {
 	delete(c.m, fallback)
 }
 
-// rankCandidates orders ips best-first. PreferIPv4 groups all v4 candidates
-// ahead of v6 (head start, not exclusion); otherwise ordering is purely by
-// score with the resolver order preserved for ties/unknowns. Returns a new
-// slice.
-func (c *ipScoreCache) rankCandidates(host string, ips []netip.Addr, p ipSelPolicy) []netip.Addr {
-	type scored struct {
-		addr  netip.Addr
-		score float64
-	}
-	now := time.Now()
+// ipSelScored couples a candidate with its cache snapshot: the ranking score
+// plus the stats behind it, copied so they stay valid after the lock release.
+type ipSelScored struct {
+	addr       netip.Addr
+	score      float64
+	rtt        float64
+	success    int64
+	fail       int64
+	failStreak int64
+	lastSeen   time.Time
+}
+
+// scoreAll snapshots host's candidate scores in one lock pass.
+func (c *ipScoreCache) scoreAll(host string, ips []netip.Addr, now time.Time) []ipSelScored {
 	c.mu.Lock()
-	v4 := make([]scored, 0, len(ips))
-	v6 := make([]scored, 0, len(ips))
+	defer c.mu.Unlock()
+	m := c.m[host]
+	out := make([]ipSelScored, 0, len(ips))
 	for _, ip := range ips {
-		s := scored{addr: ip, score: c.scoreLocked(host, ip.String(), now)}
-		if ip.Is4() {
+		s := ipSelScored{addr: ip, score: c.scoreLocked(host, ip.String(), now)}
+		if st := m[ip.String()]; st != nil {
+			s.rtt, s.success, s.fail, s.failStreak, s.lastSeen = st.rtt, st.success, st.fail, st.failStreak, st.lastSeen
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
+// orderScored sorts best-first. PreferIPv4 groups all v4 candidates ahead of
+// v6 (head start, not exclusion); otherwise ordering is purely by score, with
+// v4-ahead-of-v6 and the input order preserved for ties/unknowns — matching
+// the resolver-order semantics this ranking has always had.
+func orderScored(list []ipSelScored, p ipSelPolicy) []ipSelScored {
+	sortBy := func(l []ipSelScored) {
+		sort.SliceStable(l, func(i, j int) bool { return l[i].score < l[j].score })
+	}
+	v4 := make([]ipSelScored, 0, len(list))
+	v6 := make([]ipSelScored, 0, len(list))
+	for _, s := range list {
+		if s.addr.Is4() {
 			v4 = append(v4, s)
 		} else {
 			v6 = append(v6, s)
 		}
 	}
-	c.mu.Unlock()
-
-	sortBy := func(list []scored) {
-		sort.SliceStable(list, func(i, j int) bool { return list[i].score < list[j].score })
-	}
-
-	out := make([]netip.Addr, 0, len(ips))
 	if p.PreferIPv4 {
 		sortBy(v4)
 		sortBy(v6)
-		for _, x := range v4 {
-			out = append(out, x.addr)
-		}
-		for _, x := range v6 {
-			out = append(out, x.addr)
-		}
-		return out
+		return append(v4, v6...)
 	}
 	all := append(v4, v6...)
 	sortBy(all)
-	for _, x := range all {
-		out = append(out, x.addr)
+	return all
+}
+
+// Sentinel scoreMs values for the admin UI.
+const (
+	ipSelScoreUnknown        = -1.0 // no ranking data for this IP
+	ipSelScoreNeverConnected = -2.0 // seen but never connected successfully
+)
+
+// Why a decision was made (ipSelDecision.Reason).
+const (
+	ipSelReasonRace    = "race"    // first successful connect won
+	ipSelReasonExplore = "explore" // a random probe reshuffled candidates first
+	ipSelReasonSingle  = "single"  // one usable candidate, no race
+	ipSelReasonLiteral = "literal" // target was a literal IP, nothing to select
+	ipSelReasonResolve = "resolve" // resolution or family filter left nothing to dial
+	ipSelReasonFailed  = "failed"  // every candidate failed
+)
+
+// ipSelCandView is one candidate as recorded at decision time.
+type ipSelCandView struct {
+	IP        string  `json:"ip"`
+	ScoreMs   float64 `json:"scoreMs"`
+	ElapsedMs float64 `json:"elapsedMs"`
+	Err       string  `json:"err,omitempty"`
+}
+
+// ipSelDecision is one dial decision as shown in the admin UI.
+type ipSelDecision struct {
+	Time       time.Time       `json:"time"`
+	Host       string          `json:"host"`
+	Reason     string          `json:"reason"`
+	Winner     string          `json:"winner,omitempty"`
+	Error      string          `json:"error,omitempty"`
+	ElapsedMs  float64         `json:"elapsedMs"`
+	Source     string          `json:"source,omitempty"` // backend nickname; filled by the admin API
+	Candidates []ipSelCandView `json:"candidates,omitempty"`
+}
+
+// ipSelHistory is a bounded ring of recent decisions; the zero value is ready.
+type ipSelHistory struct {
+	mu   sync.Mutex
+	buf  []ipSelDecision
+	pos  int
+	full bool
+}
+
+func (h *ipSelHistory) record(d ipSelDecision) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.buf == nil {
+		h.buf = make([]ipSelDecision, ipSelHistorySize)
+	}
+	h.buf[h.pos] = d
+	h.pos++
+	if h.pos >= len(h.buf) {
+		h.pos = 0
+		h.full = true
+	}
+}
+
+// snapshot returns the buffered decisions newest first.
+func (h *ipSelHistory) snapshot() []ipSelDecision {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	n := h.pos
+	if h.full {
+		n = len(h.buf)
+	}
+	out := make([]ipSelDecision, 0, n)
+	for i := 0; i < n; i++ {
+		idx := h.pos - 1 - i
+		if idx < 0 {
+			idx += len(h.buf)
+		}
+		out = append(out, h.buf[idx])
 	}
 	return out
+}
+
+// recordDecision stores one decision for the admin UI. Elapsed is measured
+// from d.Time, so callers only fill in the observable facts.
+func (c *ipScoreCache) recordDecision(d ipSelDecision) {
+	if c == nil {
+		return
+	}
+	d.ElapsedMs = ipSelMs(time.Since(d.Time))
+	c.hist.record(d)
+}
+
+// ipSelHostStat is one IP's live statistics for the admin UI.
+type ipSelHostStat struct {
+	IP         string    `json:"ip"`
+	RTTMs      float64   `json:"rttMs"`
+	Success    int64     `json:"success"`
+	Fail       int64     `json:"fail"`
+	FailStreak int64     `json:"failStreak"`
+	LastSeen   time.Time `json:"lastSeen"`
+	ScoreMs    float64   `json:"scoreMs"`
+}
+
+// ipSelHostView lists one host's known IPs in predicted dial order.
+type ipSelHostView struct {
+	Host       string          `json:"host"`
+	Source     string          `json:"source,omitempty"` // backend nickname; filled by the admin API
+	Candidates []ipSelHostStat `json:"candidates"`
+}
+
+// snapshotHosts returns every host with recorded stats, candidates ordered
+// the way the next dial would try them.
+func (c *ipScoreCache) snapshotHosts(p ipSelPolicy) []ipSelHostView {
+	now := time.Now()
+	c.mu.Lock()
+	hosts := make([]string, 0, len(c.m))
+	ipLists := make(map[string][]netip.Addr, len(c.m))
+	for host, m := range c.m {
+		hosts = append(hosts, host)
+		ips := make([]netip.Addr, 0, len(m))
+		for ipStr := range m {
+			if a, err := netip.ParseAddr(ipStr); err == nil {
+				ips = append(ips, a)
+			}
+		}
+		ipLists[host] = ips
+	}
+	c.mu.Unlock()
+
+	sort.Strings(hosts)
+	out := make([]ipSelHostView, 0, len(hosts))
+	for _, host := range hosts {
+		scored := orderScored(c.scoreAll(host, ipLists[host], now), p)
+		hv := ipSelHostView{Host: host, Candidates: make([]ipSelHostStat, 0, len(scored))}
+		for _, s := range scored {
+			hv.Candidates = append(hv.Candidates, ipSelHostStat{
+				IP:         s.addr.String(),
+				RTTMs:      ipSelMs(time.Duration(s.rtt)),
+				Success:    s.success,
+				Fail:       s.fail,
+				FailStreak: s.failStreak,
+				LastSeen:   s.lastSeen,
+				ScoreMs:    ipSelScoreMs(s.score),
+			})
+		}
+		out = append(out, hv)
+	}
+	return out
+}
+
+func (c *ipScoreCache) snapshotHistory() []ipSelDecision {
+	return c.hist.snapshot()
+}
+
+// ipSelMs renders a duration in fractional milliseconds for the admin UI.
+func ipSelMs(d time.Duration) float64 {
+	return float64(d.Microseconds()) / 1000
+}
+
+// ipSelScoreMs maps a raw ranking score to the UI representation.
+func ipSelScoreMs(score float64) float64 {
+	switch {
+	case score == 0:
+		return ipSelScoreUnknown
+	case score == math.MaxFloat64:
+		return ipSelScoreNeverConnected
+	default:
+		return score / 1e6
+	}
 }
 
 // Test hooks: replaced in unit tests to control resolution and dialing.
@@ -339,7 +515,8 @@ func capCandidates(cand []netip.Addr) []netip.Addr {
 }
 
 // ipSelFailureShouldRecord reports whether err should be recorded as a
-// real dial failure. Cancellation caused by the caller is not an IP-quality signal.
+// real dial failure. Cancellation caused by the caller is not an IP-quality
+// signal, so neither the stats nor the decision history record it.
 func ipSelFailureShouldRecord(err error, parent context.Context) bool {
 	return !errors.Is(err, context.Canceled) || parent.Err() == nil
 }
@@ -362,29 +539,58 @@ func dialIPSelect(parent context.Context, network, address string, p ipSelPolicy
 	}
 	dialCtx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
+	decisionStart := time.Now()
 
 	// Literal IP: no resolution, no race.
 	if _, perr := netip.ParseAddr(host); perr == nil {
 		ips := p.filter([]netip.Addr{netip.MustParseAddr(host)})
 		if len(ips) == 0 {
-			return nil, fmt.Errorf("address family of %s is disabled", host)
+			err := fmt.Errorf("address family of %s is disabled", host)
+			cache.recordDecision(ipSelDecision{Time: decisionStart, Host: host, Reason: ipSelReasonLiteral, Error: err.Error()})
+			return nil, err
 		}
-		conn, _, err := ipSelDial(dialCtx, network, address, timeout)
-		return conn, err
+		conn, _, derr := ipSelDial(dialCtx, network, address, timeout)
+		if derr == nil || ipSelFailureShouldRecord(derr, parent) {
+			d := ipSelDecision{
+				Time:       decisionStart,
+				Host:       host,
+				Reason:     ipSelReasonLiteral,
+				Candidates: []ipSelCandView{{IP: host, ScoreMs: ipSelScoreUnknown}},
+			}
+			if derr != nil {
+				d.Error = derr.Error()
+			} else {
+				d.Winner = host
+			}
+			cache.recordDecision(d)
+		}
+		return conn, derr
 	}
 
 	ips, err := ipSelLookup(dialCtx, host)
 	if err != nil {
+		if ipSelFailureShouldRecord(err, parent) {
+			cache.recordDecision(ipSelDecision{Time: decisionStart, Host: host, Reason: ipSelReasonResolve, Error: err.Error()})
+		}
 		return nil, err
 	}
 	ips = p.preferIPv4(p.filter(ips))
 	if len(ips) == 0 {
-		return nil, fmt.Errorf("resolve %s: no usable ip found", host)
+		err := fmt.Errorf("resolve %s: no usable ip found", host)
+		cache.recordDecision(ipSelDecision{Time: decisionStart, Host: host, Reason: ipSelReasonResolve, Error: err.Error()})
+		return nil, err
 	}
 
 	var cand []netip.Addr
+	var scores map[string]float64
 	if useScore && cache != nil {
-		cand = cache.rankCandidates(host, ips, p)
+		scored := orderScored(cache.scoreAll(host, ips, time.Now()), p)
+		cand = make([]netip.Addr, len(scored))
+		scores = make(map[string]float64, len(scored))
+		for i, s := range scored {
+			cand[i] = s.addr
+			scores[s.addr.String()] = ipSelScoreMs(s.score)
+		}
 	} else {
 		cand = ips
 	}
@@ -392,14 +598,43 @@ func dialIPSelect(parent context.Context, network, address string, p ipSelPolicy
 
 	// Occasional exploration: try a random candidate first so scores of
 	// rarely used IPs stay fresh.
+	explored := false
 	if useScore && cache != nil && len(cand) > 1 && rand.Float64() < ipSelExploreProb {
 		i := rand.IntN(len(cand))
 		cand[0], cand[i] = cand[i], cand[0]
+		explored = true
+	}
+
+	// decision captures what the admin UI reports; nil without a cache.
+	var decision *ipSelDecision
+	if cache != nil {
+		decision = &ipSelDecision{Time: decisionStart, Host: host, Reason: ipSelReasonRace}
+		if explored {
+			decision.Reason = ipSelReasonExplore
+		}
+		for _, ip := range cand {
+			cv := ipSelCandView{IP: ip.String(), ScoreMs: ipSelScoreUnknown}
+			if scores != nil {
+				cv.ScoreMs = scores[ip.String()]
+			}
+			decision.Candidates = append(decision.Candidates, cv)
+		}
 	}
 
 	// Single candidate: no race needed.
 	if len(cand) == 1 {
 		conn, elapsed, derr := ipSelDial(dialCtx, network, net.JoinHostPort(cand[0].String(), port), timeout)
+		if decision != nil && (derr == nil || ipSelFailureShouldRecord(derr, parent)) {
+			decision.Reason = ipSelReasonSingle
+			decision.Candidates[0].ElapsedMs = ipSelMs(elapsed)
+			if derr != nil {
+				decision.Candidates[0].Err = derr.Error()
+				decision.Error = derr.Error()
+			} else {
+				decision.Winner = cand[0].String()
+			}
+			cache.recordDecision(*decision)
+		}
 		if derr != nil {
 			if conn != nil {
 				conn.Close()
@@ -471,7 +706,23 @@ func dialIPSelect(parent context.Context, network, address string, p ipSelPolicy
 	var winner dialResult
 	var firstErr error
 	haveWinner := false
+	attachOutcome := func(r dialResult) {
+		if decision == nil {
+			return
+		}
+		for k := range decision.Candidates {
+			if decision.Candidates[k].IP != r.ip {
+				continue
+			}
+			decision.Candidates[k].ElapsedMs = ipSelMs(r.elapsed)
+			if r.err != nil {
+				decision.Candidates[k].Err = r.err.Error()
+			}
+			return
+		}
+	}
 	for r := range results {
+		attachOutcome(r)
 		if r.err != nil {
 			if r.conn != nil {
 				r.conn.Close()
@@ -499,6 +750,13 @@ func dialIPSelect(parent context.Context, network, address string, p ipSelPolicy
 		raceCancel() // stop the remaining attempts
 	}
 	if winner.conn == nil {
+		if decision != nil && ipSelFailureShouldRecord(firstErr, parent) {
+			decision.Reason = ipSelReasonFailed
+			if firstErr != nil {
+				decision.Error = firstErr.Error()
+			}
+			cache.recordDecision(*decision)
+		}
 		if firstErr == nil {
 			firstErr = fmt.Errorf("dial %s failed", address)
 		}
@@ -506,6 +764,10 @@ func dialIPSelect(parent context.Context, network, address string, p ipSelPolicy
 	}
 	if useScore && cache != nil {
 		cache.record(host, winner.ip, winner.elapsed, true)
+	}
+	if decision != nil {
+		decision.Winner = winner.ip
+		cache.recordDecision(*decision)
 	}
 	return winner.conn, nil
 }

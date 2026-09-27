@@ -320,6 +320,7 @@ func sampleTraffic() {
 		ssePublishIndex("stats_updated", i, map[string]interface{}{
 			"configIndex": i,
 			"connections": atomic.LoadInt32(&c.getStat().connections),
+			"connRate":    trafficHistory.buf[base+i].connRate,
 			"readRate":    trafficHistory.buf[base+i].readRate,
 			"writRate":    trafficHistory.buf[base+i].writRate,
 		})
@@ -352,6 +353,7 @@ func StartAdminServer(addr string, token string) {
 	mux.HandleFunc("GET /api/configs/{index}/active", handleGetActiveBackend)
 	mux.HandleFunc("PUT /api/configs/{index}/active", handleSetActiveBackend)
 	mux.HandleFunc("GET /api/configs/{index}/rejects", handleRejectCounters)
+	mux.HandleFunc("GET /api/configs/{index}/ipselect", handleIPSelect)
 	mux.HandleFunc("GET /api/configs/{index}/targets", handleTargets)
 	mux.HandleFunc("GET /api/configs/{index}/targets/top", handleTargetsTop)
 	mux.HandleFunc("GET /api/configs/{index}/connections/top", handleConnectionsTop)
@@ -1614,6 +1616,79 @@ func handleRejectCounters(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, s.getRejectCounters())
+}
+
+// ipSelectStatus is the payload of GET /api/configs/{index}/ipselect.
+type ipSelectStatus struct {
+	Mode       string          `json:"mode"`
+	DelayMs    int             `json:"delayMs"`
+	PreferIPv4 bool            `json:"preferIPv4"`
+	NoIPv4     bool            `json:"noIPv4"`
+	NoIPv6     bool            `json:"noIPv6"`
+	Hosts      []ipSelHostView `json:"hosts"`
+	History    []ipSelDecision `json:"history"`
+}
+
+// handleIPSelect reports the live IP-selection state: the effective mode and
+// policy, per-host per-IP statistics in predicted dial order, and the recent
+// decision history. Stats live on each Config's own cache, so the parent and
+// every backend contribute, tagged with the backend nickname as Source. Host
+// stats only exist in smart mode; a race-mode source contributes history only
+// (its cache holds nothing but decisions, plus stale pre-switch stats).
+func handleIPSelect(w http.ResponseWriter, r *http.Request) {
+	idxStr := r.PathValue("index")
+	idx, err := strconv.Atoi(idxStr)
+	if err != nil {
+		http.Error(w, "invalid index", http.StatusBadRequest)
+		return
+	}
+	cfgs := getAdminConfigs()
+	if idx < 0 || idx >= len(cfgs) {
+		http.Error(w, "index out of range", http.StatusNotFound)
+		return
+	}
+	c := cfgs[idx]
+	p := newIPSelPolicy(c)
+	mode := normalizeIPSelectMode(c.dialPolicy().ipSelect)
+	st := ipSelectStatus{
+		Mode:       mode,
+		DelayMs:    int(p.Delay / time.Millisecond),
+		PreferIPv4: p.PreferIPv4,
+		NoIPv4:     p.NoIPv4,
+		NoIPv6:     p.NoIPv6,
+		Hosts:      []ipSelHostView{},
+		History:    []ipSelDecision{},
+	}
+	if mode == ipSelectOff {
+		writeJSON(w, st)
+		return
+	}
+	type ipSelSource struct {
+		name  string
+		cfg   *Config
+		cache *ipScoreCache
+	}
+	sources := []ipSelSource{{name: "", cfg: c, cache: c.getIPSelectCache()}}
+	for _, b := range c.SnapshotBackends() {
+		sources = append(sources, ipSelSource{name: b.Nickname, cfg: b, cache: b.getIPSelectCache()})
+	}
+	for _, s := range sources {
+		if normalizeIPSelectMode(s.cfg.dialPolicy().ipSelect) == ipSelectSmart {
+			for _, hv := range s.cache.snapshotHosts(p) {
+				hv.Source = s.name
+				st.Hosts = append(st.Hosts, hv)
+			}
+		}
+		for _, d := range s.cache.snapshotHistory() {
+			d.Source = s.name
+			st.History = append(st.History, d)
+		}
+	}
+	sort.SliceStable(st.History, func(i, j int) bool { return st.History[i].Time.After(st.History[j].Time) })
+	if len(st.History) > ipSelHistorySize {
+		st.History = st.History[:ipSelHistorySize]
+	}
+	writeJSON(w, st)
 }
 
 func handleTargets(w http.ResponseWriter, r *http.Request) {
