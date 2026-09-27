@@ -3518,10 +3518,15 @@ function drawProcChart(canvas, data, field, color, label) {
   var ctx = canvas.getContext('2d');
   var h = 80;
   var yPadLeft = 36, yPadRight = 4;
-  var rect = canvas.parentElement.getBoundingClientRect();
-  var w = rect.width - 24; if (w < 200) w = 300;
+  // Display width belongs to CSS (.proc-chart canvas { width: 100% }).
+  // Writing a fixed px width here fed the canvas back into the grid track's
+  // min-content size (1fr is minmax(auto, 1fr)), and the card's border was
+  // never subtracted, so every redraw grew all three charts by 2px. Measure
+  // the canvas itself and set only the backing store.
+  canvas.style.width = '';
+  var w = Math.max(100, Math.round(canvas.getBoundingClientRect().width));
   var dpr = window.devicePixelRatio || 1;
-  canvas.width = w * dpr; canvas.style.width = w + 'px';
+  canvas.width = w * dpr;
   canvas.height = h * dpr; canvas.style.height = h + 'px';
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
